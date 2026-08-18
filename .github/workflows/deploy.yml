@@ -1,0 +1,37 @@
+name: Deploy CF ServiceOps
+
+on:
+  workflow_dispatch:
+    inputs:
+      description:
+        description: Deployment description
+        required: false
+        default: CF ServiceOps v5.8.0
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install clasp
+        run: npm install --global @google/clasp
+      - name: Restore clasp credentials
+        shell: bash
+        run: |
+          printf '%s' '${{ secrets.CLASPRC_JSON }}' > "$HOME/.clasprc.json"
+          printf '%s' '${{ secrets.CLASP_JSON }}' > .clasp.json
+      - name: Syntax check Apps Script files
+        shell: bash
+        run: |
+          mkdir -p /tmp/cfcheck
+          for f in src/*.gs; do
+            cp "$f" "/tmp/cfcheck/$(basename "$f" .gs).js"
+            node --check "/tmp/cfcheck/$(basename "$f" .gs).js"
+          done
+      - name: Push, version, and redeploy existing web app
+        env:
+          CF_APPS_SCRIPT_DEPLOYMENT_ID: ${{ secrets.CF_APPS_SCRIPT_DEPLOYMENT_ID }}
+        run: node scripts/release.mjs --execute --deployment-id "$CF_APPS_SCRIPT_DEPLOYMENT_ID" --description "${{ inputs.description }}"

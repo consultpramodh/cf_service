@@ -1,0 +1,25 @@
+{
+  "release": "5.8.0",
+  "sourceAudit": "CF Service - July 2026 - CodeAudit_Aug18.txt",
+  "sourceAuditSha256": "676d421a7dd6ddde6878ae840ed5f0ab89c8ce18a9e7b27dc8ebaed2c048c9b8",
+  "projectFileCount": 15,
+  "files": [
+    {"path":"src/00_Config.gs","bytes":19479,"sha256":"8036232b94419ab09edc179674a1773b4b89b918171d64e766598a3b417d85fd"},
+    {"path":"src/01_Core_Utilities.gs","bytes":19953,"sha256":"d87600340d9fab9a8d4feb3932bae5235ceac612f7f964c0629046a0463c6511"},
+    {"path":"src/10_Setup_Admin.gs","bytes":16023,"sha256":"f283fa9b55b40d50e0962926b2d3b75d3d2b33b6c137bee9f27f890c6cdadf8c"},
+    {"path":"src/20_Intake_Processing.gs","bytes":56322,"sha256":"3ab354cdad6d2b6ad58651889be0ca6744a99c6c11facd844e9ba7746b9a36ea"},
+    {"path":"src/30_Striven_Data.gs","bytes":28475,"sha256":"714baa122279a71554c3ef556f2a93a38d9ad4726012eee82476c2c46aad5dde"},
+    {"path":"src/40_Matching_Profile.gs","bytes":55716,"sha256":"0c6da7c9dd7d9b1f95d403905d22f8914a7e200cdf3b6bdf09c80f227fbbec06"},
+    {"path":"src/50_Operator_Queue.gs","bytes":41523,"sha256":"299d1c9fc93f72e387ef20ec7f1782d74ecb45855ad3cbd2ff7767000c2ae280"},
+    {"path":"src/60_Operator_Workflow.gs","bytes":7971,"sha256":"2881b910296fa8b923bad8710d5483eb053a92435ecce941e6d29586a8cd7e6f"},
+    {"path":"src/60_Striven_Write.gs","bytes":19519,"sha256":"d1cba1c0f9c8d6e5ee19ffcfebbac96cc16815aace9e25f015495c39c9df0761"},
+    {"path":"src/70_Customer_360.gs","bytes":117764,"sha256":"0fe9b1f5206cd5e5e536ea8115eec50442087be295056d59ddb5e2ac7a121b70"},
+    {"path":"src/75_Customer_360_AI.gs","bytes":21452,"sha256":"e91f94d020b897678e4990a037d066314ac21107e3144d6acfda89b86af51c6d"},
+    {"path":"src/90_Diagnostics_Tests.gs","bytes":12915,"sha256":"60ca6f2e560319bd4e7ca5d3b6c13d236aed61a1269c68afc54764d925eaaa24"},
+    {"path":"src/95_Public_Runners.gs","bytes":9623,"sha256":"1f2d20ed63f2bcdecb304843f74eb3418b0411a77e56004b4cbd338e931419ef"},
+    {"path":"src/98_Code_Audit.gs","bytes":24451,"sha256":"7d11747860e1b55672aa7d1975d1cfe1c4caa96bb7ada992b213761feb0e1dbc"},
+    {"path":"src/appsscript.json","bytes":464,"sha256":"c91a8071f85a615e6b96e90bb7bfc58645ae8edcd1ac27be79353016a73ca501"}
+  ],
+  "modifiedModules":["00_Config.gs","01_Core_Utilities.gs","10_Setup_Admin.gs","20_Intake_Processing.gs","50_Operator_Queue.gs","90_Diagnostics_Tests.gs","95_Public_Runners.gs"],
+  "safety":{"sheetDeletionInSetup":false,"durableLedgerRebuildInSetup":false,"backupRequiredBeforeRename":true,"identityHashVerification":true,"legacySheetAliasesDuringTransition":true,"liveStrivenWritesEnabledByThisRelease":false}
+}
