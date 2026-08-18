@@ -1,0 +1,48 @@
+name: Expand exact v5.8.0 release
+
+on:
+  push:
+    branches:
+      - agent/v5.8.0-operator-ux
+
+permissions:
+  contents: write
+
+jobs:
+  expand:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout feature branch
+        uses: actions/checkout@v4
+        with:
+          ref: agent/v5.8.0-operator-ux
+          fetch-depth: 0
+
+      - name: Expand verified release archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/cf-serviceops-release
+          mkdir -p /tmp/cf-serviceops-release
+          unzip -q releases/CF-ServiceOps-v5.8.0-Operator-UX.zip -d /tmp/cf-serviceops-release
+          test -d /tmp/cf-serviceops-release/cf_serviceops_v5_8_0
+          rsync -a --delete \
+            --exclude='.git/' \
+            --exclude='releases/' \
+            --exclude='.github/workflows/expand-release.yml' \
+            /tmp/cf-serviceops-release/cf_serviceops_v5_8_0/ ./
+
+      - name: Commit exact expanded source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          if git diff --cached --quiet; then
+            echo 'Expanded source already matches release archive.'
+            exit 0
+          fi
+          git commit -m 'expand exact v5.8.0 release source'
+          git push origin HEAD:agent/v5.8.0-operator-ux
