@@ -17,8 +17,18 @@ const row={
   'Customer Structure Status':'COMPLETE','Reconciliation Status':'','Work Order ID':'','Work Order Number':'','Work Order Status':'',
   '__rowNumber':2
 };
-const customer={Id:100,Name:'Test Customer',Phones:[{Id:1,PhoneType:{Id:1,Name:'Mobile'},CountryDialCode:1,Number:'2895551000',IsPreferred:true,Active:true}],Emails:[{Id:2,Email:'test@example.com',IsPrimary:true,Active:true}],CustomFields:[{Id:694,IsRequired:true,Value:''}]};
-const contact={Id:200,FirstName:'Test',LastName:'Customer',Phones:[{Id:3,PhoneType:{Id:1,Name:'Mobile'},CountryDialCode:1,Number:'2895551000',IsPreferred:true,Active:true}],Emails:[{Id:4,Email:'test@example.com',IsPrimary:true,Active:true}],CustomerAssociations:[{Id:100}]};
+const customer={
+  Id:100,Name:'Test Customer',IsConsumerAccount:true,
+  PrimaryContact:{Id:200,Name:'Test Customer'},
+  Phones:[{Id:1,PhoneType:{Id:1,Name:'Mobile'},CountryDialCode:1,Number:'2895551000',IsPreferred:true,Active:true}],
+  CustomFields:[{Id:694,IsRequired:true,Value:''}]
+};
+const contact={
+  Id:200,FirstName:'Test',LastName:'Customer',
+  Phones:[{Id:3,PhoneType:{Id:1,Name:'Mobile'},CountryDialCode:1,Number:'2895551000',IsPreferred:true,Active:true}],
+  Emails:[{Id:4,Email:'test@example.com',IsPrimary:true,Active:true}],
+  CustomerAssociations:[]
+};
 const calls=[];
 
 global.CF={};
@@ -50,20 +60,28 @@ CF.StrivenHttp={requestJson:(path,opt)=>{
   throw new Error('Unexpected POST '+path);
 }};
 
+function relationshipFromContact(){
+  const ids=(contact.CustomerAssociations||[]).map(x=>String(x.Id||x.CustomerId||''));
+  return {status:ids.includes('100')?'CONFIRMED':(ids.length?'CONFLICT':'MISSING'),confirmed:ids.includes('100'),customerIds:ids};
+}
 function makeShadow(next){
   return {
     ok:true,version:'test',requestId:row['Request ID'],nextRequiredFact:next,complete:next==='COMPLETE',
     facts:{
-      customer:{id:'100',remoteConfirmed:true,remoteReadStatus:'GET_CONFIRMED',identity:{status:'CONFIRMED',confirmed:true},phone:{status:next==='CUSTOMER_PHONE_CONFIRMED'?'MISSING':'CONFIRMED',confirmed:next!=='CUSTOMER_PHONE_CONFIRMED'},email:{status:'CONFIRMED',confirmed:true},emailApiShape:'EMAILS_ARRAY'},
-      contact:{id:'200',remoteConfirmed:true,remoteReadStatus:'GET_CONFIRMED',identity:{status:'CONFIRMED',confirmed:true},phone:{status:'CONFIRMED',confirmed:true},email:{status:'CONFIRMED',confirmed:true}},
+      customer:{id:'100',remoteConfirmed:true,remoteReadStatus:'GET_CONFIRMED',identity:{status:'CONFIRMED',confirmed:true},phone:{status:next==='CUSTOMER_PHONE_CONFIRMED'?'MISSING':'CONFIRMED',confirmed:next!=='CUSTOMER_PHONE_CONFIRMED'},email:{status:'API_FIELD_UNRESOLVED',confirmed:false},emailApiShape:'NOT_EXPOSED_BY_GET'},
+      contact:{id:'200',remoteConfirmed:true,remoteReadStatus:'GET_CONFIRMED',identity:{status:'CONFIRMED',confirmed:true},phone:{status:next==='CONTACT_PHONE_CONFIRMED'?'MISSING':'CONFIRMED',confirmed:next!=='CONTACT_PHONE_CONFIRMED'},email:{status:next==='CONTACT_EMAIL_CONFIRMED'?'MISSING':'CONFIRMED',confirmed:next!=='CONTACT_EMAIL_CONFIRMED'}},
       location:{id:'300',status:'CONFIRMED',confirmed:true},
-      relationship:{status:'CONFIRMED',confirmed:true,customerIds:['100']},
+      relationship:relationshipFromContact(),
       salesOrder:{status:next==='SALES_ORDER_CONFIRMED'?'MISSING':'CONFIRMED',confirmed:next!=='SALES_ORDER_CONFIRMED',id:next==='SALES_ORDER_CONFIRMED'?'':'400',number:next==='SALES_ORDER_CONFIRMED'?'':'500'}
     }
   };
 }
 let shadowNext='COMPLETE';
-CF.V2ShadowResolver={inspectRequest:()=>makeShadow(shadowNext)};
+CF.V2ShadowResolver={inspectRequest:(id,opt)=>{
+  const s=makeShadow(shadowNext);
+  if(opt&&opt.includeRemoteBodies===true)s.remote={customer:JSON.parse(JSON.stringify(customer)),contact:JSON.parse(JSON.stringify(contact))};
+  return s;
+}};
 
 CF.StrivenControlledCustomerCreate={executeAutoCustomerCreate:()=>({ok:true,status:'CUSTOMER_CONFIRMED',liveWriteExecuted:true})};
 CF.StandaloneLocationCreateV5128={process:()=>({ok:true,status:'LOCATION_CONFIRMED',liveWriteExecuted:true})};
@@ -82,14 +100,18 @@ for(const f of ['CF_ServiceOps_V2_Core_Ensurers.gs','CF_ServiceOps_V2_Orchestrat
 shadowNext='CUSTOMER_PHONE_CONFIRMED';
 let p=CF.V2CoreEnsurers.preview(row['Request ID']);
 assert.equal(p.nextAction,'ENSURE_CUSTOMER_CORE');
+assert.equal(p.nextRequiredFact,'CUSTOMER_PHONE_CONFIRMED');
 
 let blocked=false;
 try{CF.V2CoreEnsurers.executeNext(row['Request ID'],{confirmLiveWrite:true});}catch(e){blocked=/WRITE_BLOCKED/.test(e.message);}
 assert.equal(blocked,true);
 
 let cert=CF.V2CoreEnsurers.certifyContracts(row['Request ID']);
-assert.equal(cert.customerEmailShape,'EMAILS_ARRAY');
-assert.equal(cert.relationshipCurrentStatus,'RELATIONSHIP_CONFIRMED');
+assert.equal(cert.customerEmailShape,'NOT_EXPOSED_BY_GET');
+assert.equal(cert.directCustomerEmailRequired,false);
+assert.equal(cert.primaryContactCurrentStatus,'PRIMARY_CONTACT_CONFIRMED');
+assert.equal(cert.primaryContactId,'200');
+assert.equal(cert.relationshipEffectiveStatus,'RELATIONSHIP_CONFIRMED_VIA_PRIMARY_CONTACT');
 
 customer.Phones=[];
 props.CF_SERVICEOPS_V2_WRITE_ENABLED='TRUE';
@@ -101,42 +123,63 @@ assert.equal(cr.status,'CUSTOMER_CORE_CONFIRMED_AFTER_WRITE');
 const customerPost=calls.find(x=>x.path==='/v1/customers'&&x.opt.method==='post');
 assert(customerPost);
 assert.equal(Object.prototype.hasOwnProperty.call(customerPost.opt.payload,'CustomFields'),false);
+assert.equal(Object.prototype.hasOwnProperty.call(customerPost.opt.payload,'Emails'),false);
 assert(customerPost.opt.payload.Phones.some(x=>String(x.Number).replace(/\D/g,'')==='2895551000'));
 
-customer.Emails=[];
-shadowNext='CUSTOMER_EMAIL_CONFIRMED';
+let cp=CF.V2CoreEnsurers.customerCorePreview(row,'100');
+assert.equal(cp.emailShape,'NOT_EXPOSED_BY_GET');
+assert.equal(cp.emailMissing,true);
+assert.equal(cp.directCustomerEmailRequired,false);
+assert.equal(cp.needsWrite,false);
+
+customer.PrimaryContact=null;
+shadowNext='COMPLETE';
 calls.length=0;
-cr=CF.V2CoreEnsurers.executeNext(row['Request ID'],{confirmLiveWrite:true});
-assert.equal(cr.ok,true);
-assert(customer.Emails.some(x=>String(x.Email).toLowerCase()==='test@example.com'));
+p=CF.V2CoreEnsurers.preview(row['Request ID']);
+assert.equal(p.nextRequiredFact,'PRIMARY_CONTACT_CONFIRMED');
+assert.equal(p.nextAction,'ENSURE_PRIMARY_CONTACT');
+
+let pr=CF.V2CoreEnsurers.executeNext(row['Request ID'],{confirmLiveWrite:true});
+assert.equal(pr.ok,true);
+assert.equal(pr.status,'PRIMARY_CONTACT_CONFIRMED_AFTER_WRITE');
+assert.equal(String(customer.PrimaryContact.Id),'200');
+assert.equal(calls.filter(x=>x.path==='/v1/customers'&&x.opt.method==='post').length,1);
 
 contact.CustomerAssociations=[];
-shadowNext='RELATIONSHIP_CONFIRMED';
-delete props.CF_SERVICEOPS_V2_RELATIONSHIP_PAYLOAD_MODE;
-let relBlocked=false;
-try{CF.V2CoreEnsurers.executeNext(row['Request ID'],{confirmLiveWrite:true});}catch(e){relBlocked=/RELATIONSHIP_CONTRACT_UNRESOLVED/.test(e.message);}
-assert.equal(relBlocked,true);
-
-props.CF_SERVICEOPS_V2_RELATIONSHIP_PAYLOAD_MODE='CUSTOMER_OBJECT';
 calls.length=0;
-let rr=CF.V2CoreEnsurers.executeNext(row['Request ID'],{confirmLiveWrite:true});
-assert.equal(rr.ok,true);
-assert.equal(rr.status,'RELATIONSHIP_CONFIRMED_AFTER_WRITE');
-assert.equal(calls.filter(x=>x.path==='/v1/contacts/200/associate-customer'&&x.opt.method==='post').length,1);
+p=CF.V2CoreEnsurers.preview(row['Request ID']);
+assert.equal(p.effectiveRelationship.confirmed,true);
+assert.equal(p.effectiveRelationship.confirmedViaPrimaryContact,true);
+assert.equal(calls.filter(x=>x.path.includes('associate-customer')&&x.opt.method==='post').length,0);
 
+customer.PrimaryContact={Id:999,Name:'Other Person'};
+shadowNext='COMPLETE';
+calls.length=0;
+p=CF.V2CoreEnsurers.preview(row['Request ID']);
+assert.equal(p.nextRequiredFact,'PRIMARY_CONTACT_CONFIRMED');
+let conflict=CF.V2CoreEnsurers.executeNext(row['Request ID'],{confirmLiveWrite:true});
+assert.equal(conflict.ok,false);
+assert.equal(conflict.status,'PRIMARY_CONTACT_CONFLICT_HUMAN_REVIEW');
+assert.equal(calls.filter(x=>x.opt.method==='post').length,0);
+
+customer.PrimaryContact={Id:200,Name:'Test Customer'};
 shadowNext='CONTACT_PHONE_CONFIRMED';
 let op=CF.V2Orchestrator.preview(row['Request ID']);
 assert.equal(op.canonicalState,'SYNCING_CONTACT_CORE');
 assert.equal(op.nextAction,'ENSURE_CONTACT_CORE');
 
+shadowNext='COMPLETE';
+op=CF.V2Orchestrator.preview(row['Request ID']);
+assert.equal(op.facts.primaryContact.status,'PRIMARY_CONTACT_CONFIRMED');
+assert.equal(op.nextRequiredFact,'COMPLETE');
+
 props.CF_SERVICEOPS_V2_MODE='SHADOW';
 let mr=CF.V2Migration.process(row['Request ID'],{confirmLiveWrite:true});
 assert.equal(mr.status,'V2_NOT_CONTROLLING_REQUEST');
 assert.equal(mr.liveWriteExecuted,false);
-
 let sm=CF.V2Migration.setShadowMode();
 assert.equal(props.CF_SERVICEOPS_V2_WRITE_ENABLED,'FALSE');
 assert.equal(sm.mode,'SHADOW');
 
 console.log('V2_CONTROLLER_TEST_PASS');
-console.log(JSON.stringify({tests:9,posts:calls.filter(x=>x.opt.method==='post').length,relationshipPosts:calls.filter(x=>x.path.includes('associate-customer')&&x.opt.method==='post').length}));
+console.log(JSON.stringify({tests:11,posts:calls.filter(x=>x.opt.method==='post').length,relationshipPosts:calls.filter(x=>x.path.includes('associate-customer')&&x.opt.method==='post').length}));
