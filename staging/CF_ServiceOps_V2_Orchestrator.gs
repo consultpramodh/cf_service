@@ -1,7 +1,7 @@
 var CF = CF || {};
 CF.V2Orchestrator = (function () {
 'use strict';
-var VERSION='0.3.1-candidate';
+var VERSION='0.3.2-candidate';
 var JOURNAL_KEY='v2Workflow';
 function clean_(v){return v===null||v===undefined?'':String(v).trim();}
 function upper_(v){return clean_(v).toUpperCase();}
@@ -53,6 +53,7 @@ nextRequiredFact:core.nextRequiredFact||'',
 nextAction:core.nextAction||'',
 facts:facts,
 complete:core.complete===true,
+terminalReason:core.terminalReason||'',
 writesEnabled:core.writesEnabled===true,
 liveWriteExecuted:false
 };
