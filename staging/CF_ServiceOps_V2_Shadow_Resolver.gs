@@ -23,7 +23,7 @@ var CF = CF || {};
 CF.V2ShadowResolver = (function () {
   'use strict';
 
-  var VERSION = '0.1.0-shadow';
+  var VERSION = '0.1.1-shadow';
   var MODULE_NAME = 'CF.V2ShadowResolver';
 
   function deps_() {
@@ -178,7 +178,13 @@ CF.V2ShadowResolver = (function () {
     return 'NOT_EXPOSED_BY_GET';
   }
 
-  function desiredPhones_(record) {
+  function desiredCustomerPhones_(record) {
+    return normalizeIds_([
+      normPhone_(record['Normalized Phone'] || record['Phone'])
+    ]);
+  }
+
+  function desiredContactPhones_(record) {
     return normalizeIds_([
       normPhone_(record['Normalized Phone'] || record['Phone']),
       normPhone_(record['Normalized Alt Phone'] || record['Alt Phone'])
@@ -301,7 +307,6 @@ CF.V2ShadowResolver = (function () {
     var ordered = [
       ['CUSTOMER_CONFIRMED', facts.customer.identity.confirmed && facts.customer.remoteConfirmed],
       ['CUSTOMER_PHONE_CONFIRMED', facts.customer.phone.confirmed],
-      ['CUSTOMER_EMAIL_CONFIRMED', facts.customer.email.confirmed],
       ['LOCATION_CONFIRMED', facts.location.confirmed],
       ['CONTACT_CONFIRMED', facts.contact.identity.confirmed && facts.contact.remoteConfirmed],
       ['CONTACT_PHONE_CONFIRMED', facts.contact.phone.confirmed],
@@ -329,7 +334,8 @@ CF.V2ShadowResolver = (function () {
     var customerGet = customerIdState.ok && customerIdState.id ? getEntity_('CUSTOMER', customerIdState.id) : { ok: false, status: customerIdState.status, body: null };
     var contactGet = contactIdState.ok && contactIdState.id ? getEntity_('CONTACT', contactIdState.id) : { ok: false, status: contactIdState.status, body: null };
 
-    var wantedPhones = desiredPhones_(record);
+    var wantedCustomerPhones = desiredCustomerPhones_(record);
+    var wantedContactPhones = desiredContactPhones_(record);
     var wantedEmail = desiredEmail_(record);
     var customerEmails = customerGet.body ? emailValues_(customerGet.body) : [];
     var customerEmailShape = customerGet.body ? customerEmailShape_(customerGet.body) : 'UNAVAILABLE';
@@ -342,7 +348,7 @@ CF.V2ShadowResolver = (function () {
         remoteConfirmed: customerGet.ok,
         remoteReadStatus: customerGet.status,
         identity: customerGet.ok ? identityFact_(record, customerGet.body, 'CUSTOMER') : { status: customerGet.status, confirmed: false },
-        phone: customerGet.ok ? channelFact_(wantedPhones, phoneValues_(customerGet.body), false) : { status: customerGet.status, confirmed: false, wanted: wantedPhones, actual: [] },
+        phone: customerGet.ok ? channelFact_(wantedCustomerPhones, phoneValues_(customerGet.body), false) : { status: customerGet.status, confirmed: false, wanted: wantedCustomerPhones, actual: [] },
         email: customerGet.ok ? channelFact_([wantedEmail].filter(Boolean), customerEmails, customerEmailShape === 'NOT_EXPOSED_BY_GET') : { status: customerGet.status, confirmed: false, wanted: [wantedEmail].filter(Boolean), actual: [] },
         emailApiShape: customerEmailShape
       },
@@ -352,7 +358,7 @@ CF.V2ShadowResolver = (function () {
         remoteConfirmed: contactGet.ok,
         remoteReadStatus: contactGet.status,
         identity: contactGet.ok ? identityFact_(record, contactGet.body, 'CONTACT') : { status: contactGet.status, confirmed: false },
-        phone: contactGet.ok ? channelFact_(wantedPhones, phoneValues_(contactGet.body), false) : { status: contactGet.status, confirmed: false, wanted: wantedPhones, actual: [] },
+        phone: contactGet.ok ? channelFact_(wantedContactPhones, phoneValues_(contactGet.body), false) : { status: contactGet.status, confirmed: false, wanted: wantedContactPhones, actual: [] },
         email: contactGet.ok ? channelFact_([wantedEmail].filter(Boolean), emailValues_(contactGet.body), false) : { status: contactGet.status, confirmed: false, wanted: [wantedEmail].filter(Boolean), actual: [] }
       },
       location: locationFact_(record, locationIdState),
