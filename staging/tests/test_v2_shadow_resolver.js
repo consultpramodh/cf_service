@@ -66,12 +66,12 @@ const results = [];
 results.push(runCase('complete', { ...baseRow }, { customer: customerComplete, contact: contactComplete }, 'COMPLETE'));
 results.push(runCase('customer email missing', { ...baseRow, 'Request ID': 'SR-TEST-2' }, {
   customer: { ...customerComplete, Emails: [] }, contact: contactComplete
-}, 'CUSTOMER_EMAIL_CONFIRMED', out => assert.strictEqual(out.facts.customer.email.status, 'MISSING')));
+}, 'COMPLETE', out => assert.strictEqual(out.facts.customer.email.status, 'MISSING')));
 
 const noEmailShape = { ...customerComplete }; delete noEmailShape.Emails;
 results.push(runCase('customer email API shape unresolved', { ...baseRow, 'Request ID': 'SR-TEST-3' }, {
   customer: noEmailShape, contact: contactComplete
-}, 'CUSTOMER_EMAIL_CONFIRMED', out => assert.strictEqual(out.facts.customer.email.status, 'API_FIELD_UNRESOLVED')));
+}, 'COMPLETE', out => assert.strictEqual(out.facts.customer.email.status, 'API_FIELD_UNRESOLVED')));
 
 results.push(runCase('relationship missing', { ...baseRow, 'Request ID': 'SR-TEST-4' }, {
   customer: customerComplete, contact: { ...contactComplete, CustomerAssociations: [] }
@@ -81,11 +81,18 @@ results.push(runCase('contact email missing', { ...baseRow, 'Request ID': 'SR-TE
   customer: customerComplete, contact: { ...contactComplete, Emails: [] }
 }, 'CONTACT_EMAIL_CONFIRMED', out => assert.strictEqual(out.facts.contact.email.status, 'MISSING')));
 
-results.push(runCase('customer phone missing', { ...baseRow, 'Request ID': 'SR-TEST-6' }, {
+results.push(runCase('customer alternate phone does not gate', { ...baseRow, 'Request ID': 'SR-TEST-6' }, {
   customer: { ...customerComplete, Phones: [{ Number: '4165551000' }] }, contact: contactComplete
+}, 'COMPLETE', out => {
+  assert.strictEqual(out.facts.customer.phone.status, 'CONFIRMED');
+  assert.deepStrictEqual(Array.from(out.facts.customer.phone.wanted), ['4165551000']);
+}));
+
+results.push(runCase('customer primary phone missing', { ...baseRow, 'Request ID': 'SR-TEST-6B' }, {
+  customer: { ...customerComplete, Phones: [{ Number: '6475552000' }] }, contact: contactComplete
 }, 'CUSTOMER_PHONE_CONFIRMED', out => {
   assert.strictEqual(out.facts.customer.phone.status, 'MISSING');
-  assert.deepStrictEqual(Array.from(out.facts.customer.phone.missing), ['6475552000']);
+  assert.deepStrictEqual(Array.from(out.facts.customer.phone.missing), ['4165551000']);
 }));
 
 const conflictRow = { ...baseRow, 'Request ID': 'SR-TEST-7', 'Created Customer ID': '999' };
