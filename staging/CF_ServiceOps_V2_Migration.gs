@@ -14,7 +14,7 @@ var CF = CF || {};
 CF.V2Migration = (function () {
   'use strict';
 
-  var VERSION='0.5.0-candidate';
+  var VERSION='0.5.1-candidate';
   var MODE_PROP='CF_SERVICEOPS_V2_MODE';
   var SELECTED_PROP='CF_SERVICEOPS_V2_SELECTED_REQUEST_IDS';
   var WRITE_PROP='CF_SERVICEOPS_V2_WRITE_ENABLED';
@@ -47,14 +47,14 @@ CF.V2Migration = (function () {
   function readiness_(){
     var regression=regressionReadiness_();
     return {
-      ok:regression.ok&&relationshipModeReady_(),
+      ok:regression.ok,
       version:VERSION,
       mode:mode_(),
       modules:requiredModules_(),
       regression:regression,
       relationshipPayloadModeReady:relationshipModeReady_(),
       writesEnabled:upper_(props_().getProperty(WRITE_PROP))==='TRUE',
-      note:'Customer email readiness is evaluated per request from direct Customer GET shape; an unobservable shape blocks that write safely.'
+      note:'Direct Customer email is diagnostic only; customer-facing email is verified on Contact/PrimaryContact. Relationship payload mode is a fallback contract and is enforced only if a request actually reaches ENSURE_RELATIONSHIP.'
     };
   }
 
