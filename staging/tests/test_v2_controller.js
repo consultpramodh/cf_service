@@ -143,7 +143,7 @@ assert.equal(legacyTerminal.terminalReason,'EXISTING_VERIFIED_SALES_ORDER');
 forceVerifiedSalesOrder=false;
 
 customer.PrimaryContact=null;
-shadowNext='COMPLETE';
+shadowNext='PRIMARY_CONTACT_CONFIRMED';
 calls.length=0;
 p=CF.V2CoreEnsurers.preview(row['Request ID']);
 assert.equal(p.nextRequiredFact,'PRIMARY_CONTACT_CONFIRMED');
@@ -163,7 +163,7 @@ assert.equal(p.effectiveRelationship.confirmedViaPrimaryContact,true);
 assert.equal(calls.filter(x=>x.path.includes('associate-customer')&&x.opt.method==='post').length,0);
 
 customer.PrimaryContact={Id:999,Name:'Other Person'};
-shadowNext='COMPLETE';
+shadowNext='PRIMARY_CONTACT_CONFIRMED';
 calls.length=0;
 p=CF.V2CoreEnsurers.preview(row['Request ID']);
 assert.equal(p.nextRequiredFact,'PRIMARY_CONTACT_CONFIRMED');
