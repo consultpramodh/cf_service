@@ -94,9 +94,32 @@ var answer=ui.alert(
 ui.ButtonSet.YES_NO
 );
 if(answer!==ui.Button.YES)return {ok:false,status:'USER_CANCELLED',requestId:requestId,liveWriteExecuted:false};
-var out=CF.V2Orchestrator.processRequest(requestId,{confirmLiveWrite:true,updateOperatorView:true});
+if(!CF.V2Migration||typeof CF.V2Migration.process!=='function')throw new Error('CF.V2Migration is not installed.');
+var out=CF.V2Migration.process(requestId,{confirmLiveWrite:true});
 V2_writeShadowResult_(CF.V2Orchestrator.preview(requestId),CF.V2CoreEnsurers.certifyContracts(requestId));
 console.log('V2 GUARDED SELECTED ROW: '+JSON.stringify(out));
+return out;
+}
+function V2_ENABLE_SELECTED_currentRequest() {
+var requestId=V2_selectedRequestId_();
+if(!CF.V2Migration||typeof CF.V2Migration.setSelectedMode!=='function')throw new Error('CF.V2Migration is not installed.');
+var ui=SpreadsheetApp.getUi();
+var answer=ui.alert(
+'CF ServiceOps V2 — Enable One Selected Request',
+'Enable V2 writes for ONLY '+requestId+'? All other requests remain on the legacy workflow.',
+ui.ButtonSet.YES_NO
+);
+if(answer!==ui.Button.YES)return {ok:false,status:'USER_CANCELLED',requestId:requestId};
+var out=CF.V2Migration.setSelectedMode([requestId]);
+SpreadsheetApp.getActive().toast('V2 SELECTED mode enabled for '+requestId,'CF ServiceOps V2',8);
+console.log('V2 SELECTED MODE ENABLED: '+JSON.stringify(out));
+return out;
+}
+function V2_RETURN_TO_SHADOW() {
+if(!CF.V2Migration||typeof CF.V2Migration.setShadowMode!=='function')throw new Error('CF.V2Migration is not installed.');
+var out=CF.V2Migration.setShadowMode();
+SpreadsheetApp.getActive().toast('V2 returned to SHADOW. Writes are OFF.','CF ServiceOps V2',8);
+console.log('V2 RETURNED TO SHADOW: '+JSON.stringify(out));
 return out;
 }
 function V2_addMenu() {
@@ -105,6 +128,8 @@ SpreadsheetApp.getUi().createMenu('ServiceOps V2')
 .addItem('Run Known Regression Set','V2_TEST_regressionSet')
 .addItem('Certify API Contracts (Read Only)','V2_CERTIFY_selectedRowContracts')
 .addSeparator()
+.addItem('Enable V2 for CURRENT Request Only','V2_ENABLE_SELECTED_currentRequest')
 .addItem('Run ONE Guarded V2 Action','V2_PROCESS_selectedRowGuarded')
+.addItem('Return V2 to SHADOW / Writes OFF','V2_RETURN_TO_SHADOW')
 .addToUi();
 }
