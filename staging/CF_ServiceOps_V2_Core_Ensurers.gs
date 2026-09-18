@@ -1,7 +1,7 @@
 var CF = CF || {};
 CF.V2CoreEnsurers = (function () {
 'use strict';
-var VERSION = '0.2.1-candidate';
+var VERSION = '0.2.2-candidate';
 var WRITE_FLAG = 'CF_SERVICEOPS_V2_WRITE_ENABLED';
 var REL_MODE_PROP = 'CF_SERVICEOPS_V2_RELATIONSHIP_PAYLOAD_MODE';
 var REL_ENDPOINT = '/v1/contacts/{contactId}/associate-customer';
@@ -26,7 +26,12 @@ function body_(response){return response&&response.json&&typeof response.json===
 function get_(path){return body_(deps_().h.requestJson(path,{method:'get',attempts:1,idempotent:true}));}
 function post_(path,payload){return deps_().h.requestJson(path,{method:'post',payload:payload,attempts:1,idempotent:false});}
 function endpoint_(tpl,id){return tpl.replace('{contactId}',encodeURIComponent(String(id)));}
-function desiredPhones_(r){
+function desiredCustomerPhones_(r){
+return unique_([
+normPhone_(r&&r['Normalized Phone']||r&&r['Phone'])
+]);
+}
+function desiredContactPhones_(r){
 return unique_([
 normPhone_(r&&r['Normalized Phone']||r&&r['Phone']),
 normPhone_(r&&r['Normalized Alt Phone']||r&&r['Alt Phone'])
@@ -113,6 +118,14 @@ customerIds:rawRelationship.customerIds||[],
 rawStatus:clean_(rawRelationship.status),
 confirmedViaPrimaryContact:primary.confirmed===true
 };
+if(salesOrder.confirmed===true){
+return {
+ok:true,status:'V2_WORKFLOW_PLAN_EXISTING_VERIFIED_SALES_ORDER',requestId:clean_(requestId),shadow:shadow,
+customerId:customerId,contactId:contactId,primaryContact:primary,effectiveRelationship:effectiveRelationship,
+nextRequiredFact:'COMPLETE',nextAction:'COMPLETE',complete:true,
+terminalReason:'EXISTING_VERIFIED_SALES_ORDER',liveWriteExecuted:false
+};
+}
 var ordered=[
 ['CUSTOMER_CONFIRMED',customer.remoteConfirmed===true&&customer.identity&&customer.identity.confirmed===true],
 ['CUSTOMER_PHONE_CONFIRMED',customer.phone&&customer.phone.confirmed===true],
@@ -186,7 +199,7 @@ return CF.StrivenControlledContactCreate.executeAutoContactCreate(requestId);
 function customerCorePreview_(r,customerId){
 var remote=get_('/v1/customers/'+encodeURIComponent(customerId));
 if(id_(remote)!==clean_(customerId))return {ok:false,status:'CUSTOMER_GET_ID_MISMATCH',customerId:customerId};
-var wantedPhones=desiredPhones_(r),actualPhones=remotePhones_(remote),wantedEmail=desiredEmail_(r),actualEmails=remoteEmails_(remote);
+var wantedPhones=desiredCustomerPhones_(r),actualPhones=remotePhones_(remote),wantedEmail=desiredEmail_(r),actualEmails=remoteEmails_(remote);
 var missingPhones=wantedPhones.filter(function(x){return actualPhones.indexOf(x)===-1;});
 var shape=emailShape_(remote),emailMissing=!!wantedEmail&&actualEmails.indexOf(wantedEmail)===-1;
 return {
@@ -200,7 +213,7 @@ needsWrite:missingPhones.length>0,liveWriteExecuted:false
 function contactCorePreview_(r,contactId){
 var remote=get_('/v1/contacts/'+encodeURIComponent(contactId));
 if(id_(remote)!==clean_(contactId))return {ok:false,status:'CONTACT_GET_ID_MISMATCH',contactId:contactId};
-var wantedPhones=desiredPhones_(r),actualPhones=remotePhones_(remote),wantedEmail=desiredEmail_(r),actualEmails=remoteEmails_(remote);
+var wantedPhones=desiredContactPhones_(r),actualPhones=remotePhones_(remote),wantedEmail=desiredEmail_(r),actualEmails=remoteEmails_(remote);
 return {
 ok:true,status:'CONTACT_CORE_PREVIEW',contactId:contactId,remote:remote,
 wantedPhones:wantedPhones,actualPhones:actualPhones,
