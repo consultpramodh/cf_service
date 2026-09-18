@@ -10,7 +10,7 @@ global.PropertiesService={getScriptProperties:()=>({
 
 const row={
   'Request ID':'SR-TEST-1','First Name':'Test','Last Name':'Customer','Full Name':'Test Customer',
-  'Phone':'289-555-1000','Normalized Phone':'2895551000','Email':'test@example.com','Normalized Email':'test@example.com',
+  'Phone':'289-555-1000','Normalized Phone':'2895551000','Alt Phone':'289-555-2000','Normalized Alt Phone':'2895552000','Email':'test@example.com','Normalized Email':'test@example.com',
   'Matched Customer ID':'100','Created Customer ID':'100','Matched Contact ID':'200','Created Contact ID':'200',
   'Matched Location ID':'300','Created Location ID':'300','Location Match Status':'MATCHED',
   'Duplicate Risk Status':'NONE','Current Stage':'CUSTOMER STRUCTURE COMPLETE','Final Outcome':'',
@@ -64,6 +64,7 @@ function relationshipFromContact(){
   const ids=(contact.CustomerAssociations||[]).map(x=>String(x.Id||x.CustomerId||''));
   return {status:ids.includes('100')?'CONFIRMED':(ids.length?'CONFLICT':'MISSING'),confirmed:ids.includes('100'),customerIds:ids};
 }
+let forceVerifiedSalesOrder=false;
 function makeShadow(next){
   return {
     ok:true,version:'test',requestId:row['Request ID'],nextRequiredFact:next,complete:next==='COMPLETE',
@@ -72,7 +73,7 @@ function makeShadow(next){
       contact:{id:'200',remoteConfirmed:true,remoteReadStatus:'GET_CONFIRMED',identity:{status:'CONFIRMED',confirmed:true},phone:{status:next==='CONTACT_PHONE_CONFIRMED'?'MISSING':'CONFIRMED',confirmed:next!=='CONTACT_PHONE_CONFIRMED'},email:{status:next==='CONTACT_EMAIL_CONFIRMED'?'MISSING':'CONFIRMED',confirmed:next!=='CONTACT_EMAIL_CONFIRMED'}},
       location:{id:'300',status:'CONFIRMED',confirmed:true},
       relationship:relationshipFromContact(),
-      salesOrder:{status:next==='SALES_ORDER_CONFIRMED'?'MISSING':'CONFIRMED',confirmed:next!=='SALES_ORDER_CONFIRMED',id:next==='SALES_ORDER_CONFIRMED'?'':'400',number:next==='SALES_ORDER_CONFIRMED'?'':'500'}
+      salesOrder:{status:(next==='COMPLETE'||forceVerifiedSalesOrder)?'CONFIRMED':'MISSING',confirmed:(next==='COMPLETE'||forceVerifiedSalesOrder),id:(next==='COMPLETE'||forceVerifiedSalesOrder)?'400':'',number:(next==='COMPLETE'||forceVerifiedSalesOrder)?'500':''}
     }
   };
 }
@@ -125,12 +126,21 @@ assert(customerPost);
 assert.equal(Object.prototype.hasOwnProperty.call(customerPost.opt.payload,'CustomFields'),false);
 assert.equal(Object.prototype.hasOwnProperty.call(customerPost.opt.payload,'Emails'),false);
 assert(customerPost.opt.payload.Phones.some(x=>String(x.Number).replace(/\D/g,'')==='2895551000'));
+assert(!customerPost.opt.payload.Phones.some(x=>String(x.Number).replace(/\D/g,'')==='2895552000'));
 
 let cp=CF.V2CoreEnsurers.customerCorePreview(row,'100');
+assert.deepStrictEqual(cp.wantedPhones,['2895551000']);
 assert.equal(cp.emailShape,'NOT_EXPOSED_BY_GET');
 assert.equal(cp.emailMissing,true);
 assert.equal(cp.directCustomerEmailRequired,false);
 assert.equal(cp.needsWrite,false);
+
+forceVerifiedSalesOrder=true;
+shadowNext='CUSTOMER_PHONE_CONFIRMED';
+let legacyTerminal=CF.V2CoreEnsurers.preview(row['Request ID']);
+assert.equal(legacyTerminal.nextRequiredFact,'COMPLETE');
+assert.equal(legacyTerminal.terminalReason,'EXISTING_VERIFIED_SALES_ORDER');
+forceVerifiedSalesOrder=false;
 
 customer.PrimaryContact=null;
 shadowNext='COMPLETE';
