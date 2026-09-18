@@ -191,5 +191,23 @@ let sm=CF.V2Migration.setShadowMode();
 assert.equal(props.CF_SERVICEOPS_V2_WRITE_ENABLED,'FALSE');
 assert.equal(sm.mode,'SHADOW');
 
+let readiness=CF.V2Migration.readiness();
+assert.equal(readiness.ok,true);
+assert.equal(readiness.relationshipPayloadModeReady,false);
+
+let selected=CF.V2Migration.setSelectedMode([row['Request ID']]);
+assert.equal(selected.mode,'SELECTED');
+assert.equal(props.CF_SERVICEOPS_V2_WRITE_ENABLED,'TRUE');
+assert.equal(CF.V2Migration.isV2Request(row['Request ID']),true);
+
+props.CF_SERVICEOPS_V2_SELECTED_REQUEST_IDS='SR-OTHER';
+calls.length=0;
+let notSelected=CF.V2Migration.process(row['Request ID'],{confirmLiveWrite:true});
+assert.equal(notSelected.status,'V2_REQUEST_NOT_SELECTED');
+assert.equal(notSelected.liveWriteExecuted,false);
+assert.equal(calls.filter(x=>x.opt.method==='post').length,0);
+
+CF.V2Migration.setShadowMode();
+
 console.log('V2_CONTROLLER_TEST_PASS');
-console.log(JSON.stringify({tests:11,posts:calls.filter(x=>x.opt.method==='post').length,relationshipPosts:calls.filter(x=>x.path.includes('associate-customer')&&x.opt.method==='post').length}));
+console.log(JSON.stringify({tests:15,posts:calls.filter(x=>x.opt.method==='post').length,relationshipPosts:calls.filter(x=>x.path.includes('associate-customer')&&x.opt.method==='post').length}));
