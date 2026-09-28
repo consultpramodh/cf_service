@@ -4439,11 +4439,77 @@ function executeControlledContactCreate(requestIdOrRow, options) {
       if(!record)return{ok:false,status:'SERVICE_REQUEST_NOT_FOUND',requestId:clean_(requestIdOrRow),liveWriteExecuted:false};
       var customerId=resolvedCustomerId_(record),contactId=resolvedContactId_(record);
       if(!customerId||!contactId)return{ok:false,status:'CONTACT_ASSOCIATION_IDS_INCOMPLETE',requestId:clean_(record['Request ID']),matchedCustomerId:customerId,matchedContactId:contactId,liveWriteExecuted:false};
+
+      var before=contactJournal_(record),prior=clone_(before.contact||{});
       var result=reconcileKnownContact_(record,contactId,customerId);
+
+      // If ownership is still unobservable after a prior association attempt,
+      // keep the request at a GET-only technical boundary. Never expose a route
+      // that could replay the association POST.
+      if(result&&result.status==='CONTACT_CREATED_ASSOCIATION_REQUIRED'&&Number(prior.associationAttempts||0)>0){
+        var fresh=request_(record.__rowNumber)||record;
+        var state=contactJournal_(fresh),cj=clone_(state.contact||prior||{});
+        cj.associationStatus='READ_ONLY_RECONCILE_REQUIRED';
+        cj.status='CONTACT_ASSOCIATION_GET_ONLY_RECONCILE_REQUIRED';
+        cj.technicalRecovery=cj.technicalRecovery||{};
+        cj.technicalRecovery.status='GET_ONLY_ASSOCIATION_VERIFICATION_REQUIRED';
+        cj.technicalRecovery.customerId=customerId;
+        cj.technicalRecovery.contactId=contactId;
+        cj.technicalRecovery.noAutomaticWriteRetry=true;
+        state.root.contactCreate=cj;
+        patchRequest_(fresh,{
+          'Updated At':deps_().util.nowString(),
+          'Current Stage':'NEEDS REVIEW',
+          'Request Status':'BLOCKED',
+          'Manual Review?':'NO',
+          'Manual Review Reason':'',
+          'Blocking Issue':'A prior Contact association write crossed the boundary, but current GET/cache still does not expose the Customer relationship. Continue GET-only verification; do not POST again.',
+          'Next Action':'GET-ONLY VERIFY CONTACT '+contactId+' → CUSTOMER '+customerId+' — DO NOT POST',
+          'Contact Association Status':'RECONCILE',
+          'Customer Structure Status':'CONTACT RECONCILED — ASSOCIATION UNVERIFIED',
+          'Write Journal JSON':safeJson_(state.root),
+          'Striven Sync Status':'RECONCILE REQUIRED',
+          'Striven Sync Error':'',
+          'Reconciliation Status':'TECHNICAL RECOVERY — GET-ONLY ASSOCIATION VERIFICATION REQUIRED'
+        });
+        result={ok:false,status:'CONTACT_ASSOCIATION_GET_ONLY_RECONCILE_REQUIRED',requestId:clean_(fresh['Request ID']),matchedContactId:contactId,matchedCustomerId:customerId,readOnlyRecoveryRequired:true,liveWriteExecuted:false,automaticPostRetry:false};
+      }
+      result=result||{ok:false,status:'CONTACT_ASSOCIATION_READ_ONLY_RECONCILE_EMPTY_RESULT',requestId:clean_(record['Request ID']),liveWriteExecuted:false};
       result.readOnlyRecovery=true;
       result.automaticPostRetry=false;
       return result;
     });
+  }
+
+  function recoverTechnicalAssociationsReadOnly(limit) {
+    limit=Math.max(1,Math.min(25,Number(limit||10)));
+    var rows=deps_().util.readRecords('SERVICE_REQUESTS'),selected=[];
+    rows.forEach(function(row){
+      if(selected.length>=limit)return;
+      var recon=upper_(row['Reconciliation Status']),assoc=upper_(row['Contact Association Status']),status=upper_(row['Request Status']);
+      var technical=recon.indexOf('TECHNICAL NO PROGRESS')!==-1||recon.indexOf('GET-ONLY ASSOCIATION VERIFICATION REQUIRED')!==-1||(assoc==='RECONCILE'&&status==='BLOCKED');
+      if(technical)selected.push(row);
+    });
+    var results=[];
+    selected.forEach(function(row){
+      var customerId=resolvedCustomerId_(row),contactId=resolvedContactId_(row);
+      if(!customerId||!contactId){
+        results.push({ok:false,status:'CONTACT_ASSOCIATION_IDS_INCOMPLETE',requestId:clean_(row['Request ID']),matchedCustomerId:customerId,matchedContactId:contactId,liveWriteExecuted:false});
+        return;
+      }
+      results.push(reconcileContactAssociationReadOnly(row.__rowNumber));
+    });
+    return{
+      ok:results.every(function(x){return x&&x.ok!==false||x&&x.status==='CONTACT_ASSOCIATION_GET_ONLY_RECONCILE_REQUIRED';}),
+      version:VERSION,
+      status:'TECHNICAL_ASSOCIATION_READ_ONLY_BATCH_COMPLETE',
+      checked:results.length,
+      verifiedAssociated:results.filter(function(x){return x&&String(x.status||'').indexOf('CONTACT_ASSOCIATED_RECONCILED')===0;}).length,
+      getOnlyPending:results.filter(function(x){return x&&x.status==='CONTACT_ASSOCIATION_GET_ONLY_RECONCILE_REQUIRED';}).length,
+      results:results,
+      liveWriteExecuted:false,
+      automaticPostRetry:false
+    };
   }
 
   return {
@@ -4453,6 +4519,7 @@ function executeControlledContactCreate(requestIdOrRow, options) {
     previewAutoContactCreate: previewAutoContactCreate,
     executeAutoContactCreate: executeAutoContactCreate,
     reconcileContactAssociationReadOnly: reconcileContactAssociationReadOnly,
+    recoverTechnicalAssociationsReadOnly: recoverTechnicalAssociationsReadOnly,
     inspectReadiness: inspectReadiness
   };
 })();
