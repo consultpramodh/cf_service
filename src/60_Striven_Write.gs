@@ -118,7 +118,7 @@ CF.StrivenWrite = (function () {
       );
 
     return {
-      Name: 'Primary Location',
+      Name: clean_(record['Street'] || record['Full Name'] || 'Primary Location'),
       Address1: clean_(record['Street']),
       City: clean_(record['City']),
       State: provinceCode_(record['Province']),
@@ -2475,7 +2475,7 @@ CF.StrivenControlledCustomerCreate = (function () {
     return {
       // Live-verified from Striven HTTP 400 on 2026-08-20:
       // customer.PrimaryLocation.LocationName is required.
-      LocationName: 'Primary Location',
+      LocationName: clean_(record['Street'] || record['Full Address'] || 'Primary Location'),
       Address1: clean_(record['Street']),
       City: clean_(record['City']),
       State: normalizeProvinceForStriven_(record['Province']),
@@ -2677,126 +2677,6 @@ CF.StrivenControlledCustomerCreate = (function () {
       return rowStreet===requestStreet&&rowPostal===requestPostal;
     });
     return tagLocationMatches_(streetPostal,'CUSTOMER_ID + EXACT_STREET + POSTAL');
-  }
-
-  /* CF_SERVICEOPS_V5_13_5_CUSTOMER_PROFILE_LOCATION_AUTHORITY_R1
-   * Source-of-truth order:
-   *   1) GET /v1/customers/{id}/locations
-   *   2) legacy Customer Location search only as a duplicate/read fallback
-   *   3) confirmed Customer PrimaryContact/Contact address as recovery evidence
-   * No Location POST is allowed merely because the cache is stale.
-   */
-  function apiRows_(body) {
-    if (Array.isArray(body)) return body;
-    body = body || {};
-    var candidates = [body.Data, body.data, body.Items, body.items, body.Results, body.results, body.Records, body.records];
-    for (var i = 0; i < candidates.length; i++) {
-      if (Array.isArray(candidates[i])) return candidates[i];
-      if (candidates[i] && typeof candidates[i] === 'object') {
-        var nested = candidates[i].Data || candidates[i].data || candidates[i].Items || candidates[i].items || candidates[i].Results || candidates[i].results || candidates[i].Records || candidates[i].records;
-        if (Array.isArray(nested)) return nested;
-      }
-    }
-    return [];
-  }
-
-  function apiLocationAddress_(row) {
-    row = row || {};
-    return row.Address || row.address || {};
-  }
-
-  function apiAddressFull_(address) {
-    address = address || {};
-    var direct = clean_(address.FullAddress || address.fullAddress);
-    if (direct) return direct;
-    return [
-      clean_(address.Address1 || address.address1),
-      clean_(address.Address2 || address.address2),
-      clean_(address.City || address.city),
-      clean_(address.State || address.state),
-      clean_(address.PostalCode || address.postalCode),
-      clean_(address.Country || address.country)
-    ].filter(Boolean).join(', ');
-  }
-
-  function apiAddressMatchesRequest_(record, address) {
-    var d = deps_();
-    address = address || {};
-    var requestNormalized = clean_(record['Normalized Address']) || d.util.normalizeAddress(record['Full Address']);
-    var apiFull = apiAddressFull_(address);
-    var apiNormalized = apiFull ? d.util.normalizeAddress(apiFull) : '';
-    if (requestNormalized && apiNormalized && requestNormalized === apiNormalized) return true;
-
-    var requestStreet = semanticStreetKey_(record['Street']);
-    var requestPostal = semanticPostalKey_(record['Normalized Postal'] || record['Postal Code']);
-    var apiStreet = semanticStreetKey_(address.Address1 || address.address1);
-    var apiPostal = semanticPostalKey_(address.PostalCode || address.postalCode);
-    return !!requestStreet && !!requestPostal && requestStreet === apiStreet && requestPostal === apiPostal;
-  }
-
-  function apiLocationCandidate_(row, method) {
-    row = row || {};
-    var a = apiLocationAddress_(row);
-    return {
-      'Location ID': clean_(row.Id || row.id || row.LocationId || row.locationId),
-      'Location Name': clean_(row.Name || row.name),
-      'Full Address': apiAddressFull_(a),
-      'Postal Code': clean_(a.PostalCode || a.postalCode),
-      'Normalized Postal': semanticPostalKey_(a.PostalCode || a.postalCode),
-      '__cfLocationMatchMethod': method || 'CUSTOMER_PROFILE_LOCATIONS_GET + EXACT_ADDRESS',
-      '__cfLocationIsPrimary': row.IsPrimary === true || String(row.IsPrimary || row.isPrimary).toLowerCase() === 'true'
-    };
-  }
-
-  function directCustomerLocationCandidates_(record, customerId) {
-    var d = deps_();
-    var endpoint = d.config.getEndpoint('CUSTOMER_LOCATIONS_GET', { customerId: customerId });
-    var response = d.http.requestJson(endpoint, { method: 'get', attempts: 1, idempotent: true });
-    var body = response && response.json ? response.json : {};
-    var rows = apiRows_(body);
-    var matches = rows.filter(function (row) {
-      return clean_(row.Id || row.id || row.LocationId || row.locationId) && apiAddressMatchesRequest_(record, apiLocationAddress_(row));
-    }).map(function (row) {
-      return apiLocationCandidate_(row, 'CUSTOMER_PROFILE_LOCATIONS_GET + EXACT_ADDRESS');
-    });
-    return {
-      ok: true,
-      endpoint: endpoint,
-      totalCount: Number(body.TotalCount || body.totalCount || rows.length || 0),
-      rows: rows,
-      matches: matches
-    };
-  }
-
-  function customerContactLocationEvidence_(record, customerId) {
-    var d = deps_();
-    var customerEndpoint = d.config.getEndpoint('CUSTOMERS') + '/' + encodeURIComponent(String(customerId));
-    var customerResponse = d.http.requestJson(customerEndpoint, { method: 'get', attempts: 1, idempotent: true });
-    var customer = customerResponse && customerResponse.json ? customerResponse.json : {};
-    var primaryContact = customer.PrimaryContact || customer.primaryContact || {};
-    var contactId = clean_(record['Matched Contact ID'] || record['Created Contact ID'] || primaryContact.Id || primaryContact.id);
-    if (!contactId) {
-      return { ok: false, status: 'CUSTOMER_PRIMARY_CONTACT_NOT_AVAILABLE', customerId: customerId, contactId: '' };
-    }
-
-    var contactEndpoint = d.config.getEndpoint('CONTACTS') + '/' + encodeURIComponent(String(contactId));
-    var contactResponse = d.http.requestJson(contactEndpoint, { method: 'get', attempts: 1, idempotent: true });
-    var contact = contactResponse && contactResponse.json ? contactResponse.json : {};
-    var address = contact.Address || contact.address || {};
-    var hasAddress = !!clean_(address.Address1 || address.address1 || address.FullAddress || address.fullAddress);
-    if (!hasAddress) {
-      return { ok: false, status: 'CONTACT_ADDRESS_NOT_AVAILABLE', customerId: customerId, contactId: contactId };
-    }
-
-    var matches = apiAddressMatchesRequest_(record, address);
-    return {
-      ok: matches,
-      status: matches ? 'CONTACT_ADDRESS_MATCH_CONFIRMED' : 'CONTACT_ADDRESS_DOES_NOT_MATCH_REQUEST',
-      customerId: customerId,
-      contactId: contactId,
-      address: address,
-      fullAddress: apiAddressFull_(address)
-    };
   }
 
   function parseHttpError_(error) {
@@ -3093,21 +2973,8 @@ CF.StrivenControlledCustomerCreate = (function () {
 
   function reconcileKnownCustomer_(record, journal, customerId) {
     var d = deps_();
-    var profileRead = null;
-    var profileReadError = null;
-    var locations = [];
-
-    try {
-      profileRead = directCustomerLocationCandidates_(record, customerId);
-      locations = profileRead.matches || [];
-    } catch (error) {
-      profileReadError = error;
-      locations = exactLocationCandidates_(record, customerId);
-      locations.forEach(function (row) {
-        row.__cfLocationMatchMethod = 'CACHE_FALLBACK_AFTER_CUSTOMER_PROFILE_GET_FAILED + ' +
-          (clean_(row.__cfLocationMatchMethod) || 'EXACT_ADDRESS');
-      });
-    }
+    var refresh = refreshLocationAfterPostIfNeeded_(journal || {});
+    var locations = exactLocationCandidates_(record, customerId);
 
     if (locations.length === 1) {
       var locationId = clean_(locations[0]['Location ID']);
@@ -3117,10 +2984,7 @@ CF.StrivenControlledCustomerCreate = (function () {
       updatedJournal.reconciliation.lastAttemptAt = d.util.nowString();
       updatedJournal.reconciliation.customerId = customerId;
       updatedJournal.reconciliation.locationId = locationId;
-      updatedJournal.reconciliation.locationMatchMethod = clean_(locations[0].__cfLocationMatchMethod) || 'CUSTOMER_PROFILE_LOCATIONS_GET + EXACT_ADDRESS';
-      updatedJournal.reconciliation.customerLocationsEndpoint = profileRead && profileRead.endpoint || '';
-      updatedJournal.reconciliation.customerLocationsTotalCount = profileRead && profileRead.totalCount || 0;
-      updatedJournal.reconciliation.customerProfileLocationsReadOk = !!profileRead;
+      updatedJournal.reconciliation.locationMatchMethod = clean_(locations[0].__cfLocationMatchMethod) || 'CUSTOMER_ID + EXACT_NORMALIZED_ADDRESS';
 
       patchRequest_(record, {
         'Updated At': d.util.nowString(),
@@ -3154,237 +3018,51 @@ CF.StrivenControlledCustomerCreate = (function () {
         requestId: clean_(record['Request ID']),
         matchedCustomerId: customerId,
         matchedLocationId: locationId,
-        locationMatchMethod: updatedJournal.reconciliation.locationMatchMethod,
-        customerProfileLocationsReadOk: !!profileRead,
+        locationMatchMethod: clean_(locations[0].__cfLocationMatchMethod) || 'CUSTOMER_ID + EXACT_NORMALIZED_ADDRESS',
         liveWriteExecuted: false,
-        locationRefreshExecuted: false
+        locationRefreshExecuted: refresh.refreshed
       };
     }
 
-    if (locations.length > 1) {
-      var ambiguousJournal = clone_(journal || {});
-      ambiguousJournal.status = 'PRIMARY_LOCATION_AMBIGUOUS';
-      ambiguousJournal.reconciliation = ambiguousJournal.reconciliation || {};
-      ambiguousJournal.reconciliation.lastAttemptAt = d.util.nowString();
-      ambiguousJournal.reconciliation.customerId = customerId;
-      ambiguousJournal.reconciliation.locationCandidateCount = locations.length;
-      ambiguousJournal.reconciliation.locationCandidates = locations.map(function (row) { return clean_(row['Location ID']); });
-      ambiguousJournal.reconciliation.customerProfileLocationsReadOk = !!profileRead;
-
-      patchRequest_(record, {
-        'Updated At': d.util.nowString(),
-        'Current Stage': 'NEEDS REVIEW',
-        'Request Status': 'BLOCKED',
-        'Manual Review?': 'YES',
-        'Manual Review Reason': 'Multiple exact Customer Locations match the submitted service address. Do not create another Location.',
-        'Blocking Issue': 'Multiple exact Customer Locations match the submitted service address. Do not create another Location.',
-        'Next Action': 'REVIEW LOCATION CANDIDATES',
-        'Customer Match Status': 'MATCHED',
-        'Matched Customer ID': customerId,
-        'Customer Action': 'LINK EXISTING',
-        'Location Action': 'LINK EXISTING',
-        'Customer Structure Status': 'CUSTOMER CONFIRMED — LOCATION AMBIGUOUS',
-        'Striven Sync Status': 'BLOCKED',
-        'Striven Sync Error': '',
-        'Last Striven Sync': d.util.nowString(),
-        'Reconciliation Status': 'PRIMARY_LOCATION_AMBIGUOUS',
-        'Write Journal JSON': safeJson_(ambiguousJournal)
-      });
-
-      return {
-        ok: false,
-        status: 'PRIMARY_LOCATION_AMBIGUOUS',
-        requestId: clean_(record['Request ID']),
-        matchedCustomerId: customerId,
-        matchedLocationId: '',
-        locationCandidates: ambiguousJournal.reconciliation.locationCandidates,
-        liveWriteExecuted: false,
-        locationRefreshExecuted: false
-      };
-    }
-
-    if (!profileRead) {
-      var readFailureJournal = clone_(journal || {});
-      readFailureJournal.status = 'CUSTOMER_PROFILE_LOCATIONS_GET_FAILED_NO_CREATE';
-      readFailureJournal.reconciliation = readFailureJournal.reconciliation || {};
-      readFailureJournal.reconciliation.lastAttemptAt = d.util.nowString();
-      readFailureJournal.reconciliation.customerId = customerId;
-      readFailureJournal.reconciliation.customerProfileLocationsReadOk = false;
-      readFailureJournal.reconciliation.error = String(profileReadError && profileReadError.message || profileReadError || '');
-
-      patchRequest_(record, {
-        'Updated At': d.util.nowString(),
-        'Current Stage': 'CREATING CUSTOMER STRUCTURE',
-        'Request Status': 'IN PROGRESS',
-        'Blocking Issue': 'Customer Location profile read failed. No Location create will be attempted until the authoritative Customer locations GET succeeds.',
-        'Next Action': 'RETRY CUSTOMER PROFILE LOCATION READ — NO LOCATION POST',
-        'Customer Match Status': 'MATCHED',
-        'Matched Customer ID': customerId,
-        'Matched Customer Name': clean_(record['Full Name']),
-        'Created Customer ID': customerId,
-        'Customer Action': 'LINK EXISTING',
-        'Location Action': 'LINK EXISTING',
-        'Customer Structure Status': 'CUSTOMER CONFIRMED — LOCATION READ RETRY',
-        'Striven Sync Status': 'PARTIAL',
-        'Striven Sync Error': readFailureJournal.reconciliation.error,
-        'Last Striven Sync': d.util.nowString(),
-        'Reconciliation Status': 'CUSTOMER PROFILE LOCATION READ FAILED — NO CREATE',
-        'Write Journal JSON': safeJson_(readFailureJournal)
-      });
-
-      return {
-        ok: false,
-        status: 'CUSTOMER_PROFILE_LOCATIONS_GET_FAILED_NO_CREATE',
-        requestId: clean_(record['Request ID']),
-        matchedCustomerId: customerId,
-        matchedLocationId: '',
-        liveWriteExecuted: false,
-        automaticPostRetry: false
-      };
-    }
-
-    if (Number(journal && journal.postAttempts || 0) > 0) {
-      var postPending = clone_(journal || {});
-      postPending.status = 'CUSTOMER_RECONCILED_LOCATION_PENDING_AFTER_CUSTOMER_CREATE';
-      postPending.reconciliation = postPending.reconciliation || {};
-      postPending.reconciliation.lastAttemptAt = d.util.nowString();
-      postPending.reconciliation.customerId = customerId;
-      postPending.reconciliation.customerProfileLocationsReadOk = true;
-      postPending.reconciliation.customerLocationsEndpoint = profileRead.endpoint || '';
-      postPending.reconciliation.customerLocationsTotalCount = profileRead.totalCount || 0;
-      postPending.reconciliation.locationCreateSuppressedBecausePrimaryLocationWasIncludedInCustomerCreate = true;
-
-      patchRequest_(record, {
-        'Updated At': d.util.nowString(),
-        'Current Stage': 'CREATING CUSTOMER STRUCTURE',
-        'Request Status': 'IN PROGRESS',
-        'Manual Review?': 'NO',
-        'Manual Review Reason': '',
-        'Blocking Issue': '',
-        'Next Action': 'VERIFY PRIMARY LOCATION ON CUSTOMER PROFILE — DO NOT CREATE AGAIN',
-        'Customer Match Status': 'MATCHED',
-        'Matched Customer ID': customerId,
-        'Matched Customer Name': clean_(record['Full Name']),
-        'Created Customer ID': customerId,
-        'Customer Action': 'LINK EXISTING',
-        'Location Action': 'LINK EXISTING',
-        'Customer Structure Status': 'CUSTOMER CONFIRMED — PRIMARY LOCATION READBACK PENDING',
-        'Striven Sync Status': 'PARTIAL',
-        'Striven Sync Error': '',
-        'Last Striven Sync': d.util.nowString(),
-        'Reconciliation Status': 'CUSTOMER CREATE INCLUDED PRIMARY LOCATION — PROFILE READBACK PENDING',
-        'Write Journal JSON': safeJson_(postPending)
-      });
-
-      return {
-        ok: false,
-        status: 'CUSTOMER_RECONCILED_LOCATION_PENDING_AFTER_CUSTOMER_CREATE',
-        requestId: clean_(record['Request ID']),
-        matchedCustomerId: customerId,
-        matchedLocationId: '',
-        liveWriteExecuted: false,
-        automaticPostRetry: false,
-        locationCreateSuppressed: true
-      };
-    }
-
-    var contactEvidence = null;
-    try {
-      contactEvidence = customerContactLocationEvidence_(record, customerId);
-    } catch (contactError) {
-      contactEvidence = {
-        ok: false,
-        status: 'CONTACT_ADDRESS_RECOVERY_READ_FAILED',
-        error: String(contactError && contactError.message || contactError || '')
-      };
-    }
-
+    var status = locations.length > 1 ? 'PRIMARY_LOCATION_AMBIGUOUS' : 'CUSTOMER_RECONCILED_LOCATION_PENDING';
     var updated = clone_(journal || {});
+    updated.status = status;
     updated.reconciliation = updated.reconciliation || {};
     updated.reconciliation.lastAttemptAt = d.util.nowString();
     updated.reconciliation.customerId = customerId;
-    updated.reconciliation.locationCandidateCount = 0;
-    updated.reconciliation.customerProfileLocationsReadOk = true;
-    updated.reconciliation.customerLocationsEndpoint = profileRead.endpoint || '';
-    updated.reconciliation.customerLocationsTotalCount = profileRead.totalCount || 0;
-    updated.reconciliation.contactAddressRecovery = contactEvidence || {};
-
-    if (contactEvidence && contactEvidence.ok === true) {
-      updated.status = 'CUSTOMER_RECONCILED_LOCATION_CREATE_READY_FROM_CONTACT';
-      patchRequest_(record, {
-        'Updated At': d.util.nowString(),
-        'Current Stage': 'READY FOR LOCATION CREATE',
-        'Request Status': 'OPEN',
-        'Manual Review?': 'NO',
-        'Manual Review Reason': '',
-        'Blocking Issue': '',
-        'Next Action': 'CREATE PRIMARY LOCATION FROM VERIFIED CONTACT ADDRESS',
-        'Customer Match Status': 'MATCHED',
-        'Matched Customer ID': customerId,
-        'Matched Customer Name': clean_(record['Full Name']),
-        'Created Customer ID': customerId,
-        'Customer Action': 'LINK EXISTING',
-        'Location Match Status': 'NOT FOUND',
-        'Matched Location ID': '',
-        'Location Action': 'CREATE',
-        'Customer Structure Status': 'CUSTOMER CONFIRMED — VERIFIED CONTACT ADDRESS READY FOR LOCATION',
-        'Striven Sync Status': 'PARTIAL',
-        'Striven Sync Error': '',
-        'Last Striven Sync': d.util.nowString(),
-        'Reconciliation Status': 'CUSTOMER PROFILE HAS NO MATCHING LOCATION — CONTACT ADDRESS VERIFIED',
-        'Write Journal JSON': safeJson_(updated)
-      });
-      return {
-        ok: true,
-        status: 'CUSTOMER_RECONCILED_LOCATION_CREATE_READY_FROM_CONTACT',
-        requestId: clean_(record['Request ID']),
-        matchedCustomerId: customerId,
-        matchedContactId: clean_(contactEvidence.contactId),
-        matchedLocationId: '',
-        contactAddressVerified: true,
-        liveWriteExecuted: false,
-        automaticPostRetry: false
-      };
-    }
-
-    updated.status = 'CUSTOMER_RECONCILED_LOCATION_RECOVERY_REVIEW_REQUIRED';
-    var evidenceStatus = clean_(contactEvidence && contactEvidence.status);
-    var evidenceError = clean_(contactEvidence && contactEvidence.error);
-    var reason = evidenceStatus === 'CONTACT_ADDRESS_DOES_NOT_MATCH_REQUEST'
-      ? 'Customer has no matching Location and the confirmed Contact address does not match the submitted service address. Automatic Location creation is blocked.'
-      : 'Customer has no matching Location and a matching Contact address could not be verified. Automatic Location creation is blocked.';
+    updated.reconciliation.locationCandidateCount = locations.length;
 
     patchRequest_(record, {
       'Updated At': d.util.nowString(),
-      'Current Stage': 'NEEDS REVIEW',
-      'Request Status': 'BLOCKED',
-      'Manual Review?': 'YES',
-      'Manual Review Reason': reason,
-      'Blocking Issue': reason,
-      'Next Action': 'REVIEW CUSTOMER / CONTACT LOCATION',
+      'Current Stage': 'CREATING CUSTOMER STRUCTURE',
+      'Request Status': 'IN PROGRESS',
+      'Blocking Issue': locations.length > 1
+        ? 'Multiple primary Location candidates found. Do not create another Location.'
+        : 'Customer is confirmed but the primary Location is not yet visible. Do not create another Customer or Location.',
+      'Next Action': 'RECONCILE PRIMARY LOCATION — DO NOT CREATE AGAIN',
       'Customer Match Status': 'MATCHED',
       'Matched Customer ID': customerId,
       'Matched Customer Name': clean_(record['Full Name']),
       'Created Customer ID': customerId,
       'Customer Action': 'LINK EXISTING',
-      'Location Action': 'DO NOT CREATE',
-      'Customer Structure Status': 'CUSTOMER CONFIRMED — LOCATION RECOVERY NOT VERIFIED',
-      'Striven Sync Status': 'BLOCKED',
-      'Striven Sync Error': evidenceError,
+      'Location Action': 'LINK EXISTING',
+      'Customer Structure Status': 'CUSTOMER CONFIRMED — PRIMARY LOCATION PENDING',
+      'Striven Sync Status': 'PARTIAL',
+      'Striven Sync Error': '',
       'Last Striven Sync': d.util.nowString(),
-      'Reconciliation Status': 'CUSTOMER LOCATION NOT FOUND — CONTACT ADDRESS NOT VERIFIED',
+      'Reconciliation Status': status,
       'Write Journal JSON': safeJson_(updated)
     });
 
     return {
       ok: false,
-      status: 'CUSTOMER_RECONCILED_LOCATION_RECOVERY_REVIEW_REQUIRED',
+      status: status,
       requestId: clean_(record['Request ID']),
       matchedCustomerId: customerId,
       matchedLocationId: '',
-      contactEvidenceStatus: evidenceStatus,
+      locationCandidates: locations.map(function (row) { return clean_(row['Location ID']); }),
       liveWriteExecuted: false,
-      automaticPostRetry: false
+      locationRefreshExecuted: refresh.refreshed
     };
   }
 
@@ -6150,10 +5828,10 @@ function reconcile(requestId,options){options=options||{};var r=req_(requestId);
   return{version:VERSION,reconcile:reconcile};
 })();
 
-/* CF_SERVICEOPS_V5_13_5_CUSTOMER_PROFILE_LOCATION_RECOVERY_R1 */
+/* CF_SERVICEOPS_V5_12_8_STANDALONE_LOCATION_GUARDED_CREATE_R1 */
 CF.StandaloneLocationCreateV5128=(function(){
   'use strict';
-  var VERSION='5.13.5';
+  var VERSION='5.12.8';
   function clean_(v){return v===null||v===undefined?'':String(v).trim();}
   function upper_(v){return clean_(v).toUpperCase();}
   function norm_(v){return upper_(v).replace(/[^A-Z0-9]/g,'');}
@@ -6163,73 +5841,30 @@ CF.StandaloneLocationCreateV5128=(function(){
   function resolved_(r,a,b){return clean_(r[a]||r[b]);}
   function rootJournal_(r){var raw=clean_(r['Write Journal JSON']);if(!raw)return{};try{var x=JSON.parse(raw);return x&&typeof x==='object'?x:{};}catch(e){return{};}}
   function patch_(r,p){if(!r||!r.__rowNumber)throw new Error('Service Request row unavailable.');CF.Util.patchRow('SERVICE_REQUESTS',r.__rowNumber,p);}
-  function payload_(r){return{Name:'Primary Location',Address1:clean_(r['Street']),City:clean_(r['City']),State:province_(r['Province']),PostalCode:postal_(r['Postal Code']),Country:clean_(r['Country'])||'Canada'};}
+  function payload_(r){return{Name:clean_(r['Full Name']||r['Street']||'Service Location'),Address1:clean_(r['Street']),City:clean_(r['City']),State:province_(r['Province']),PostalCode:postal_(r['Postal Code']),Country:clean_(r['Country'])||'Canada'};}
   function rows_(body){
     if(Array.isArray(body))return body;body=body||{};
-    var candidates=[body.Data,body.data,body.Items,body.items,body.Results,body.results,body.Records,body.records];
-    for(var i=0;i<candidates.length;i++){var c=candidates[i];if(Array.isArray(c))return c;if(c&&typeof c==='object'){var nested=c.Data||c.data||c.Items||c.items||c.Results||c.results||c.Records||c.records;if(Array.isArray(nested))return nested;}}
+    var candidates=[body.Items,body.items,body.Results,body.results,body.Records,body.records,body.Data,body.data];
+    for(var i=0;i<candidates.length;i++){var c=candidates[i];if(Array.isArray(c))return c;if(c&&typeof c==='object'){var nested=c.Items||c.items||c.Results||c.results||c.Records||c.records;if(Array.isArray(nested))return nested;}}
     return[];
   }
   function rowId_(x){x=x||{};return clean_(x.LocationId||x.locationId||x.Id||x.id||x.ID);}
-  function address_(x){x=x||{};return x.Address||x.address||x;}
-  function rowStreet_(x){var a=address_(x);return clean_(x&&x.Address1||x&&x.address1||a.Address1||a.address1||a.Street||a.street);}
-  function rowPostal_(x){var a=address_(x);return clean_(x&&x.PostalCode||x&&x.postalCode||x&&x.Zip||x&&x.zip||a.PostalCode||a.postalCode||a.Zip||a.zip);}
+  function rowStreet_(x){x=x||{};var a=x.Address||x.address||{};return clean_(x.Address1||x.address1||a.Address1||a.address1||a.Street||a.street);}
+  function rowPostal_(x){x=x||{};var a=x.Address||x.address||{};return clean_(x.PostalCode||x.postalCode||x.Zip||x.zip||a.PostalCode||a.postalCode||a.Zip||a.zip);}
   function canonicalStreetV5129_(v){var s=upper_(v).replace(/#/g,' UNIT ').replace(/[.,]/g,' ');s=s.replace(/\bAPARTMENT\b|\bAPT\b/g,' UNIT ').replace(/\bCRESENT\b|\bCRESCENT\b|\bCRES\b/g,' CRESCENT ').replace(/\bROAD\b|\bRD\b/g,' ROAD ').replace(/\bSTREET\b|\bST\b/g,' STREET ').replace(/\bAVENUE\b|\bAVE\b/g,' AVENUE ').replace(/\bDRIVE\b|\bDR\b/g,' DRIVE ').replace(/\bTRAIL\b|\bTRL\b/g,' TRAIL ').replace(/\bPLACE\b|\bPL\b/g,' PLACE ').replace(/\bCOURT\b|\bCT\b/g,' COURT ').replace(/\bLANE\b|\bLN\b/g,' LANE ').replace(/\bBOULEVARD\b|\bBLVD\b/g,' BOULEVARD ').replace(/\bTERRACE\b|\bTER\b/g,' TERRACE ').replace(/\bSQUARE\b|\bSQ\b/g,' SQUARE ');return s.replace(/[^A-Z0-9]/g,'');}
-  function addressExact_(r,x){return norm_(r['Postal Code'])===norm_(rowPostal_(x))&&canonicalStreetV5129_(r['Street'])===canonicalStreetV5129_(rowStreet_(x));}
-  function exact_(r,x){return !!rowId_(x)&&addressExact_(r,x);}
-  function tag_(rows,source){return (rows||[]).map(function(x){x.__cfLocationSource=source;return x;});}
-
-  function customerProfileSearch_(r,customerId){
-    var ep=CF.Config.getEndpoint('CUSTOMER_LOCATIONS_GET',{customerId:customerId});
-    var response=CF.StrivenHttp.requestJson(ep,{method:'get',attempts:1,idempotent:true});
-    var all=rows_(response&&response.json?response.json:{});
-    return{ok:true,endpoint:ep,totalCount:Number((response&&response.json&&(response.json.TotalCount||response.json.totalCount))||all.length||0),matches:tag_(all.filter(function(x){return exact_(r,x);}), 'CUSTOMER_PROFILE_LOCATIONS_GET')};
-  }
-
-  function legacySearch_(r,customerId){
+  function exact_(r,x){return !!rowId_(x)&&norm_(r['Postal Code'])===norm_(rowPostal_(x))&&canonicalStreetV5129_(r['Street'])===canonicalStreetV5129_(rowStreet_(x));}
+  function search_(r,customerId){
     var ep=CF.Config.getEndpoint('CUSTOMER_LOCATION_SEARCH');
     var n=Number(customerId),ref=isNaN(n)?customerId:n;
     var response=CF.StrivenHttp.requestJson(ep,{method:'post',payload:{PageIndex:0,PageSize:100,Customer:{Id:ref}},attempts:1,idempotent:true});
-    return tag_(rows_(response&&response.json?response.json:{}).filter(function(x){return exact_(r,x);}), 'LEGACY_CUSTOMER_LOCATION_SEARCH');
+    return rows_(response&&response.json?response.json:{}).filter(function(x){return exact_(r,x);});
   }
-
-  function findExisting_(r,customerId){
-    var profile=null,profileError='';
-    try{profile=customerProfileSearch_(r,customerId);}catch(e){profileError=String(e&&e.message||e||'');}
-    if(profile&&profile.matches.length)return{profileReadOk:true,profile:profile,matches:profile.matches,source:'CUSTOMER_PROFILE_LOCATIONS_GET'};
-    var legacy=[];
-    try{legacy=legacySearch_(r,customerId);}catch(ignoredLegacy){}
-    if(legacy.length)return{profileReadOk:!!profile,profile:profile,matches:legacy,source:'LEGACY_CUSTOMER_LOCATION_SEARCH',profileError:profileError};
-    return{profileReadOk:!!profile,profile:profile,matches:[],source:profile?'CUSTOMER_PROFILE_LOCATIONS_GET':'PROFILE_GET_FAILED',profileError:profileError};
-  }
-
-  function contactAddressEvidence_(r,customerId){
-    var customerEp=CF.Config.getEndpoint('CUSTOMERS')+'/'+encodeURIComponent(String(customerId));
-    var customerResponse=CF.StrivenHttp.requestJson(customerEp,{method:'get',attempts:1,idempotent:true});
-    var customer=customerResponse&&customerResponse.json?customerResponse.json:{};
-    var primary=customer.PrimaryContact||customer.primaryContact||{};
-    var contactId=resolved_(r,'Matched Contact ID','Created Contact ID')||clean_(primary.Id||primary.id);
-    if(!contactId)return{ok:false,status:'CUSTOMER_PRIMARY_CONTACT_NOT_AVAILABLE',contactId:''};
-    var contactEp=CF.Config.getEndpoint('CONTACTS')+'/'+encodeURIComponent(String(contactId));
-    var contactResponse=CF.StrivenHttp.requestJson(contactEp,{method:'get',attempts:1,idempotent:true});
-    var contact=contactResponse&&contactResponse.json?contactResponse.json:{},a=contact.Address||contact.address||{};
-    if(!clean_(a.Address1||a.address1||a.FullAddress||a.fullAddress))return{ok:false,status:'CONTACT_ADDRESS_NOT_AVAILABLE',contactId:contactId};
-    return{ok:addressExact_(r,a),status:addressExact_(r,a)?'CONTACT_ADDRESS_MATCH_CONFIRMED':'CONTACT_ADDRESS_DOES_NOT_MATCH_REQUEST',contactId:contactId,address:a};
-  }
-
   function finalize_(r,location,created){
     var id=rowId_(location),contactId=resolved_(r,'Matched Contact ID','Created Contact ID'),complete=!!contactId;
-    var root=rootJournal_(r),j=root.standaloneLocationCreate||{};j.status='LOCATION_RECONCILED';j.canonicalLocationId=id;j.reconciledAt=CF.Util.nowString();j.reconciledBy=clean_(location&&location.__cfLocationSource)||'CUSTOMER_PROFILE_LOCATIONS_GET';root.standaloneLocationCreate=j;
-    patch_(r,{'Updated At':CF.Util.nowString(),'Current Stage':complete?'CUSTOMER STRUCTURE COMPLETE':'READY FOR CONTACT CREATE','Request Status':'OPEN','Manual Review?':'NO','Manual Review Reason':'','Blocking Issue':'','Next Action':complete?'CONTINUE TO WORK ORDER':'CREATE CONTACT','Location Match Status':'MATCHED','Matched Location ID':id,'Matched Location Address':clean_((address_(location).FullAddress||address_(location).fullAddress)||''),'Created Location ID':created?id:clean_(r['Created Location ID']),'Location Action':'LINK EXISTING','Customer Structure Status':complete?'COMPLETE':'CUSTOMER + LOCATION CONFIRMED — CONTACT PENDING','Write Journal JSON':JSON.stringify(root),'Striven Sync Status':'PARTIAL','Striven Sync Error':'','Reconciliation Status':'STANDALONE LOCATION RECONCILED FROM CUSTOMER PROFILE'});
-    return{ok:true,version:VERSION,status:created?'LOCATION_CREATED_RECONCILED':'LOCATION_EXISTING_RECONCILED',requestId:clean_(r['Request ID']),locationId:id,locationSource:j.reconciledBy,liveWriteExecuted:false,automaticPostRetry:false};
+    var root=rootJournal_(r),j=root.standaloneLocationCreate||{};j.status='LOCATION_RECONCILED';j.canonicalLocationId=id;j.reconciledAt=CF.Util.nowString();root.standaloneLocationCreate=j;
+    patch_(r,{'Updated At':CF.Util.nowString(),'Current Stage':complete?'CUSTOMER STRUCTURE COMPLETE':'READY FOR CONTACT CREATE','Request Status':'OPEN','Manual Review?':'NO','Manual Review Reason':'','Blocking Issue':'','Next Action':complete?'CONTINUE TO WORK ORDER':'CREATE CONTACT','Location Match Status':'MATCHED','Matched Location ID':id,'Created Location ID':created?id:clean_(r['Created Location ID']),'Location Action':'LINK EXISTING','Customer Structure Status':complete?'COMPLETE':'CUSTOMER + LOCATION CONFIRMED — CONTACT PENDING','Write Journal JSON':JSON.stringify(root),'Striven Sync Status':'PARTIAL','Striven Sync Error':'','Reconciliation Status':'STANDALONE LOCATION RECONCILED'});
+    return{ok:true,version:VERSION,status:created?'LOCATION_CREATED_RECONCILED':'LOCATION_EXISTING_RECONCILED',requestId:clean_(r['Request ID']),locationId:id,liveWriteExecuted:false,automaticPostRetry:false};
   }
-
-  function blockRecovery_(r,status,message,details){
-    var root=rootJournal_(r),j=root.standaloneLocationCreate||{};j.status=status;j.recoveryCheckedAt=CF.Util.nowString();j.recoveryDetails=details||{};root.standaloneLocationCreate=j;
-    patch_(r,{'Updated At':CF.Util.nowString(),'Write Journal JSON':JSON.stringify(root),'Current Stage':'NEEDS REVIEW','Request Status':'BLOCKED','Manual Review?':'YES','Manual Review Reason':message,'Blocking Issue':message,'Next Action':'REVIEW CUSTOMER / CONTACT LOCATION','Location Action':'DO NOT CREATE','Customer Structure Status':'CUSTOMER CONFIRMED — LOCATION RECOVERY NOT VERIFIED','Striven Sync Status':'BLOCKED','Reconciliation Status':status});
-    return{ok:false,version:VERSION,status:status,requestId:clean_(r['Request ID']),message:message,details:details||{},liveWriteExecuted:false,automaticPostRetry:false};
-  }
-
   function process(requestId,options){
     options=options||{};var r=request_(requestId);if(!r)return{ok:false,status:'LOCATION_REQUEST_NOT_FOUND',requestId:clean_(requestId),liveWriteExecuted:false};
     var customerId=resolved_(r,'Matched Customer ID','Created Customer ID'),existingId=resolved_(r,'Matched Location ID','Created Location ID');
@@ -6237,44 +5872,22 @@ CF.StandaloneLocationCreateV5128=(function(){
     if(upper_(r['Current Stage'])!=='READY FOR LOCATION CREATE'||upper_(r['Location Action'])!=='CREATE'||!customerId)return{ok:false,status:'LOCATION_CREATE_STATE_NOT_READY',requestId:clean_(requestId),liveWriteExecuted:false};
     if(upper_(r['Manual Review?'])==='YES'||(upper_(r['Duplicate Risk Status'])&&upper_(r['Duplicate Risk Status'])!=='NONE'))return{ok:false,status:'LOCATION_CREATE_REVIEW_OR_RISK_BLOCKED',requestId:clean_(requestId),liveWriteExecuted:false};
     if(!clean_(r['Street'])||!clean_(r['City'])||!clean_(r['Postal Code']))return{ok:false,status:'LOCATION_CREATE_ADDRESS_INCOMPLETE',requestId:clean_(requestId),liveWriteExecuted:false};
-
-    var root=rootJournal_(r),j=root.standaloneLocationCreate||{},found=findExisting_(r,customerId),matches=found.matches||[];
+    var root=rootJournal_(r),j=root.standaloneLocationCreate||{},matches=[];
+    try{matches=search_(r,customerId);}catch(searchError){return{ok:false,status:'LOCATION_READ_RECONCILE_FAILED',requestId:clean_(requestId),error:String(searchError&&searchError.message||searchError),liveWriteExecuted:false,automaticPostRetry:false};}
     if(matches.length===1)return finalize_(r,matches[0],Number(j.postAttempts||0)>0);
-    if(matches.length>1){var msg='Multiple exact Customer Locations match the submitted service address. Do not create another Location.';return blockRecovery_(r,'LOCATION_EXACT_MATCH_AMBIGUOUS',msg,{candidateCount:matches.length,source:found.source});}
-
-    if(Number(j.postAttempts||0)>0){
-      return{ok:true,version:VERSION,status:'LOCATION_POST_RECONCILE_PENDING',requestId:clean_(requestId),customerProfileLocationsReadOk:found.profileReadOk,profileReadError:found.profileError||'',liveWriteExecuted:false,automaticPostRetry:false};
-    }
-
-    if(!found.profileReadOk){
-      return{ok:false,version:VERSION,status:'LOCATION_CUSTOMER_PROFILE_READ_FAILED_NO_CREATE',requestId:clean_(requestId),error:found.profileError||'',liveWriteExecuted:false,automaticPostRetry:false};
-    }
-
-    var evidence;
-    try{evidence=contactAddressEvidence_(r,customerId);}catch(evidenceError){evidence={ok:false,status:'CONTACT_ADDRESS_RECOVERY_READ_FAILED',error:String(evidenceError&&evidenceError.message||evidenceError||'')};}
-    if(!evidence.ok){
-      var reason=evidence.status==='CONTACT_ADDRESS_DOES_NOT_MATCH_REQUEST'
-        ? 'Customer has no matching Location and the confirmed Contact address does not match the submitted service address. Automatic Location creation is blocked.'
-        : 'Customer has no matching Location and a matching Contact address could not be verified. Automatic Location creation is blocked.';
-      return blockRecovery_(r,'LOCATION_CONTACT_ADDRESS_NOT_VERIFIED',reason,evidence);
-    }
-
-    var duplicateCheck=findExisting_(r,customerId);
-    if((duplicateCheck.matches||[]).length===1)return finalize_(r,duplicateCheck.matches[0],false);
-    if((duplicateCheck.matches||[]).length>1)return blockRecovery_(r,'LOCATION_EXACT_MATCH_AMBIGUOUS','Multiple exact Customer Locations match the submitted service address. Do not create another Location.',{candidateCount:duplicateCheck.matches.length,source:duplicateCheck.source});
-    if(!duplicateCheck.profileReadOk)return{ok:false,version:VERSION,status:'LOCATION_CUSTOMER_PROFILE_READ_FAILED_NO_CREATE',requestId:clean_(requestId),error:duplicateCheck.profileError||'',liveWriteExecuted:false,automaticPostRetry:false};
-
+    if(matches.length>1){var msg='Multiple exact Customer Locations match the submitted service address. Do not create another Location.';patch_(r,{'Updated At':CF.Util.nowString(),'Current Stage':'NEEDS REVIEW','Request Status':'BLOCKED','Manual Review?':'YES','Manual Review Reason':msg,'Blocking Issue':msg,'Next Action':'REVIEW LOCATION CANDIDATES','Striven Sync Status':'BLOCKED','Reconciliation Status':'LOCATION EXACT MATCH AMBIGUOUS'});return{ok:false,status:'LOCATION_EXACT_MATCH_AMBIGUOUS',requestId:clean_(requestId),candidateCount:matches.length,liveWriteExecuted:false};}
+    if(Number(j.postAttempts||0)>0)return{ok:true,status:'LOCATION_POST_RECONCILE_PENDING',requestId:clean_(requestId),liveWriteExecuted:false,automaticPostRetry:false};
     var endpoint=CF.Config.getEndpoint('CUSTOMER_LOCATION_CREATE',{customerId:customerId}),payload=payload_(r),fingerprint=CF.Util.canonicalHash({requestId:clean_(requestId),customerId:customerId,endpoint:endpoint,payload:payload});
-    j={status:'POST_INTENT_RECORDED',postAttempts:1,postStartedAt:CF.Util.nowString(),writeFingerprint:fingerprint,endpoint:endpoint,payload:payload,contactAddressEvidence:{contactId:evidence.contactId,status:evidence.status},customerProfileLocationsVerifiedAbsent:true,remoteWriteMayHaveSucceeded:false,noAutomaticWriteRetry:true};root.standaloneLocationCreate=j;
-    patch_(r,{'Updated At':CF.Util.nowString(),'Write Journal JSON':JSON.stringify(root),'Current Stage':'READY FOR LOCATION CREATE','Request Status':'IN PROGRESS','Next Action':'CREATE PRIMARY LOCATION — GUARDED SINGLE POST','Striven Sync Status':'SYNCING','Reconciliation Status':'LOCATION POST INTENT RECORDED — PROFILE + CONTACT VERIFIED'});
+    j={status:'POST_INTENT_RECORDED',postAttempts:1,postStartedAt:CF.Util.nowString(),writeFingerprint:fingerprint,endpoint:endpoint,payload:payload,remoteWriteMayHaveSucceeded:false,noAutomaticWriteRetry:true};root.standaloneLocationCreate=j;
+    patch_(r,{'Updated At':CF.Util.nowString(),'Write Journal JSON':JSON.stringify(root),'Current Stage':'READY FOR LOCATION CREATE','Request Status':'IN PROGRESS','Next Action':'CREATE LOCATION — GUARDED SINGLE POST','Striven Sync Status':'SYNCING','Reconciliation Status':'LOCATION POST INTENT RECORDED'});
     try{
       var response=CF.StrivenHttp.requestJson(endpoint,{method:'post',payload:payload,attempts:1,idempotent:false});
       j.status='POST_ACCEPTED_RECONCILE_REQUIRED';j.postFinishedAt=CF.Util.nowString();j.httpStatus=response&&response.status||200;j.responseBody=response&&response.json||{};j.remoteWriteMayHaveSucceeded=true;root.standaloneLocationCreate=j;
-      patch_(request_(requestId),{'Updated At':CF.Util.nowString(),'Write Journal JSON':JSON.stringify(root),'Current Stage':'READY FOR LOCATION CREATE','Request Status':'IN PROGRESS','Next Action':'VERIFY PRIMARY LOCATION ON CUSTOMER PROFILE — DO NOT RETRY POST','Striven Sync Status':'PARTIAL','Striven Sync Error':'','Reconciliation Status':'LOCATION POST ACCEPTED — CUSTOMER PROFILE READBACK REQUIRED'});
+      patch_(request_(requestId),{'Updated At':CF.Util.nowString(),'Write Journal JSON':JSON.stringify(root),'Current Stage':'READY FOR LOCATION CREATE','Request Status':'IN PROGRESS','Next Action':'RECONCILE LOCATION CREATE — DO NOT RETRY POST','Striven Sync Status':'PARTIAL','Striven Sync Error':'','Reconciliation Status':'LOCATION POST ACCEPTED — RECONCILE'});
       return{ok:true,version:VERSION,status:'LOCATION_POST_ACCEPTED_RECONCILE_REQUIRED',requestId:clean_(requestId),liveWriteExecuted:true,automaticPostRetry:false};
     }catch(postError){
       j.status='LOCATION_POST_OUTCOME_UNCERTAIN_RECONCILE_REQUIRED';j.postFinishedAt=CF.Util.nowString();j.remoteWriteMayHaveSucceeded=true;j.error=String(postError&&postError.message||postError);root.standaloneLocationCreate=j;
-      patch_(request_(requestId),{'Updated At':CF.Util.nowString(),'Write Journal JSON':JSON.stringify(root),'Current Stage':'READY FOR LOCATION CREATE','Request Status':'IN PROGRESS','Next Action':'VERIFY PRIMARY LOCATION ON CUSTOMER PROFILE — DO NOT RETRY POST','Striven Sync Status':'RECONCILE REQUIRED','Striven Sync Error':j.error,'Reconciliation Status':'LOCATION POST OUTCOME UNCERTAIN — CUSTOMER PROFILE READBACK REQUIRED'});
+      patch_(request_(requestId),{'Updated At':CF.Util.nowString(),'Write Journal JSON':JSON.stringify(root),'Current Stage':'READY FOR LOCATION CREATE','Request Status':'IN PROGRESS','Next Action':'RECONCILE LOCATION CREATE — DO NOT RETRY POST','Striven Sync Status':'RECONCILE REQUIRED','Striven Sync Error':j.error,'Reconciliation Status':'LOCATION POST OUTCOME UNCERTAIN — RECONCILE'});
       return{ok:false,version:VERSION,status:'LOCATION_POST_OUTCOME_UNCERTAIN_RECONCILE_REQUIRED',requestId:clean_(requestId),remoteWriteMayHaveSucceeded:true,automaticPostRetry:false,liveWriteExecuted:true};
     }
   }
