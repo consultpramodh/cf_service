@@ -1,3 +1,171 @@
+// Google Apps Script
+function FIX_20260901_standardServiceItemAndResumeTwoRequests() {
+  const lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+
+  try {
+    const STANDARD_ITEM_ID = '41481';
+    const PROPERTY = 'STRIVEN_STANDARD_SERVICE_ITEM_ID';
+    const REQUEST_IDS = [
+      'SR-20260901142349-9492', // Anne Rhodes
+      'SR-20260901134605-8237'  // Kelly Pettitt
+    ];
+
+    // Preflight before any mutation.
+    if (
+      typeof CF === 'undefined' ||
+      !CF.EventDrivenServiceAutomation ||
+      typeof CF.EventDrivenServiceAutomation.kick !== 'function'
+    ) {
+      throw new Error(
+        'CF.EventDrivenServiceAutomation.kick is unavailable. No changes made.'
+      );
+    }
+
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const sheet = ss.getSheetByName('02 Service Requests');
+    if (!sheet) {
+      throw new Error('02 Service Requests sheet not found. No changes made.');
+    }
+
+    const headers = sheet
+      .getRange(1, 1, 1, sheet.getLastColumn())
+      .getDisplayValues()[0];
+
+    const col = {};
+    headers.forEach((h, i) => {
+      if (h) col[h] = i + 1;
+    });
+
+    const requiredHeaders = [
+      'Request ID',
+      'Updated At',
+      'Current Stage',
+      'Request Status',
+      'Manual Review?',
+      'Manual Review Reason',
+      'Blocking Issue',
+      'Next Action',
+      'Operator Action',
+      'Matched Customer ID',
+      'Matched Contact ID',
+      'Matched Location ID',
+      'Work Order ID',
+      'Striven Sync Error',
+      'Reconciliation Status'
+    ];
+
+    requiredHeaders.forEach(h => {
+      if (!col[h]) {
+        throw new Error('Required column missing: ' + h);
+      }
+    });
+
+    const rowsById = {};
+    const ids = sheet
+      .getRange(2, col['Request ID'], sheet.getLastRow() - 1, 1)
+      .getDisplayValues();
+
+    ids.forEach((r, i) => {
+      const id = String(r[0] || '').trim();
+      if (REQUEST_IDS.indexOf(id) !== -1) {
+        rowsById[id] = i + 2;
+      }
+    });
+
+    REQUEST_IDS.forEach(id => {
+      const row = rowsById[id];
+      if (!row) {
+        throw new Error('Request not found: ' + id);
+      }
+
+      const workOrderId = String(
+        sheet.getRange(row, col['Work Order ID']).getDisplayValue() || ''
+      ).trim();
+
+      if (workOrderId) {
+        throw new Error(
+          id + ' already has Work Order ID ' + workOrderId +
+          '. Refusing to create/requeue a possible duplicate.'
+        );
+      }
+
+      ['Matched Customer ID', 'Matched Contact ID', 'Matched Location ID']
+        .forEach(h => {
+          const value = String(
+            sheet.getRange(row, col[h]).getDisplayValue() || ''
+          ).trim();
+
+          if (!value) {
+            throw new Error(id + ' is missing ' + h + '. No changes made.');
+          }
+        });
+    });
+
+    // Set the standard-item property.
+    const props = PropertiesService.getScriptProperties();
+    const previous = String(props.getProperty(PROPERTY) || '').trim();
+
+    if (previous && previous !== STANDARD_ITEM_ID) {
+      throw new Error(
+        PROPERTY + ' already contains unexpected value "' +
+        previous + '". Refusing to overwrite it.'
+      );
+    }
+
+    props.setProperty(PROPERTY, STANDARD_ITEM_ID);
+
+    if (props.getProperty(PROPERTY) !== STANDARD_ITEM_ID) {
+      throw new Error('Failed to verify ' + PROPERTY + ' after write.');
+    }
+
+    // Reopen only the two configuration-blocked requests.
+    const now = Utilities.formatDate(
+      new Date(),
+      ss.getSpreadsheetTimeZone(),
+      'yyyy-MM-dd HH:mm:ss'
+    );
+
+    REQUEST_IDS.forEach(id => {
+      const row = rowsById[id];
+
+      sheet.getRange(row, col['Updated At']).setValue(now);
+      sheet.getRange(row, col['Current Stage'])
+        .setValue('CUSTOMER STRUCTURE COMPLETE');
+      sheet.getRange(row, col['Request Status']).setValue('OPEN');
+      sheet.getRange(row, col['Manual Review?']).setValue('NO');
+      sheet.getRange(row, col['Manual Review Reason']).clearContent();
+      sheet.getRange(row, col['Blocking Issue']).clearContent();
+      sheet.getRange(row, col['Next Action'])
+        .setValue('CONTINUE TO WORK ORDER');
+      sheet.getRange(row, col['Operator Action']).clearContent();
+      sheet.getRange(row, col['Striven Sync Error']).clearContent();
+      sheet.getRange(row, col['Reconciliation Status'])
+        .setValue('CUSTOMER + CONTACT INFO CONFIRMED');
+    });
+
+    SpreadsheetApp.flush();
+
+    // Queue both requests through the existing guarded automation.
+    const kicks = REQUEST_IDS.map(id =>
+      CF.EventDrivenServiceAutomation.kick(id)
+    );
+
+    return {
+      ok: true,
+      status: 'STANDARD_SERVICE_ITEM_CONFIGURED_AND_REQUESTS_REQUEUED',
+      standardServiceItemId: STANDARD_ITEM_ID,
+      requestIds: REQUEST_IDS,
+      kicks: kicks
+    };
+
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+
+
 /************************************************************
  * APPS SCRIPT — 90_Diagnostics_Tests.gs
  * CF ServiceOps — Phase 5A Diagnostics
@@ -206,13 +374,19 @@ CF.Diagnostics = (function () {
     var queueSheet = d.util.requireSheet('OPERATOR_QUEUE');
     var queueHeaders = d.util.getActualHeaders(queueSheet);
     var dashboardSheet = d.util.requireSheet('DASHBOARD');
+    // OPERATOR_QUEUE_OPERATIONAL_COLUMNS_V1
     phase5A.operatorWorkspace = {
-      queueRunHeaderPresent: queueHeaders.indexOf('Run') !== -1,
+      queueReadOnlyOperationalColumns: queueHeaders.indexOf('Sales Order / Work Order') !== -1 &&
+        queueHeaders.indexOf('Task') !== -1 &&
+        queueHeaders.indexOf('Operator Action') === -1 &&
+        queueHeaders.indexOf('Run') === -1 &&
+        queueHeaders.indexOf('Run Action') === -1 &&
+        queueHeaders.indexOf('Operator Notes') === -1,
       dashboardReadOnlyMarker: clean_(dashboardSheet.getRange('A1').getDisplayValue()) === 'CF ServiceOps — Service Snapshot'
     };
-    phase5A.operatorWorkspace.ready = phase5A.operatorWorkspace.queueRunHeaderPresent && phase5A.operatorWorkspace.dashboardReadOnlyMarker;
+    phase5A.operatorWorkspace.ready = phase5A.operatorWorkspace.queueReadOnlyOperationalColumns && phase5A.operatorWorkspace.dashboardReadOnlyMarker;
     if (!phase5A.operatorWorkspace.ready) {
-      issues.push(issue_('ERROR', 'OPERATOR_WORKSPACE', 'The v5.8 operator workspace is not fully installed.', 'Run QUEUE_refresh after installing v5.8.0.', phase5A.operatorWorkspace));
+      issues.push(issue_('ERROR', 'OPERATOR_WORKSPACE', 'The read-only Operator Queue operational view is not fully installed.', 'Run QUEUE_refresh after installing the operational Queue columns patch.', phase5A.operatorWorkspace));
     }
     if (!phase5A.planningModuleLoaded) {
       issues.push(issue_('ERROR', 'PHASE5A_MODULE', 'Phase 5A transaction planning module is not loaded.', 'Confirm 60_Striven_Write.gs is loaded and compatible with v5.8.0.'));
@@ -274,7 +448,7 @@ CF.Diagnostics = (function () {
         passed: errors === 0,
         status: errors ? 'BLOCKED' : (warnings ? 'COMPLETE_WITH_WARNINGS' : 'COMPLETE'),
         liveWritesAllowed: false,
-        next: 'Process requests only in Operator Queue: select an Operator Action and check Run. Dashboard is read-only. Live Striven writes remain disabled.'
+        next: 'Operator Queue is read-only and shows Striven operational context. Use matching/approval runners for workflow changes. Live Striven writes remain disabled.'
       }
     };
 
@@ -301,3 +475,4 @@ CF.Diagnostics = (function () {
     run: run
   };
 })();
+
