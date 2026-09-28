@@ -1,33 +1,29 @@
-# Release Notes — v5.8.0
+# Release Notes — v5.13.5
 
-## Release goal
+## Customer-profile Location reconciliation
 
-Remove operator-facing complexity without losing historical intake/service data or destabilizing Gravity Forms.
+This patch changes ServiceOps Location resolution so the Customer profile is authoritative before any Location creation.
+
+### Updated logic
+
+- Added `GET /v1/customers/{customerId}/locations` as the first Location lookup.
+- Exact service-address matching is performed against the Customer profile Location `Data[]`.
+- Existing matching Locations are linked immediately; no Location POST is issued.
+- If the Customer profile has no matching Location, ServiceOps reads the confirmed Customer/Primary Contact and checks the Contact address.
+- Contact fallback is allowed only when the Contact address matches the submitted service address.
+- A second Customer-profile/legacy duplicate check runs immediately before the single guarded Location create.
+- New primary Locations are named exactly `Primary Location`.
+- After a Location POST, ServiceOps requires a Customer-profile read-back before marking the Location reconciled.
+- A prior Location POST is never automatically repeated.
+- If the authoritative Customer-profile GET fails, Location creation is blocked.
+- If the Contact address differs from the submitted service address, automatic Location creation is blocked.
+- A Customer created by ServiceOps already includes PrimaryLocation; if its Location read-back is delayed, the system waits and does not create a second Location.
+
+## Source basis
+
+The branch was rebuilt from the current 17-file production source snapshot in the bound workbook's Code Audit Source before applying the two targeted module changes.
 
 ## Modified modules
 
-- `00_Config.gs`: v5.8.0 release/schema version; only Dashboard + Operator Queue visible; legacy/canonical sheet aliases; Operator Queue reduced to 10 columns.
-- `01_Core_Utilities.gs`: resolves legacy/canonical sheet aliases safely and throws on ambiguity.
-- `10_Setup_Admin.gs`: non-destructive migration with backup + identity hashes, in-place rename only, no sheet deletion, post-rename durable identity verification.
-- `20_Intake_Processing.gs`: v5.8.0 label, corrected Gravity Forms REST credential documentation, existing fast webhook + reconciliation behavior retained.
-- `50_Operator_Queue.gs`: rewritten operator UI; Dashboard is read-only snapshot; Queue is processing workspace; deterministic formatting; scheduled/unscheduled KPI derivation.
-- `90_Diagnostics_Tests.gs`: v5.8 operator workspace checks; preservation-friendly warnings; intake linkage metrics.
-- `95_Public_Runners.gs`: v5.8.0 web-app/version response; Queue refresh also refreshes Dashboard; `DASHBOARD_refresh()`.
-
-## Unchanged logic retained
-
-Current Striven read caches, matching/profile logic, Phase 5A transaction planning, Customer 360, AI helper, and code audit modules were retained from the Aug 18 source audit unless a dependency required a compatibility change.
-
-## Verification performed
-
-- Extracted all 15 project files from the Aug 18 audit.
-- JavaScript syntax check passed for all 14 `.gs` modules.
-- Operator Queue header assignments match the new Config header contract.
-- No hard-coded deployment ID, Apps Script project ID, Gravity Forms secret, or Striven secret was added.
-
-## Not executed here
-
-- Apps Script runtime execution against the live spreadsheet.
-- Gravity Forms live test submission.
-- Striven API refresh/matching.
-- `clasp push` / Apps Script deployment.
+- `00_Config.gs`
+- `60_Striven_Write.gs`
