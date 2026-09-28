@@ -147,7 +147,6 @@ CF.Config = (function () {
     CUSTOMERS: '/v1/customers',
     CONTACTS: '/v1/contacts',
     CUSTOMER_LOCATION_SEARCH: '/v1/customer-locations/search',
-    CUSTOMER_LOCATIONS_GET: '/v1/customers/{customerId}/locations',
     ASSOCIATE_CONTACT_TO_CUSTOMER: '/v1/contacts/{contactId}/associate-customer',
     CUSTOMER_LOCATION_CREATE: '/v1/customers/{customerId}/location'
   };
