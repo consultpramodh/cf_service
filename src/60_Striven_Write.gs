@@ -4432,6 +4432,64 @@ function executeControlledContactCreate(requestIdOrRow, options) {
     return { ok: true, version: VERSION, controlledRequestId: CONTROLLED_REQUEST_ID, contactEndpoint: createEndpoint, associationEndpoint: associationEndpoint, customerContactCacheFresh: cacheFresh_(), genericLiveWritesEnabled: false };
   }
 
+  function recoveryAddressKey_(value){
+    try{return deps_().util.normalizeAddress(value||'');}
+    catch(ignored){return String(value||'').toUpperCase().replace(/[^A-Z0-9]/g,'');}
+  }
+
+  function recoveryWorkOrderCandidates_(record,customerId){
+    var requestAddress=recoveryAddressKey_(record&&record['Full Address']),rows=[];
+    try{rows=deps_().util.readRecords('STRIVEN_OPERATIONAL_DATA')||[];}catch(ignored){rows=[];}
+    return rows.filter(function(row){
+      if(upper_(row['Entity Type'])!=='WORK_ORDER')return false;
+      if(clean_(row['Customer ID'])!==clean_(customerId))return false;
+      var rowAddress=recoveryAddressKey_(row['Service Address']);
+      return !!requestAddress&&rowAddress===requestAddress;
+    }).map(function(row){
+      return{
+        workOrderId:clean_(row['Work Order ID']||row['Entity ID']),
+        workOrderNumber:clean_(row['Work Order Number']),
+        status:clean_(row['Status']),
+        serviceAddress:clean_(row['Service Address'])
+      };
+    });
+  }
+
+  function applyRecoveryOrderGate_(record,customerId){
+    record=request_(record&&record.__rowNumber?record.__rowNumber:record);
+    if(!record)return{durableOrder:false,candidates:[]};
+    var durableId=clean_(record['Work Order ID']),durableNumber=clean_(record['Work Order Number']);
+    if(durableId||durableNumber)return{durableOrder:true,workOrderId:durableId,workOrderNumber:durableNumber,candidates:[]};
+
+    var candidates=recoveryWorkOrderCandidates_(record,customerId),numbers=candidates.map(function(x){return x.workOrderNumber;}).filter(Boolean);
+    var next,issue;
+    if(candidates.length===1&&numbers[0]){
+      next='VERIFY EXISTING SALES ORDER #'+numbers[0]+' — DO NOT CREATE';
+      issue='Customer/Contact/Location structure is verified. Existing Sales Order #'+numbers[0]+' must be certified before any order create.';
+    }else if(candidates.length>1){
+      next='REVIEW EXISTING SALES ORDERS '+numbers.join(', ')+' — DO NOT CREATE';
+      issue='Customer/Contact/Location structure is verified, but multiple existing Sales Order candidates match this Customer/address. Certify exact ownership before any order create.';
+    }else{
+      next='VERIFY NO EXISTING SALES ORDER — DO NOT CREATE';
+      issue='Customer/Contact/Location structure is verified. Exact Sales Order search is required before any new order create.';
+    }
+
+    patchRequest_(record,{
+      'Updated At':deps_().util.nowString(),
+      'Current Stage':'NEEDS REVIEW',
+      'Request Status':'BLOCKED',
+      'Manual Review?':'NO',
+      'Manual Review Reason':'',
+      'Blocking Issue':issue,
+      'Next Action':next,
+      'Customer Structure Status':'COMPLETE',
+      'Striven Sync Status':'PARTIAL',
+      'Striven Sync Error':'',
+      'Reconciliation Status':'CUSTOMER STRUCTURE VERIFIED — SALES ORDER RECONCILIATION REQUIRED'
+    });
+    return{durableOrder:false,candidates:candidates,nextAction:next};
+  }
+
   /* Read-only recovery entrypoint. Never calls the association POST. */
   function reconcileContactAssociationReadOnly(requestIdOrRow) {
     return withWriteLock_(function(){
@@ -4475,6 +4533,11 @@ function executeControlledContactCreate(requestIdOrRow, options) {
         result={ok:false,status:'CONTACT_ASSOCIATION_GET_ONLY_RECONCILE_REQUIRED',requestId:clean_(fresh['Request ID']),matchedContactId:contactId,matchedCustomerId:customerId,readOnlyRecoveryRequired:true,liveWriteExecuted:false,automaticPostRetry:false};
       }
       result=result||{ok:false,status:'CONTACT_ASSOCIATION_READ_ONLY_RECONCILE_EMPTY_RESULT',requestId:clean_(record['Request ID']),liveWriteExecuted:false};
+      if(result.ok===true&&String(result.status||'').indexOf('CONTACT_ASSOCIATED_RECONCILED')===0){
+        var gate=applyRecoveryOrderGate_(request_(record.__rowNumber),customerId);
+        result.salesOrderRecoveryGate=gate;
+        result.nextAction=gate&&gate.nextAction||result.nextAction||'';
+      }
       result.readOnlyRecovery=true;
       result.automaticPostRetry=false;
       return result;
