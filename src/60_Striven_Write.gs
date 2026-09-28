@@ -3968,6 +3968,22 @@ function rootJournal_(record) {
       ['CustomerAssociations','customerAssociations','Customers','customers'].forEach(function(k){arr_(c&&c[k]).forEach(function(x){add(id_(x));});});
       return out;
     }
+    /* CF_SERVICEOPS_V5_13_5_TECHNICAL_RECOVERY_R1
+     * Direct Contact GET is authoritative when it exposes ownership.
+     * The refreshed Striven Contact cache is a secondary durable read source
+     * for Contact -> Customer ownership when the GET shape omits association data.
+     * This helper never writes to Striven.
+     */
+    function cachedCustomerIdsForContact_(contactId){
+      var rows=[],out=[],seen={};
+      try{rows=exactFinderRows_('STRIVEN_CUSTOMER_DATA','Contact ID',clean_(contactId))||[];}catch(ignoredCache){rows=[];}
+      rows.forEach(function(row){
+        if(upper_(row['Entity Type'])!=='CONTACT')return;
+        var id=clean_(row['Customer ID']);
+        if(id&&!seen[id]){seen[id]=true;out.push(id);}
+      });
+      return out;
+    }
     function identity_(c){
       var reqEmail=normEmail_(record['Normalized Email']||record['Email']);
       var reqPhone=normPhone_(record['Normalized Phone']||record['Phone']);
@@ -3997,11 +4013,15 @@ function rootJournal_(record) {
       patchRequest_(record,{'Updated At':d.util.nowString(),'Current Stage':'NEEDS REVIEW','Request Status':'BLOCKED','Manual Review?':'YES','Manual Review Reason':'Existing Contact '+contactId+' did not pass direct identity verification.','Blocking Issue':'Known duplicate Contact ID '+contactId+' conflicts with the request identity. Do not associate or create another Contact.','Next Action':'REVIEW CONTACT IDENTITY '+contactId,'Contact Association Status':'CONFLICT','Striven Sync Status':'BLOCKED','Reconciliation Status':'CONTACT DIRECT IDENTITY CONFLICT'});
       return {ok:false,status:'CONTACT_DIRECT_IDENTITY_CONFLICT',requestId:clean_(record['Request ID']),matchedContactId:contactId,identity:ident,directRead:true,liveWriteExecuted:false};
     }
-    var owners=collectCustomerIds_(body);
-    if(owners.indexOf(customerId)!==-1) return finalizeAssociated_(record,contactId,customerId,'DIRECT CONTACT GET CONFIRMED IDENTITY + CUSTOMER ASSOCIATION');
+    var owners=collectCustomerIds_(body),ownerEvidence='DIRECT CONTACT GET';
+    if(!owners.length){
+      var cachedOwners=cachedCustomerIdsForContact_(contactId);
+      if(cachedOwners.length){owners=cachedOwners;ownerEvidence='REFRESHED STRIVEN CONTACT CACHE';}
+    }
+    if(owners.indexOf(customerId)!==-1) return finalizeAssociated_(record,contactId,customerId,ownerEvidence+' CONFIRMED IDENTITY + CUSTOMER ASSOCIATION');
     if(owners.length){
       patchRequest_(record,{'Updated At':d.util.nowString(),'Current Stage':'NEEDS REVIEW','Request Status':'BLOCKED','Manual Review?':'YES','Manual Review Reason':'Existing Contact ID '+contactId+' is associated to Customer '+owners.join(', ')+', not '+customerId+'.','Blocking Issue':'Contact ownership conflict. Do not associate or create another Contact.','Next Action':'REVIEW CONTACT OWNERSHIP','Contact Association Status':'CONFLICT','Striven Sync Status':'BLOCKED','Reconciliation Status':'CONTACT OWNERSHIP CONFLICT'});
-      return {ok:false,status:'CONTACT_OWNERSHIP_CONFLICT',requestId:clean_(record['Request ID']),matchedContactId:contactId,ownerCustomerIds:owners,directRead:true,liveWriteExecuted:false};
+      return {ok:false,status:'CONTACT_OWNERSHIP_CONFLICT',requestId:clean_(record['Request ID']),matchedContactId:contactId,ownerCustomerIds:owners,ownerEvidence:ownerEvidence,directRead:true,liveWriteExecuted:false};
     }
     var state=contactJournal_(record),cj=clone_(state.contact||{});
     cj.reconciliation=cj.reconciliation||{};cj.reconciliation.lastAttemptAt=d.util.nowString();cj.reconciliation.contactId=contactId;cj.reconciliation.customerId=customerId;cj.reconciliation.reason='DIRECT CONTACT GET IDENTITY CONFIRMED — ASSOCIATION REQUIRED';cj.reconciliation.directRead=true;
@@ -4189,10 +4209,29 @@ function executeControlledContactCreate(requestIdOrRow, options) {
         if (cj.associationAttempts > 1 && clean_(cj.lastAssociationFingerprint) === cj.associationFingerprint) {
           cj.associationAttempts = Math.max(1, Number(cj.associationAttempts || 1) - 1);
           cj.associationStatus = 'READ_ONLY_RECONCILE_REQUIRED';
-          cj.status = 'CONTACT_ASSOCIATION_RECONCILE_REQUIRED_NO_RETRY';
+          cj.status = 'CONTACT_ASSOCIATION_GET_ONLY_RECONCILE_REQUIRED';
+          cj.technicalRecovery = cj.technicalRecovery || {};
+          cj.technicalRecovery.status = 'GET_ONLY_ASSOCIATION_VERIFICATION_REQUIRED';
+          cj.technicalRecovery.customerId = customerId;
+          cj.technicalRecovery.contactId = contactId;
+          cj.technicalRecovery.noAutomaticWriteRetry = true;
           state.root.contactCreate = cj;
-          patchRequest_(record, { 'Updated At': d.util.nowString(), 'Current Stage': 'CREATING CUSTOMER STRUCTURE', 'Request Status': 'IN PROGRESS', 'Manual Review?': 'NO', 'Manual Review Reason': '', 'Blocking Issue': 'This exact Contact association write was already attempted. Reconcile only; do not retry the same POST.', 'Next Action': 'RECONCILE CONTACT ASSOCIATION — DO NOT RETRY SAME POST', 'Contact Association Status': 'RECONCILE', 'Write Journal JSON': safeJson_(state.root), 'Striven Sync Status': 'RECONCILE REQUIRED', 'Striven Sync Error': '', 'Reconciliation Status': 'CONTACT ASSOCIATION READ-ONLY RECONCILE REQUIRED' });
-          return { ok: false, status: 'CONTACT_ASSOCIATION_RECONCILE_REQUIRED_NO_RETRY', requestId: clean_(record['Request ID']), matchedContactId: contactId, matchedCustomerId: customerId, liveWriteExecuted: false, automaticPostRetry: false };
+          patchRequest_(record, {
+            'Updated At': d.util.nowString(),
+            'Current Stage': 'NEEDS REVIEW',
+            'Request Status': 'BLOCKED',
+            'Manual Review?': 'NO',
+            'Manual Review Reason': '',
+            'Blocking Issue': 'This Contact association write already crossed the write boundary. Direct GET/cache did not yet expose the Customer relationship. GET-only verification is required; do not repeat the POST.',
+            'Next Action': 'GET-ONLY VERIFY CONTACT '+contactId+' → CUSTOMER '+customerId+' — DO NOT POST',
+            'Contact Association Status': 'RECONCILE',
+            'Customer Structure Status': 'CONTACT RECONCILED — ASSOCIATION UNVERIFIED',
+            'Write Journal JSON': safeJson_(state.root),
+            'Striven Sync Status': 'RECONCILE REQUIRED',
+            'Striven Sync Error': '',
+            'Reconciliation Status': 'TECHNICAL RECOVERY — GET-ONLY ASSOCIATION VERIFICATION REQUIRED'
+          });
+          return { ok: false, status: 'CONTACT_ASSOCIATION_GET_ONLY_RECONCILE_REQUIRED', requestId: clean_(record['Request ID']), matchedContactId: contactId, matchedCustomerId: customerId, readOnlyRecoveryRequired: true, liveWriteExecuted: false, automaticPostRetry: false };
         }
         cj.lastAssociationFingerprint = cj.associationFingerprint;
         cj.associationStartedAt = d.util.nowString();
@@ -4393,12 +4432,27 @@ function executeControlledContactCreate(requestIdOrRow, options) {
     return { ok: true, version: VERSION, controlledRequestId: CONTROLLED_REQUEST_ID, contactEndpoint: createEndpoint, associationEndpoint: associationEndpoint, customerContactCacheFresh: cacheFresh_(), genericLiveWritesEnabled: false };
   }
 
+  /* Read-only recovery entrypoint. Never calls the association POST. */
+  function reconcileContactAssociationReadOnly(requestIdOrRow) {
+    return withWriteLock_(function(){
+      var record=request_(requestIdOrRow);
+      if(!record)return{ok:false,status:'SERVICE_REQUEST_NOT_FOUND',requestId:clean_(requestIdOrRow),liveWriteExecuted:false};
+      var customerId=resolvedCustomerId_(record),contactId=resolvedContactId_(record);
+      if(!customerId||!contactId)return{ok:false,status:'CONTACT_ASSOCIATION_IDS_INCOMPLETE',requestId:clean_(record['Request ID']),matchedCustomerId:customerId,matchedContactId:contactId,liveWriteExecuted:false};
+      var result=reconcileKnownContact_(record,contactId,customerId);
+      result.readOnlyRecovery=true;
+      result.automaticPostRetry=false;
+      return result;
+    });
+  }
+
   return {
     version: VERSION,
     previewControlledContactCreate: previewControlledContactCreate,
     executeControlledContactCreate: executeControlledContactCreate,
     previewAutoContactCreate: previewAutoContactCreate,
     executeAutoContactCreate: executeAutoContactCreate,
+    reconcileContactAssociationReadOnly: reconcileContactAssociationReadOnly,
     inspectReadiness: inspectReadiness
   };
 })();
