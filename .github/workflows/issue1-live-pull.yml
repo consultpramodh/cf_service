@@ -1,0 +1,67 @@
+name: Issue 1 — Read-only live Apps Script pull
+
+on:
+  push:
+    branches:
+      - fix/issue1-association-readback-20260928
+    paths:
+      - .github/workflows/issue1-live-pull.yml
+
+permissions:
+  contents: read
+
+jobs:
+  pull-live-source:
+    runs-on: ubuntu-latest
+    env:
+      SCRIPT_ID: 1QZp4NAFeA8LmWBN31ylJYdK4XFepBX1h2lP_APaR-d1lTAC-d8LA9x3g
+      CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Require existing clasp authorization
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${CLASPRC_JSON:-}" ]; then
+            echo "CLASPRC_JSON repository secret is missing."
+            exit 2
+          fi
+          printf '%s' "$CLASPRC_JSON" > "$HOME/.clasprc.json"
+          chmod 600 "$HOME/.clasprc.json"
+          npx -y @google/clasp@3.3.0 show-authorized-user --json
+
+      - name: Pull complete current bound Apps Script source
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf live
+          mkdir live
+          cd live
+          printf '{"scriptId":"%s","rootDir":"."}\n' "$SCRIPT_ID" > .clasp.json
+          npx -y @google/clasp@3.3.0 pull
+          test -f appsscript.json
+          FILE_COUNT="$(find . -maxdepth 1 -type f ! -name '.clasp.json' | wc -l | tr -d ' ')"
+          echo "LIVE_FILE_COUNT=$FILE_COUNT" | tee live-source-meta.txt
+          if [ "$FILE_COUNT" -lt 17 ]; then
+            echo "Live project inventory is unexpectedly small; refusing to use this pull."
+            exit 3
+          fi
+          find . -maxdepth 1 -type f ! -name '.clasp.json' -print0 | sort -z | xargs -0 sha256sum | tee live-source-sha256.txt
+          sha256sum live-source-sha256.txt | tee -a live-source-meta.txt
+          echo "READ_ONLY_PULL_COMPLETE"
+
+      - name: Upload exact live-source checkpoint
+        uses: actions/upload-artifact@v4
+        with:
+          name: issue1-live-source-checkpoint
+          path: |
+            live/*
+            live/live-source-meta.txt
+            live/live-source-sha256.txt
+          if-no-files-found: error
+          retention-days: 7
