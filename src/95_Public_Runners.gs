@@ -690,6 +690,40 @@ function TESTING_18_previewRecoveryController() {
   });
 }
 
+/* CF_SERVICEOPS_V5_13_5_TECHNICAL_RECOVERY_R1
+ * These runners may update the Service Request ledger, but they never execute
+ * a Striven mutation. The selected runner performs direct GET/cache
+ * reconciliation only. The batch is bounded to 25 rows per run.
+ */
+function TESTING_19_reconcileSelectedContactAssociationReadOnly() {
+  return CF.PublicRunners.run('TEST 19 - READ ONLY Contact Association Reconcile', function () {
+    var requestId=TESTING_selectedRequestId_();
+    if(!CF.StrivenControlledContactCreate||typeof CF.StrivenControlledContactCreate.reconcileContactAssociationReadOnly!=='function') {
+      throw new Error('Read-only Contact association recovery is unavailable.');
+    }
+    var out=CF.StrivenControlledContactCreate.reconcileContactAssociationReadOnly(requestId);
+    out.mode='READ_ONLY_STRIVEN_RECOVERY';
+    out.liveWriteExecuted=false;
+    out.automaticPostRetry=false;
+    console.log('Selected Contact Association Read-Only Reconcile: '+JSON.stringify(out));
+    return out;
+  });
+}
+
+function TESTING_20_recoverTechnicalAssociationsReadOnly() {
+  return CF.PublicRunners.run('TEST 20 - READ ONLY Technical Association Batch', function () {
+    if(!CF.StrivenControlledContactCreate||typeof CF.StrivenControlledContactCreate.recoverTechnicalAssociationsReadOnly!=='function') {
+      throw new Error('Read-only technical association batch recovery is unavailable.');
+    }
+    var out=CF.StrivenControlledContactCreate.recoverTechnicalAssociationsReadOnly(25);
+    out.mode='READ_ONLY_STRIVEN_RECOVERY_BATCH';
+    out.liveWriteExecuted=false;
+    out.automaticPostRetry=false;
+    console.log('Technical Association Read-Only Batch: '+JSON.stringify(out));
+    return out;
+  });
+}
+
 function TESTING_17_previewSalesOrderCertificationSelectedRow() {
   return CF.PublicRunners.run('TEST 17 - READ ONLY Sales Order Certification Preview', function () {
     var requestId=TESTING_selectedRequestId_();
@@ -993,6 +1027,9 @@ function TESTING_buildMenu_() {
     .addItem('16. Preview Location Self-Healing for Selected Row', 'TESTING_16_previewLocationSelfHealingSelectedRow')
     .addItem('17. READ ONLY - Preview Sales Order Certification for Selected Row', 'TESTING_17_previewSalesOrderCertificationSelectedRow')
     .addItem('18. READ ONLY - Preview Recovery Controller', 'TESTING_18_previewRecoveryController')
+    .addSeparator()
+    .addItem('19. READ ONLY - Reconcile Selected Contact Association', 'TESTING_19_reconcileSelectedContactAssociationReadOnly')
+    .addItem('20. READ ONLY - Recover Technical Association Batch', 'TESTING_20_recoverTechnicalAssociationsReadOnly')
     .addToUi();
 }
 
