@@ -2004,6 +2004,7 @@ var CF_SERVICEOPS_LEAN_QUEUE_V51015_R1_ = (function () {
   }
   function entityLine_(r,label,type,statusField,idField,actionField){
     var status=upper_(r[statusField]),id=clean_(r[idField]);
+    if(type==='contact'&&id&&/RECONCILE|PENDING|CONFLICT|UNVERIFIED/.test(upper_(r['Contact Association Status'])))return label+': '+id+' ⚠ association unverified';
     if(status==='MATCHED'&&id)return label+': '+id+' ✓';
     if(status==='AMBIGUOUS'){var ids=evidenceIds_(r,type);return label+': '+(ids.length?ids.join(' / ')+' ⚠':'AMBIGUOUS ⚠');}
     if(upper_(r[actionField])==='CREATE')return label+': NEW';
@@ -2159,9 +2160,10 @@ var CF_SERVICEOPS_LEAN_QUEUE_V51015_R1_ = (function () {
   }
   function richStriven_(r,text){
     var cid=customerId_(r),contact=contactId_(r),location=locationId_(r);
+    var contactUnverified=/RECONCILE|PENDING|CONFLICT|UNVERIFIED/.test(upper_(r['Contact Association Status']));
     var b=SpreadsheetApp.newRichTextValue().setText(text),specs=[
       {prefix:'Customer: ',id:cid,url:strivenUrl_('CUSTOMER',cid)},
-      {prefix:'Contact: ',id:contact,url:strivenUrl_('CONTACT',contact,cid)},
+      {prefix:'Contact: ',id:contact,url:contactUnverified?'':strivenUrl_('CONTACT',contact,cid)},
       {prefix:'Location: ',id:location,url:strivenUrl_('LOCATION',location,cid)}
     ];
     specs.forEach(function(s){
@@ -4652,7 +4654,8 @@ function FIX_20260903_reconcileAllExistingOperatorQueue() {
   function strivenText_(r){
     var x=ids_(r),lines=[];
     lines.push('Customer: '+(x.customer?x.customer+' ✓':(upper_(r['Customer Action'])==='CREATE'?'NEW':'—')));
-    lines.push('Contact: '+(x.contact?x.contact+' ✓':(upper_(r['Contact Action'])==='CREATE'?'NEW':'—')));
+    var contactUnverified=/RECONCILE|PENDING|CONFLICT|UNVERIFIED/.test(upper_(r['Contact Association Status']));
+    lines.push('Contact: '+(x.contact?x.contact+(contactUnverified?' ⚠ association unverified':' ✓'):(upper_(r['Contact Action'])==='CREATE'?'NEW':'—')));
     lines.push('Location: '+(x.location?x.location+' ✓':(upper_(r['Location Action'])==='CREATE'?'NEW':'—')));
     if(clean_(r['Match Confidence']))lines.push('Confidence: '+clean_(r['Match Confidence'])+(clean_(r['Match Score'])?' ('+clean_(r['Match Score'])+')':''));
     return lines.join('\n');
@@ -4666,7 +4669,7 @@ function FIX_20260903_reconcileAllExistingOperatorQueue() {
   function setStrivenRich_(range,r){
     var text=strivenText_(r),x=ids_(r),b=SpreadsheetApp.newRichTextValue().setText(text),cursor=0;
     if(x.customer){setLinkForToken_(b,text,x.customer,customerUrl_(x.customer),cursor);cursor=text.indexOf('\n')+1;}
-    if(x.contact){setLinkForToken_(b,text,x.contact,contactUrl_(x.customer,x.contact),cursor);var p=text.indexOf('\n',cursor);cursor=p>=0?p+1:cursor;}
+    if(x.contact){if(!/RECONCILE|PENDING|CONFLICT|UNVERIFIED/.test(upper_(r['Contact Association Status'])))setLinkForToken_(b,text,x.contact,contactUrl_(x.customer,x.contact),cursor);var p=text.indexOf('\n',cursor);cursor=p>=0?p+1:cursor;}
     if(x.location)setLinkForToken_(b,text,x.location,locationUrl_(x.customer,x.location),cursor);
     range.setRichTextValue(b.build());
   }
