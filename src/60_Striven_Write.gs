@@ -1,3 +1,4 @@
+/* CF_SERVICEOPS_V5_13_5_TARGETED_RECONCILIATION_LOW_API_R1 */
 /* CF_SERVICEOPS_V5_13_2_STABILIZATION_R1_WRITE */
 /************************************************************
  * APPS SCRIPT — 60_Striven_Write.gs
@@ -118,7 +119,7 @@ CF.StrivenWrite = (function () {
       );
 
     return {
-      Name: clean_(record['Street'] || record['Full Name'] || 'Primary Location'),
+      Name: 'Primary Location',
       Address1: clean_(record['Street']),
       City: clean_(record['City']),
       State: provinceCode_(record['Province']),
@@ -155,7 +156,7 @@ CF.StrivenWrite = (function () {
 
   function locationPayload_(record) {
     return {
-      Name: clean_(record['Full Name'] || record['Street'] || 'Service Location'),
+      Name: 'Primary Location',
       Address1: clean_(record['Street']),
       City: clean_(record['City']),
       State: clean_(record['Province']),
@@ -3844,6 +3845,8 @@ CF.StrivenControlledContactCreate = (function () {
   function verifyContactIdByGetV5127_(contactId,record) {
     contactId=clean_(contactId);
     if(!contactId)return{ok:false,reason:'NO_CANDIDATE_ID'};
+    var scopedEvidence=customerScopedContactEvidenceV5135_(record,contactId,resolvedCustomerId_(record));
+    if(scopedEvidence.ok)return{ok:false,reason:'CUSTOMER_SCOPED_CONTACT_NOT_GLOBAL_GETTABLE',customerScoped:true,evidence:scopedEvidence};
     try{
       var response=deps_().http.requestJson('/v1/contacts/'+encodeURIComponent(contactId),{method:'get',attempts:1,idempotent:true});
       var remote=response&&response.json?response.json:{};
@@ -3953,6 +3956,35 @@ function rootJournal_(record) {
     };
   }
 
+  /* CF_SERVICEOPS_V5_13_5_CUSTOMER_SCOPED_CONTACT_EVIDENCE_R1
+   * Customer-scoped Contact refs are not assumed to be global /v1/contacts/{id} IDs.
+   * This helper uses durable journal evidence only; it performs zero Striven API calls.
+   */
+  function customerScopedContactEvidenceV5135_(record,contactId,customerId){
+    contactId=clean_(contactId);customerId=clean_(customerId);
+    if(!record||!contactId||!customerId)return{ok:false,scope:'UNKNOWN'};
+    var state=contactJournal_(record),cj=state.contact||{},rec=cj.reconciliation||{},tech=cj.technicalRecovery||{};
+    var identity=(state.root&&state.root.contactIdentity)||{};
+    var identityScoped=upper_(identity.scope)==='CUSTOMER'&&clean_(identity.customerId)===customerId&&clean_(identity.customerScopedContactId||identity.contactId)===contactId&&identity.identityVerified===true;
+    if(identityScoped)return{ok:true,scope:'CUSTOMER',source:'CONTACT_IDENTITY_JOURNAL',customerId:customerId,contactId:contactId};
+
+    var scopedId=clean_(tech.customerScopedContactId||rec.customerScopedContactId);
+    var scopedCustomerId=clean_(tech.customerId||rec.customerId||customerId);
+    var reason=String(rec.reason||'');
+    var explicit=tech.operatorApprovedCustomerScopedContact===true||/CUSTOMER-SCOPED CONTACT/i.test(reason);
+    var duplicateIds=[];
+    if(Array.isArray(cj.existingDuplicateContactIds))duplicateIds=cj.existingDuplicateContactIds.map(clean_).filter(Boolean);
+    if(!duplicateIds.length&&clean_(cj.existingDuplicateContactId))duplicateIds=[clean_(cj.existingDuplicateContactId)];
+    var canonicalDiffersFromGlobal=clean_(rec.canonicalContactId)===contactId&&duplicateIds.some(function(id){return id!==contactId;});
+    if(scopedId===contactId&&scopedCustomerId===customerId&&(explicit||canonicalDiffersFromGlobal)){
+      return{ok:true,scope:'CUSTOMER',source:explicit?'CUSTOMER_SCOPED_TECHNICAL_RECOVERY':'CANONICAL_CONTACT_DIFFERS_FROM_GLOBAL_DUPLICATE',customerId:customerId,contactId:contactId,globalDuplicateContactIds:duplicateIds};
+    }
+    if(clean_(rec.canonicalContactId)===contactId&&clean_(rec.customerId)===customerId&&(explicit||canonicalDiffersFromGlobal)){
+      return{ok:true,scope:'CUSTOMER',source:explicit?'CANONICAL_CUSTOMER_SCOPED_RECONCILIATION':'CANONICAL_CONTACT_DIFFERS_FROM_GLOBAL_DUPLICATE',customerId:customerId,contactId:contactId,globalDuplicateContactIds:duplicateIds};
+    }
+    return{ok:false,scope:'UNKNOWN',customerId:customerId,contactId:contactId};
+  }
+
   function reconcileKnownContact_(record, contactId, customerId) {
     var d=deps_();
     contactId=clean_(contactId); customerId=clean_(customerId);
@@ -3997,6 +4029,11 @@ function rootJournal_(record) {
       var nameConflict=(reqFirst&&gotFirst&&reqFirst!==gotFirst)||(reqLast&&gotLast&&reqLast!==gotLast);
       return {ok:channelMatch&&!nameConflict,emailMatch:emailMatch,phoneMatch:phoneMatch,nameConflict:nameConflict,remoteFirstName:gotFirst,remoteLastName:gotLast};
     }
+    var scopedEvidenceV5135=customerScopedContactEvidenceV5135_(record,contactId,customerId);
+    if(scopedEvidenceV5135.ok){
+      return finalizeAssociated_(record,contactId,customerId,scopedEvidenceV5135.source+' CONFIRMED CUSTOMER-SCOPED CONTACT — GLOBAL GET SKIPPED');
+    }
+
     var response;
     try { response=d.http.requestJson('/v1/contacts/'+encodeURIComponent(contactId),{method:'get',attempts:1,idempotent:true}); }
     catch(e){
@@ -5946,6 +5983,24 @@ CF.CustomerContactInfoSync = (function () {
   function preexistingEmailsPreserved_(before,after){var ae=emails_(after);return emails_(before).every(function(e){var id=String(e.Id||'');return ae.some(function(x){return (id&&String(x.Id||'')===id)||(!id&&normEmail_(x.Email)===normEmail_(e.Email));});});}
 
   function journalRoot_(r){var root=parse_(r&&r['Write Journal JSON'],{});if(!root||typeof root!=='object'||Array.isArray(root))root={};return root;}
+  /* CF_SERVICEOPS_V5_13_5_INFO_SYNC_CUSTOMER_SCOPED_CONTACT_R1
+   * Customer/contact enrichment is secondary. If the durable Contact ref is explicitly
+   * customer-scoped, do not spend a failing global Contact GET or block Sales Order flow.
+   */
+  function customerScopedContactInfoEvidenceV5135_(r,contactId,customerId){
+    var root=journalRoot_(r),cc=root.contactCreate||{},rec=cc.reconciliation||{},tech=cc.technicalRecovery||{},identity=root.contactIdentity||{};
+    var identityScoped=String(identity.scope||'').toUpperCase()==='CUSTOMER'&&clean_(identity.customerId)===customerId&&clean_(identity.customerScopedContactId||identity.contactId)===contactId&&identity.identityVerified===true;
+    if(identityScoped)return{ok:true,source:'CONTACT_IDENTITY_JOURNAL'};
+    var duplicateIds=[];
+    if(Array.isArray(cc.existingDuplicateContactIds))duplicateIds=cc.existingDuplicateContactIds.map(clean_).filter(Boolean);
+    if(!duplicateIds.length&&clean_(cc.existingDuplicateContactId))duplicateIds=[clean_(cc.existingDuplicateContactId)];
+    var explicit=tech.operatorApprovedCustomerScopedContact===true||/CUSTOMER-SCOPED CONTACT/i.test(String(rec.reason||''));
+    var scopedId=clean_(tech.customerScopedContactId||rec.customerScopedContactId||rec.canonicalContactId);
+    var scopedCustomerId=clean_(tech.customerId||rec.customerId||customerId);
+    var canonicalDiffersFromGlobal=clean_(rec.canonicalContactId)===contactId&&duplicateIds.some(function(id){return id!==contactId;});
+    return{ok:scopedId===contactId&&scopedCustomerId===customerId&&(explicit||canonicalDiffersFromGlobal),source:explicit?'CUSTOMER_SCOPED_CONTACT_JOURNAL':'CANONICAL_CONTACT_DIFFERS_FROM_GLOBAL_DUPLICATE',globalDuplicateContactIds:duplicateIds};
+  }
+
   function journalState_(r){var root=journalRoot_(r),state=root.customerContactInfoSync||{};if(!state||typeof state!=='object'||Array.isArray(state))state={};return{root:root,state:state};}
   function saveJournal_(r,state,patchExtra){var root=journalRoot_(r);root.customerContactInfoSync=state;var p={'Updated At':now_(),'Write Journal JSON':d_().u.safeJson?d_().u.safeJson(root):JSON.stringify(root)};Object.keys(patchExtra||{}).forEach(function(k){p[k]=patchExtra[k];});patch_(r,p);}
   function fingerprint_(target,id,endpoint,payload){if(typeof d_().u.canonicalHash!=='function')throw new Error('CF.Util.canonicalHash is required for guarded Customer/Contact sync.');return d_().u.canonicalHash({requestId:'',action:'SYNC_'+target,entityId:String(id),endpoint:endpoint,payload:payload});}
@@ -5978,7 +6033,7 @@ CF.CustomerContactInfoSync = (function () {
     return /CUSTOM_FIELD.*BYPASS|ENRICHMENT_SKIPPED|REJECTED_VALIDATION_CUSTOM_FIELDS/i.test(status)||(/REJECTED_VALIDATION/i.test(status)&&/Invalid Custom Fields|Custom Field Id\s+\d+/i.test(error));
   }
 
-function reconcile(requestId,options){options=options||{};var r=req_(requestId);if(!r)return{ok:false,version:VERSION,status:'SERVICE_REQUEST_NOT_FOUND',requestId:clean_(requestId),liveWriteExecuted:false};var customerId=clean_(r['Created Customer ID']||r['Matched Customer ID']),contactId=clean_(r['Created Contact ID']||r['Matched Contact ID']);if(!customerId||!contactId)return fail_(r,'CUSTOMER_CONTACT_INFO_SYNC_IDS_INCOMPLETE','Durable Customer ID and Contact ID are both required.',{customerId:customerId,contactId:contactId,writeAttempted:false});var submittedPhones=submittedPhones_(r),phone=clean_(r['Phone']),email=clean_(r['Email']),ext=clean_(r['Phone Extension']),desiredAddress=desiredAddr_(r);var lock=LockService.getScriptLock();if(!lock.tryLock(30000))return{ok:false,version:VERSION,status:'INFO_SYNC_SKIPPED_ALREADY_RUNNING',requestId:clean_(requestId),retrySafeNoWrite:true,writeAttempted:false,liveWriteExecuted:false,automaticPostRetry:false};try{
+function reconcile(requestId,options){options=options||{};var r=req_(requestId);if(!r)return{ok:false,version:VERSION,status:'SERVICE_REQUEST_NOT_FOUND',requestId:clean_(requestId),liveWriteExecuted:false};var customerId=clean_(r['Created Customer ID']||r['Matched Customer ID']),contactId=clean_(r['Created Contact ID']||r['Matched Contact ID']);if(!customerId||!contactId)return fail_(r,'CUSTOMER_CONTACT_INFO_SYNC_IDS_INCOMPLETE','Durable Customer ID and Contact ID are both required.',{customerId:customerId,contactId:contactId,writeAttempted:false});var scopedInfoEvidenceV5135=customerScopedContactInfoEvidenceV5135_(r,contactId,customerId);if(scopedInfoEvidenceV5135.ok){var scopedPatchV5135={'Last Striven Sync':now_(),'Striven Sync Status':'PARTIAL','Striven Sync Error':'','Blocking Issue':'','Reconciliation Status':'CUSTOMER + CONTACT INFO CONFIRMED — CUSTOMER-SCOPED CONTACT ENRICHMENT DEFERRED'};patch_(r,scopedPatchV5135);var scopedOutV5135={ok:true,version:VERSION,status:'CUSTOMER_CONTACT_INFO_CONFIRMED_CUSTOMER_SCOPED_CONTACT_DEFERRED',requestId:clean_(requestId),customerId:customerId,contactId:contactId,contactScope:'CUSTOMER',contactEnrichmentDeferred:true,evidenceSource:scopedInfoEvidenceV5135.source,writeAttempted:false,liveWriteExecuted:false,automaticPostRetry:false};log_(r,scopedOutV5135.status,scopedOutV5135,'Global Contact GET/POST skipped because the canonical Contact reference is customer-scoped.');return scopedOutV5135;}var submittedPhones=submittedPhones_(r),phone=clean_(r['Phone']),email=clean_(r['Email']),ext=clean_(r['Phone Extension']),desiredAddress=desiredAddr_(r);var lock=LockService.getScriptLock();if(!lock.tryLock(30000))return{ok:false,version:VERSION,status:'INFO_SYNC_SKIPPED_ALREADY_RUNNING',requestId:clean_(requestId),retrySafeNoWrite:true,writeAttempted:false,liveWriteExecuted:false,automaticPostRetry:false};try{
       var customer,contact;try{customer=get_(endpoint_(CUSTOMER_GET,customerId));contact=get_(endpoint_(CONTACT_GET,contactId));}catch(e){return fail_(r,'CUSTOMER_CONTACT_INFO_GET_FAILED',e&&e.message?e.message:String(e),{customerId:customerId,contactId:contactId,writeAttempted:false});}
       if(objectId_(customer)!==customerId)return fail_(r,'UNSAFE_CUSTOMER_ID_MISMATCH','Customer GET returned a different ID.',{expectedCustomerId:customerId,actualCustomerId:objectId_(customer),writeAttempted:false});
       if(objectId_(contact)!==contactId)return fail_(r,'UNSAFE_CONTACT_ID_MISMATCH','Contact GET returned a different ID.',{expectedContactId:contactId,actualContactId:objectId_(contact),writeAttempted:false});
@@ -6025,7 +6080,7 @@ CF.StandaloneLocationCreateV5128=(function(){
   function resolved_(r,a,b){return clean_(r[a]||r[b]);}
   function rootJournal_(r){var raw=clean_(r['Write Journal JSON']);if(!raw)return{};try{var x=JSON.parse(raw);return x&&typeof x==='object'?x:{};}catch(e){return{};}}
   function patch_(r,p){if(!r||!r.__rowNumber)throw new Error('Service Request row unavailable.');CF.Util.patchRow('SERVICE_REQUESTS',r.__rowNumber,p);}
-  function payload_(r){return{Name:clean_(r['Full Name']||r['Street']||'Service Location'),Address1:clean_(r['Street']),City:clean_(r['City']),State:province_(r['Province']),PostalCode:postal_(r['Postal Code']),Country:clean_(r['Country'])||'Canada'};}
+  function payload_(r){return{Name:'Primary Location',Address1:clean_(r['Street']),City:clean_(r['City']),State:province_(r['Province']),PostalCode:postal_(r['Postal Code']),Country:clean_(r['Country'])||'Canada'};}
   function rows_(body){
     if(Array.isArray(body))return body;body=body||{};
     var candidates=[body.Items,body.items,body.Results,body.results,body.Records,body.records,body.Data,body.data];
