@@ -4670,9 +4670,44 @@ function FIX_20260903_reconcileAllExistingOperatorQueue() {
     if(x.location)setLinkForToken_(b,text,x.location,locationUrl_(x.customer,x.location),cursor);
     range.setRichTextValue(b.build());
   }
-  function orderText_(r){var number=clean_(r['Work Order Number']),id=clean_(r['Work Order ID']);if(!number&&!id)return'—';return'#'+(number||id)+' - Sales Order\n'+(clean_(r['Work Order Status'])||'Quoted');}
-  function orderUrl_(r){var url=clean_(r['Work Order Link']);if(!url&&clean_(r['Work Order ID']))url='https://classicfireplace.striven.com/next/crm#/sales-orders/'+encodeURIComponent(clean_(r['Work Order ID']));return url;}
-  function setOrderRich_(range,r){var text=orderText_(r),url=orderUrl_(r),b=SpreadsheetApp.newRichTextValue().setText(text);if(url&&text!=='—'){var e=text.indexOf('\n');if(e<0)e=text.length;b.setLinkUrl(0,e,url);}range.setRichTextValue(b.build());}
+  function durableRecoveryMeta_(r){
+    var root={};
+    try{root=CF.Util&&typeof CF.Util.parseJson==='function'?CF.Util.parseJson(r['Write Journal JSON'],{}):JSON.parse(String(r['Write Journal JSON']||'{}'));}catch(e){root={};}
+    return root&&root.existingSalesOrderRecovery||{};
+  }
+  function orderText_(r){
+    var meta=durableRecoveryMeta_(r),number=clean_(r['Work Order Number']||meta.salesOrderNumber),id=clean_(r['Work Order ID']||meta.salesOrderId);
+    if(!number&&!id)return'—';
+    var name=clean_(meta.salesOrderName)||'Sales Order',status=clean_(r['Work Order Status']||meta.salesOrderStatus)||'Quoted';
+    return'#'+(number||id)+' - '+name+'\n'+status;
+  }
+  function orderUrl_(r){var meta=durableRecoveryMeta_(r),url=clean_(r['Work Order Link']||meta.salesOrderUrl),id=clean_(r['Work Order ID']||meta.salesOrderId);if(!url&&id)url='https://classicfireplace.striven.com/next/crm#/sales-orders/'+encodeURIComponent(id);return url;}
+  function setOrderRich_(range,r){var text=orderText_(r),url=orderUrl_(r),b=SpreadsheetApp.newRichTextValue().setText(text);if(url&&text!=='—'){var e=text.indexOf('\n');if(e<0)e=text.length;b.setLinkUrl(0,e,url);}var s=text.indexOf('\n');if(s>=0&&s+1<text.length){b.setTextStyle(s+1,text.length,SpreadsheetApp.newTextStyle().setBold(true).setForegroundColor('#1155cc').build());}range.setRichTextValue(b.build());}
+  function taskTextDurable_(r){
+    var meta=durableRecoveryMeta_(r),id=clean_(meta.taskId);if(!id)return'—';
+    var name=clean_(meta.taskName)||'Task',status=clean_(meta.taskStatus);
+    return'#'+id+' - '+name+(status?'\n'+status:'');
+  }
+  function taskUrlDurable_(r){var meta=durableRecoveryMeta_(r),id=clean_(meta.taskId),url=clean_(meta.taskUrl);if(!url&&id)url='https://classicfireplace.striven.com/Tasks/TaskInfo.aspx?nav=1&TaskID='+encodeURIComponent(id);return url;}
+  function setTaskRichDurable_(range,r){
+    var text=taskTextDurable_(r),url=taskUrlDurable_(r),b=SpreadsheetApp.newRichTextValue().setText(text);
+    if(url&&text!=='—'){var e=text.indexOf('\n');if(e<0)e=text.length;b.setLinkUrl(0,e,url);}
+    var s=text.indexOf('\n');if(s>=0&&s+1<text.length){b.setTextStyle(s+1,text.length,SpreadsheetApp.newTextStyle().setBold(true).setForegroundColor('#1155cc').build());}
+    range.setRichTextValue(b.build());
+  }
+  function applyDurableOperationalFallbacksAll_(){
+    var s=queueSheet_(),last=s.getLastRow();if(last<2)return{ok:true,status:'NO_QUEUE_ROWS',orders:0,tasks:0};
+    var headers=s.getRange(1,1,1,s.getLastColumn()).getDisplayValues()[0],idCol=headers.indexOf('Request ID')+1,orderCol=headers.indexOf('Sales Order / Work Order')+1,taskCol=headers.indexOf('Task')+1;
+    if(!idCol)return{ok:false,status:'REQUEST_ID_COLUMN_MISSING',orders:0,tasks:0};
+    var src=CF.Util.readRecords('SERVICE_REQUESTS'),map={};src.forEach(function(r){var id=clean_(r['Request ID']);if(id)map[id]=r;});
+    var ids=s.getRange(2,idCol,last-1,1).getDisplayValues(),orders=0,tasks=0;
+    for(var i=0;i<ids.length;i++){
+      var r=map[clean_(ids[i][0])];if(!r)continue;var meta=durableRecoveryMeta_(r);
+      if(orderCol&&(clean_(meta.salesOrderName)||clean_(meta.salesOrderNumber)||clean_(r['Work Order Number']))){setOrderRich_(s.getRange(i+2,orderCol),r);orders++;}
+      if(taskCol&&clean_(meta.taskId)){setTaskRichDurable_(s.getRange(i+2,taskCol),r);tasks++;}
+    }
+    return{ok:true,status:'DURABLE_OPERATIONAL_FALLBACKS_PROJECTED',orders:orders,tasks:tasks};
+  }
   function stageBg_(stage){stage=upper_(stage);if(stage==='SALES ORDER CREATED')return'#d9ead3';if(stage==='NEEDS REVIEW')return'#f4cccc';if(stage.indexOf('READY FOR')===0)return'#fff2cc';if(stage.indexOf('CREATING')===0)return'#cfe2f3';return'#ffffff';}
   function findQueueRow_(requestId){var s=queueSheet_(),last=s.getLastRow();if(last<2)return 0;var hit=s.getRange(2,1,last-1,1).createTextFinder(clean_(requestId)).matchEntireCell(true).findNext();return hit?hit.getRow():0;}
   function applyStatusTimingProjectionAll_(){
@@ -4690,11 +4725,12 @@ function FIX_20260903_reconcileAllExistingOperatorQueue() {
     var r=request_(requestId);if(!r)return{ok:false,status:'SERVICE_REQUEST_NOT_FOUND',requestId:requestId};var row=findQueueRow_(requestId);
     if(!row){var full=refreshAll_({verifyLimit:options.verifyLimit||25}),after=findQueueRow_(requestId);return{ok:!!after,status:after?'FULL_REFRESH_INSERTED_REQUEST':'REQUEST_STILL_MISSING_AFTER_FULL_REFRESH',requestId:requestId,fullRefresh:full,parity:verifyRequest_(requestId)};}
     var s=queueSheet_(),headers=s.getRange(1,1,1,s.getLastColumn()).getDisplayValues()[0];function col_(name){return headers.indexOf(name)+1;}
-    var cStatus=col_('Status'),cStriven=col_('Striven'),cNext=col_('Next Step'),cOrder=col_('Sales Order / Work Order');
+    var cStatus=col_('Status'),cStriven=col_('Striven'),cNext=col_('Next Step'),cOrder=col_('Sales Order / Work Order'),cTask=col_('Task');
     if(cStatus)s.getRange(row,cStatus).setValue(statusText_(r)).setBackground(stageBg_(r['Current Stage'])).setFontWeight('bold');
     if(cStriven)setStrivenRich_(s.getRange(row,cStriven),r);
     if(cNext)s.getRange(row,cNext).setValue(clean_(r['Next Action'])||'—');
     if(cOrder)setOrderRich_(s.getRange(row,cOrder),r);
+    if(cTask&&clean_(durableRecoveryMeta_(r).taskId))setTaskRichDurable_(s.getRange(row,cTask),r);
     SpreadsheetApp.flush();var parity=verifyRequest_(requestId);
     if(!parity.ok&&options.fullFallback!==false){var full2=refreshAll_({verifyLimit:options.verifyLimit||25});parity=verifyRequest_(requestId);return{ok:parity.ok,status:parity.ok?'REQUEST_REFRESH_REPAIRED_BY_FULL_FALLBACK':'PARITY_FAILED_AFTER_FULL_FALLBACK',requestId:requestId,parity:parity,fullRefresh:full2};}
     return{ok:parity.ok,status:parity.ok?'REQUEST_REFRESHED_AND_VERIFIED':'REQUEST_REFRESH_PARITY_FAILED',requestId:requestId,parity:parity};
@@ -4711,7 +4747,7 @@ function FIX_20260903_reconcileAllExistingOperatorQueue() {
     return{ok:issues.length===0,requestId:requestId,rowNumber:row,expectedStatus:expectedStatus,actualStatus:actualStatus,sourceNextAction:expectedNext,queueNextAction:actualNext,workOrderNumber:n,issues:issues};
   }
   function verifyRecent_(limit){limit=Math.max(1,Number(limit||20));var rows=CF.Util.readRecords('SERVICE_REQUESTS').slice();function ms_(r){var v=r['Submitted At']||r['Created At'];var d=v instanceof Date?v:new Date(v),t=d.getTime();return isNaN(t)?0:t;}rows.sort(function(a,b){return ms_(b)-ms_(a);});var checked=[],mismatches=[];rows.slice(0,limit).forEach(function(r){var id=clean_(r['Request ID']);if(!id)return;var p=verifyRequest_(id);checked.push(p);if(!p.ok)mismatches.push(p);});return{ok:mismatches.length===0,version:VERSION,limit:limit,checked:checked.length,mismatchCount:mismatches.length,mismatches:mismatches};}
-  function refreshAll_(options){options=options||{};SpreadsheetApp.flush();var out=baseRefresh.apply(CF.OperatorQueue,[]);SpreadsheetApp.flush();var timing=applyStatusTimingProjectionAll_();SpreadsheetApp.flush();var parity=verifyRecent_(options.verifyLimit||20);if(out&&typeof out==='object'){out.commitFlushBeforeRead=true;out.commitFlushAfterWrite=true;out.statusTimingProjection=timing;out.recentParity=parity;out.versionQueueCommitParity=VERSION;}try{if(CF.Util&&typeof CF.Util.logEvent==='function')CF.Util.logEvent({module:'50_Operator_Queue',action:'QUEUE_TIMING_HARDENING_REFRESH',status:parity.ok?'COMPLETE':'PARITY_FAILED',details:{timing:timing,parity:parity},version:VERSION});}catch(e){}return out||{ok:parity.ok,statusTimingProjection:timing,recentParity:parity,versionQueueCommitParity:VERSION};}
+  function refreshAll_(options){options=options||{};SpreadsheetApp.flush();var out=baseRefresh.apply(CF.OperatorQueue,[]);SpreadsheetApp.flush();var timing=applyStatusTimingProjectionAll_();SpreadsheetApp.flush();var durableFallbacks=applyDurableOperationalFallbacksAll_();SpreadsheetApp.flush();var parity=verifyRecent_(options.verifyLimit||20);if(out&&typeof out==='object'){out.commitFlushBeforeRead=true;out.commitFlushAfterWrite=true;out.statusTimingProjection=timing;out.durableOperationalFallbacks=durableFallbacks;out.recentParity=parity;out.versionQueueCommitParity=VERSION;}try{if(CF.Util&&typeof CF.Util.logEvent==='function')CF.Util.logEvent({module:'50_Operator_Queue',action:'QUEUE_TIMING_HARDENING_REFRESH',status:parity.ok?'COMPLETE':'PARITY_FAILED',details:{timing:timing,parity:parity},version:VERSION});}catch(e){}return out||{ok:parity.ok,statusTimingProjection:timing,recentParity:parity,versionQueueCommitParity:VERSION};}
   function unsafeWriteReason_(r,action){action=upper_(action);if(['CREATE CUSTOMER','CREATE CONTACT','CREATE LOCATION','APPROVE PROPOSED ACTION'].indexOf(action)<0)return'';if(clean_(r['Work Order ID'])||upper_(r['Current Stage'])==='SALES ORDER CREATED')return'DURABLE_SALES_ORDER_ALREADY_EXISTS';var sync=upper_(r['Striven Sync Status']),recon=upper_(r['Reconciliation Status']),next=upper_(r['Next Action']),block=upper_(r['Blocking Issue']);if(sync==='RECONCILE REQUIRED'||next.indexOf('RECONCILE')===0||recon.indexOf('UNCERTAIN')>=0||recon.indexOf('RECONCILE')>=0||block.indexOf('PRIOR WRITE MAY HAVE SUCCEEDED')>=0||block.indexOf('DO NOT RETRY')>=0)return'RECONCILE_REQUIRED_DO_NOT_RETRY';return'';}
   
   /* CF_SERVICEOPS_V5_13_3_QUEUE_TRIGGER_HYGIENE_R1_HELPER */
