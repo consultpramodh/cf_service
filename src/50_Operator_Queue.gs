@@ -4682,7 +4682,15 @@ function FIX_20260903_reconcileAllExistingOperatorQueue() {
     return'#'+(number||id)+' - '+name+'\n'+status;
   }
   function orderUrl_(r){var meta=durableRecoveryMeta_(r),url=clean_(r['Work Order Link']||meta.salesOrderUrl),id=clean_(r['Work Order ID']||meta.salesOrderId);if(!url&&id)url='https://classicfireplace.striven.com/next/crm#/sales-orders/'+encodeURIComponent(id);return url;}
-  function setOrderRich_(range,r){var text=orderText_(r),url=orderUrl_(r),b=SpreadsheetApp.newRichTextValue().setText(text);if(url&&text!=='—'){var e=text.indexOf('\n');if(e<0)e=text.length;b.setLinkUrl(0,e,url);}var s=text.indexOf('\n');if(s>=0&&s+1<text.length){b.setTextStyle(s+1,text.length,SpreadsheetApp.newTextStyle().setBold(true).setForegroundColor('#1155cc').build());}range.setRichTextValue(b.build());}
+  function durableStatusColor_(status){
+    var s=upper_(status);
+    if(/COMPLETED|DONE|FULFILLED|CLOSED/.test(s))return'#38761d';
+    if(/IN PROGRESS|APPROVED|OPEN|SCHEDULED|ASSIGNED/.test(s))return'#1155cc';
+    if(/QUOTED|PENDING|ON HOLD|INCOMPLETE|REVIEW/.test(s))return'#b45f06';
+    if(/DECLINED|CANCELLED|CANCELED|LOST|ERROR|BLOCK/.test(s))return'#cc0000';
+    return'#666666';
+  }
+  function setOrderRich_(range,r){var text=orderText_(r),url=orderUrl_(r),b=SpreadsheetApp.newRichTextValue().setText(text);if(url&&text!=='—'){var e=text.indexOf('\n');if(e<0)e=text.length;b.setLinkUrl(0,e,url);}var s=text.indexOf('\n');if(s>=0&&s+1<text.length){b.setTextStyle(s+1,text.length,SpreadsheetApp.newTextStyle().setBold(true).setForegroundColor(durableStatusColor_(text.slice(s+1))).build());}range.setRichTextValue(b.build());}
   function taskTextDurable_(r){
     var meta=durableRecoveryMeta_(r),id=clean_(meta.taskId);if(!id)return'—';
     var name=clean_(meta.taskName)||'Task',status=clean_(meta.taskStatus);
@@ -4692,7 +4700,7 @@ function FIX_20260903_reconcileAllExistingOperatorQueue() {
   function setTaskRichDurable_(range,r){
     var text=taskTextDurable_(r),url=taskUrlDurable_(r),b=SpreadsheetApp.newRichTextValue().setText(text);
     if(url&&text!=='—'){var e=text.indexOf('\n');if(e<0)e=text.length;b.setLinkUrl(0,e,url);}
-    var s=text.indexOf('\n');if(s>=0&&s+1<text.length){b.setTextStyle(s+1,text.length,SpreadsheetApp.newTextStyle().setBold(true).setForegroundColor('#1155cc').build());}
+    var s=text.indexOf('\n');if(s>=0&&s+1<text.length){b.setTextStyle(s+1,text.length,SpreadsheetApp.newTextStyle().setBold(true).setForegroundColor(durableStatusColor_(text.slice(s+1))).build());}
     range.setRichTextValue(b.build());
   }
   function applyDurableOperationalFallbacksAll_(){
@@ -4703,7 +4711,7 @@ function FIX_20260903_reconcileAllExistingOperatorQueue() {
     var ids=s.getRange(2,idCol,last-1,1).getDisplayValues(),orders=0,tasks=0;
     for(var i=0;i<ids.length;i++){
       var r=map[clean_(ids[i][0])];if(!r)continue;var meta=durableRecoveryMeta_(r);
-      if(orderCol&&(clean_(meta.salesOrderName)||clean_(meta.salesOrderNumber)||clean_(r['Work Order Number']))){setOrderRich_(s.getRange(i+2,orderCol),r);orders++;}
+      if(orderCol&&(clean_(meta.salesOrderName)||clean_(meta.salesOrderNumber))){setOrderRich_(s.getRange(i+2,orderCol),r);orders++;}
       if(taskCol&&clean_(meta.taskId)){setTaskRichDurable_(s.getRange(i+2,taskCol),r);tasks++;}
     }
     return{ok:true,status:'DURABLE_OPERATIONAL_FALLBACKS_PROJECTED',orders:orders,tasks:tasks};
