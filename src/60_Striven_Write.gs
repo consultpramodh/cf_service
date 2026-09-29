@@ -4213,9 +4213,6 @@ function executeControlledContactCreate(requestIdOrRow, options) {
       }
 
       if (contactId) {
-        var row = contactById_(contactId);
-        if (row && clean_(row['Customer ID']) === customerId) return finalizeAssociated_(record, contactId, customerId, 'CONTACT CACHE ALREADY ASSOCIATED');
-
         if (upper_(cj.associationStatus).indexOf('UNCERTAIN') !== -1 || upper_(cj.status).indexOf('ASSOCIATION_UNCERTAIN') !== -1) {
           return reconcileKnownContact_(record, contactId, customerId);
         }
