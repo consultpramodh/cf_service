@@ -4707,7 +4707,12 @@ function FIX_20260903_reconcileAllExistingOperatorQueue() {
     var expectedNext=clean_(src['Next Action'])||'—',actualNext=q_('Next Step')||'—';if(expectedNext!==actualNext)issues.push('NEXT_ACTION:'+actualNext+'!='+expectedNext);
     var n=clean_(src['Work Order Number']);if(n&&q_('Sales Order / Work Order').indexOf(n)<0)issues.push('ORDER_NUMBER_MISSING:'+n);
     var oi=idx_('Sales Order / Work Order'),expectedOrderUrl=orderUrl_(src);if(oi>=0&&expectedOrderUrl&&richUrls_(s.getRange(row,oi+1)).indexOf(expectedOrderUrl)<0)issues.push('ORDER_LINK_MISSING');
-    if(upper_(src['Striven Sync Status'])==='RECONCILE REQUIRED'&&upper_(actualNext).indexOf('RECONCILE')!==0)issues.push('UNSAFE_RECONCILE_PROJECTION');
+    // A prior association POST must be verified by GET only. That safe action
+    // deliberately starts with GET-ONLY rather than RECONCILE.
+    var nextUpper=upper_(actualNext);
+    var safeReconcileAction=nextUpper.indexOf('RECONCILE')===0||
+      (/^GET-ONLY VERIFY CONTACT\b/.test(nextUpper)&&/\bDO NOT POST$/.test(nextUpper));
+    if(upper_(src['Striven Sync Status'])==='RECONCILE REQUIRED'&&!safeReconcileAction)issues.push('UNSAFE_RECONCILE_PROJECTION');
     return{ok:issues.length===0,requestId:requestId,rowNumber:row,expectedStatus:expectedStatus,actualStatus:actualStatus,sourceNextAction:expectedNext,queueNextAction:actualNext,workOrderNumber:n,issues:issues};
   }
   function verifyRecent_(limit){limit=Math.max(1,Number(limit||20));var rows=CF.Util.readRecords('SERVICE_REQUESTS').slice();function ms_(r){var v=r['Submitted At']||r['Created At'];var d=v instanceof Date?v:new Date(v),t=d.getTime();return isNaN(t)?0:t;}rows.sort(function(a,b){return ms_(b)-ms_(a);});var checked=[],mismatches=[];rows.slice(0,limit).forEach(function(r){var id=clean_(r['Request ID']);if(!id)return;var p=verifyRequest_(id);checked.push(p);if(!p.ok)mismatches.push(p);});return{ok:mismatches.length===0,version:VERSION,limit:limit,checked:checked.length,mismatchCount:mismatches.length,mismatches:mismatches};}
