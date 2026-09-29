@@ -2004,15 +2004,23 @@ var CF_SERVICEOPS_LEAN_QUEUE_V51015_R1_ = (function () {
   }
   function entityLine_(r,label,type,statusField,idField,actionField){
     var status=upper_(r[statusField]),id=clean_(r[idField]);
+    if(type==='contact'&&id&&/RECONCILE|PENDING|CONFLICT|UNVERIFIED/.test(upper_(r['Contact Association Status'])))return label+': '+id+' ⚠ association unverified';
     if(status==='MATCHED'&&id)return label+': '+id+' ✓';
     if(status==='AMBIGUOUS'){var ids=evidenceIds_(r,type);return label+': '+(ids.length?ids.join(' / ')+' ⚠':'AMBIGUOUS ⚠');}
     if(upper_(r[actionField])==='CREATE')return label+': NEW';
     return label+': '+clean_(r[statusField]||'—');
   }
+  function pendingContactCandidate_(r){
+    if(!/RECONCILE|PENDING|CONFLICT|UNVERIFIED/.test(upper_(r['Contact Association Status'])))return'';
+    var match=clean_(r['Operator Notes']).match(/(?:^|\n)CONTACT_CANDIDATE_ID=(\d+)(?:\n|$)/);
+    return match&&match[1]!==contactId_(r)?match[1]:'';
+  }
   function strivenText_(r){
+    var candidate=pendingContactCandidate_(r);
     return line_([
       entityLine_(r,'Customer','customer','Customer Match Status','Matched Customer ID','Customer Action'),
       entityLine_(r,'Contact','contact','Contact Match Status','Matched Contact ID','Contact Action'),
+      candidate?'Contact candidate: '+candidate+' ⚠ verify identity':'',
       entityLine_(r,'Location','location','Location Match Status','Matched Location ID','Location Action'),
       clean_(r['Match Confidence'])?'Confidence: '+r['Match Confidence']+(clean_(r['Match Score'])?' ('+r['Match Score']+')':''):''
     ]);
@@ -2158,10 +2166,12 @@ var CF_SERVICEOPS_LEAN_QUEUE_V51015_R1_ = (function () {
     return b.build();
   }
   function richStriven_(r,text){
-    var cid=customerId_(r),contact=contactId_(r),location=locationId_(r);
+    var cid=customerId_(r),contact=contactId_(r),location=locationId_(r),candidate=pendingContactCandidate_(r);
+    var contactUnverified=/RECONCILE|PENDING|CONFLICT|UNVERIFIED/.test(upper_(r['Contact Association Status']));
     var b=SpreadsheetApp.newRichTextValue().setText(text),specs=[
       {prefix:'Customer: ',id:cid,url:strivenUrl_('CUSTOMER',cid)},
-      {prefix:'Contact: ',id:contact,url:strivenUrl_('CONTACT',contact,cid)},
+      {prefix:'Contact: ',id:contact,url:contactUnverified?'':strivenUrl_('CONTACT',contact,cid)},
+      {prefix:'Contact candidate: ',id:candidate,url:strivenUrl_('CONTACT',candidate,cid)},
       {prefix:'Location: ',id:location,url:strivenUrl_('LOCATION',location,cid)}
     ];
     specs.forEach(function(s){
@@ -4652,7 +4662,10 @@ function FIX_20260903_reconcileAllExistingOperatorQueue() {
   function strivenText_(r){
     var x=ids_(r),lines=[];
     lines.push('Customer: '+(x.customer?x.customer+' ✓':(upper_(r['Customer Action'])==='CREATE'?'NEW':'—')));
-    lines.push('Contact: '+(x.contact?x.contact+' ✓':(upper_(r['Contact Action'])==='CREATE'?'NEW':'—')));
+    var contactUnverified=/RECONCILE|PENDING|CONFLICT|UNVERIFIED/.test(upper_(r['Contact Association Status']));
+    lines.push('Contact: '+(x.contact?x.contact+(contactUnverified?' ⚠ association unverified':' ✓'):(upper_(r['Contact Action'])==='CREATE'?'NEW':'—')));
+    var candidate=contactUnverified&&clean_(r['Operator Notes']).match(/(?:^|\n)CONTACT_CANDIDATE_ID=(\d+)(?:\n|$)/);
+    if(candidate&&candidate[1]!==x.contact)lines.push('Contact candidate: '+candidate[1]+' ⚠ verify identity');
     lines.push('Location: '+(x.location?x.location+' ✓':(upper_(r['Location Action'])==='CREATE'?'NEW':'—')));
     if(clean_(r['Match Confidence']))lines.push('Confidence: '+clean_(r['Match Confidence'])+(clean_(r['Match Score'])?' ('+clean_(r['Match Score'])+')':''));
     return lines.join('\n');
@@ -4666,7 +4679,9 @@ function FIX_20260903_reconcileAllExistingOperatorQueue() {
   function setStrivenRich_(range,r){
     var text=strivenText_(r),x=ids_(r),b=SpreadsheetApp.newRichTextValue().setText(text),cursor=0;
     if(x.customer){setLinkForToken_(b,text,x.customer,customerUrl_(x.customer),cursor);cursor=text.indexOf('\n')+1;}
-    if(x.contact){setLinkForToken_(b,text,x.contact,contactUrl_(x.customer,x.contact),cursor);var p=text.indexOf('\n',cursor);cursor=p>=0?p+1:cursor;}
+    if(x.contact){if(!/RECONCILE|PENDING|CONFLICT|UNVERIFIED/.test(upper_(r['Contact Association Status'])))setLinkForToken_(b,text,x.contact,contactUrl_(x.customer,x.contact),cursor);var p=text.indexOf('\n',cursor);cursor=p>=0?p+1:cursor;}
+    var candidate=clean_(r['Operator Notes']).match(/(?:^|\n)CONTACT_CANDIDATE_ID=(\d+)(?:\n|$)/);
+    if(candidate&&/RECONCILE|PENDING|CONFLICT|UNVERIFIED/.test(upper_(r['Contact Association Status']))&&candidate[1]!==x.contact)setLinkForToken_(b,text,candidate[1],contactUrl_(x.customer,candidate[1]),cursor);
     if(x.location)setLinkForToken_(b,text,x.location,locationUrl_(x.customer,x.location),cursor);
     range.setRichTextValue(b.build());
   }
