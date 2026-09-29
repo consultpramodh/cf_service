@@ -4024,6 +4024,19 @@ function rootJournal_(record) {
       return {ok:false,status:'CONTACT_OWNERSHIP_CONFLICT',requestId:clean_(record['Request ID']),matchedContactId:contactId,ownerCustomerIds:owners,ownerEvidence:ownerEvidence,directRead:true,liveWriteExecuted:false};
     }
     var state=contactJournal_(record),cj=clone_(state.contact||{});
+    var reportedDuplicates=duplicateContactIdsFromJournal_(cj);
+    if(reportedDuplicates.indexOf(contactId)!==-1){
+      cj.reconciliation=cj.reconciliation||{};
+      cj.reconciliation.lastAttemptAt=d.util.nowString();
+      cj.reconciliation.contactId=contactId;
+      cj.reconciliation.customerId=customerId;
+      cj.reconciliation.reason='GLOBAL DUPLICATE CONTACT IDENTITY MATCHED; CUSTOMER OWNERSHIP UNVERIFIED';
+      cj.associationStatus='READ_ONLY_RECONCILE_REQUIRED';
+      cj.status='DUPLICATE_CONTACT_OWNERSHIP_GET_ONLY';
+      state.root.contactCreate=cj;
+      patchRequest_(record,{'Updated At':d.util.nowString(),'Current Stage':'NEEDS REVIEW','Request Status':'BLOCKED','Manual Review?':'NO','Blocking Issue':'Striven reported Contact '+contactId+' as a global duplicate, but GET/cache did not prove it belongs to Customer '+customerId+'. Do not associate or create a Contact.','Next Action':'GET-ONLY VERIFY CUSTOMER CONTACT — DO NOT POST','Contact Association Status':'RECONCILE','Customer Structure Status':'CONTACT OWNERSHIP UNVERIFIED','Write Journal JSON':safeJson_(state.root),'Striven Sync Status':'RECONCILE REQUIRED','Reconciliation Status':'GLOBAL DUPLICATE CONTACT OWNERSHIP UNVERIFIED'});
+      return{ok:false,status:'DUPLICATE_CONTACT_OWNERSHIP_GET_ONLY',requestId:clean_(record['Request ID']),candidateContactId:contactId,matchedCustomerId:customerId,directRead:true,automaticPostRetry:false,liveWriteExecuted:false};
+    }
     cj.reconciliation=cj.reconciliation||{};cj.reconciliation.lastAttemptAt=d.util.nowString();cj.reconciliation.contactId=contactId;cj.reconciliation.customerId=customerId;cj.reconciliation.reason='DIRECT CONTACT GET IDENTITY CONFIRMED — ASSOCIATION REQUIRED';cj.reconciliation.directRead=true;
     state.root.contactCreate=cj;
     patchRequest_(record,{'Updated At':d.util.nowString(),'Matched Contact ID':contactId,'Created Contact ID':contactId,'Matched Contact Name':clean_(record['Full Name']),'Contact Match Status':'MATCHED','Contact Action':'LINK EXISTING','Contact Association Status':'PENDING RECONCILIATION','Customer Structure Status':'CONTACT RECONCILED — ASSOCIATION PENDING','Blocking Issue':'Existing Contact '+contactId+' verified directly. Controlled Customer association remains.','Next Action':'RECONCILE CONTACT ASSOCIATION','Write Journal JSON':safeJson_(state.root),'Striven Sync Status':'PARTIAL','Striven Sync Error':'','Reconciliation Status':'CONTACT DIRECT ID RECONCILED'});
@@ -4171,7 +4184,16 @@ function executeControlledContactCreate(requestIdOrRow, options) {
       if(!contactId&&priorDuplicateIds.length){
         if(priorDuplicateIds.length===1){
           var duplicateId=priorDuplicateIds[0];
-          var recovered=reconcileKnownContact_(record,duplicateId,customerId);
+          if(!cj.duplicateCandidateRefreshAt&&postPredatesCache_(cj.postFinishedAt)){
+            cj.duplicateCandidateRefreshAt=d.util.nowString();
+            state.root.contactCreate=cj;
+            patchRequest_(record,{'Write Journal JSON':safeJson_(state.root)});
+            try{d.data.refreshCustomerData({});}
+            catch(refreshError){return{ok:false,status:'DUPLICATE_CONTACT_REFRESH_FAILED_GET_ONLY',requestId:clean_(record['Request ID']),error:String(refreshError&&refreshError.message||refreshError),automaticPostRetry:false,liveWriteExecuted:false};}
+          }
+          var scoped=contactCandidates_(record).filter(function(x){return x.customerId===customerId;});
+          if(scoped.length>1)return{ok:false,status:'CUSTOMER_CONTACT_CANDIDATES_AMBIGUOUS',requestId:clean_(record['Request ID']),candidateIds:scoped.map(function(x){return x.contactId;}),automaticPostRetry:false,liveWriteExecuted:false};
+          var recovered=reconcileKnownContact_(record,scoped.length===1?scoped[0].contactId:duplicateId,customerId);
           recovered.existingDuplicateContactId=duplicateId;
           recovered.existingDuplicateContactIds=priorDuplicateIds;
           recovered.automaticPostRetry=false;
@@ -4267,15 +4289,9 @@ function executeControlledContactCreate(requestIdOrRow, options) {
       }
 
       if (Number(cj.postAttempts || 0) > 0 && (cj.remoteWriteMayHaveSucceeded === true || upper_(cj.status).indexOf('UNCERTAIN') !== -1 || upper_(cj.status).indexOf('SUCCESS_ID_MISSING') !== -1)) return reconcileUncertainCreate_(record, cj);
-      /* CF_SERVICEOPS_V5_12_7_EMAIL_DUPLICATE_GUARD_FAST_PATH_R1 */
-      var requestHasEmailV5127=!!(clean_(record['Normalized Email'])||clean_(record['Email']));
-      var refresh={refreshed:false,before:freshnessSnapshot_(),after:freshnessSnapshot_(),bypassedForEmailDuplicateGuard:false};
-      if(!cacheFresh_()&&requestHasEmailV5127){
-        refresh.bypassedForEmailDuplicateGuard=true;
-        try{log_(record,'CONTACT_CACHE_REFRESH','STALE_CACHE_BYPASS_EMAIL_DUPLICATE_GUARD',{customerId:customerId,emailPresent:true,automaticPostRetry:false},'Stale Contact cache bypassed because Striven server duplicate-email validation plus guarded reconciliation protects the single-attempt Contact create.');}catch(ignoredV5127Bypass){}
-      }else{
-        refresh=refreshContactsIfStale_();
-      }
+      // A global duplicate-email response does not identify the Contact under
+      // this Customer. Refresh stale ownership evidence before choosing a POST.
+      var refresh=refreshContactsIfStale_();
       if(refresh.refreshed){
         var refreshElapsedV5127=Date.now()-started;
         try{log_(record,'CONTACT_CACHE_REFRESH','REFRESHED_CONTINUE_SAME_RUN',{freshness:refresh.after,refreshElapsedMs:refreshElapsedV5127,runtimeContinuationBudgetMs:240000},'Customer/Contact cache refreshed. Continue duplicate check in this same execution when runtime budget allows.');}catch(ignoredV5127RefreshLog){}
@@ -4283,11 +4299,11 @@ function executeControlledContactCreate(requestIdOrRow, options) {
       }
 
       var candidates = contactCandidates_(record);
+      var customerCandidates=candidates.filter(function(x){return x.customerId===customerId;});
+      if(customerCandidates.length===1){
+        return reconcileKnownContact_(record,customerCandidates[0].contactId,customerId);
+      }
       if (candidates.length === 1) {
-        if (candidates[0].customerId === customerId) {
-          patchRequest_(record, { 'Matched Contact ID': candidates[0].contactId, 'Matched Contact Name': candidates[0].fullName || clean_(record['Full Name']), 'Contact Match Status': 'MATCHED', 'Contact Action': 'LINK EXISTING', 'Contact Association Status': 'ASSOCIATED' });
-          return finalizeAssociated_(request_(record.__rowNumber), candidates[0].contactId, customerId, 'EXACT EXISTING CONTACT FOR CUSTOMER');
-        }
         patchRequest_(record, {
           'Updated At': d.util.nowString(), 'Current Stage': 'NEEDS REVIEW', 'Request Status': 'BLOCKED', 'Manual Review?': 'YES',
           'Manual Review Reason': 'Existing Contact ID ' + candidates[0].contactId + ' already matches the phone/email under Customer ' + (candidates[0].customerId || 'UNRESOLVED') + '.',
