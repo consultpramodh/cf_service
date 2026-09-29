@@ -3967,7 +3967,6 @@ function rootJournal_(record) {
     var identity=(state.root&&state.root.contactIdentity)||{};
     var identityScoped=upper_(identity.scope)==='CUSTOMER'&&clean_(identity.customerId)===customerId&&clean_(identity.customerScopedContactId||identity.contactId)===contactId&&identity.identityVerified===true;
     if(identityScoped)return{ok:true,scope:'CUSTOMER',source:'CONTACT_IDENTITY_JOURNAL',customerId:customerId,contactId:contactId};
-
     var scopedId=clean_(tech.customerScopedContactId||rec.customerScopedContactId);
     var scopedCustomerId=clean_(tech.customerId||rec.customerId||customerId);
     var reason=String(rec.reason||'');
@@ -3976,12 +3975,8 @@ function rootJournal_(record) {
     if(Array.isArray(cj.existingDuplicateContactIds))duplicateIds=cj.existingDuplicateContactIds.map(clean_).filter(Boolean);
     if(!duplicateIds.length&&clean_(cj.existingDuplicateContactId))duplicateIds=[clean_(cj.existingDuplicateContactId)];
     var canonicalDiffersFromGlobal=clean_(rec.canonicalContactId)===contactId&&duplicateIds.some(function(id){return id!==contactId;});
-    if(scopedId===contactId&&scopedCustomerId===customerId&&(explicit||canonicalDiffersFromGlobal)){
-      return{ok:true,scope:'CUSTOMER',source:explicit?'CUSTOMER_SCOPED_TECHNICAL_RECOVERY':'CANONICAL_CONTACT_DIFFERS_FROM_GLOBAL_DUPLICATE',customerId:customerId,contactId:contactId,globalDuplicateContactIds:duplicateIds};
-    }
-    if(clean_(rec.canonicalContactId)===contactId&&clean_(rec.customerId)===customerId&&(explicit||canonicalDiffersFromGlobal)){
-      return{ok:true,scope:'CUSTOMER',source:explicit?'CANONICAL_CUSTOMER_SCOPED_RECONCILIATION':'CANONICAL_CONTACT_DIFFERS_FROM_GLOBAL_DUPLICATE',customerId:customerId,contactId:contactId,globalDuplicateContactIds:duplicateIds};
-    }
+    if(scopedId===contactId&&scopedCustomerId===customerId&&(explicit||canonicalDiffersFromGlobal))return{ok:true,scope:'CUSTOMER',source:explicit?'CUSTOMER_SCOPED_TECHNICAL_RECOVERY':'CANONICAL_CONTACT_DIFFERS_FROM_GLOBAL_DUPLICATE',customerId:customerId,contactId:contactId,globalDuplicateContactIds:duplicateIds};
+    if(clean_(rec.canonicalContactId)===contactId&&clean_(rec.customerId)===customerId&&(explicit||canonicalDiffersFromGlobal))return{ok:true,scope:'CUSTOMER',source:explicit?'CANONICAL_CUSTOMER_SCOPED_RECONCILIATION':'CANONICAL_CONTACT_DIFFERS_FROM_GLOBAL_DUPLICATE',customerId:customerId,contactId:contactId,globalDuplicateContactIds:duplicateIds};
     return{ok:false,scope:'UNKNOWN',customerId:customerId,contactId:contactId};
   }
 
@@ -4030,9 +4025,7 @@ function rootJournal_(record) {
       return {ok:channelMatch&&!nameConflict,emailMatch:emailMatch,phoneMatch:phoneMatch,nameConflict:nameConflict,remoteFirstName:gotFirst,remoteLastName:gotLast};
     }
     var scopedEvidenceV5135=customerScopedContactEvidenceV5135_(record,contactId,customerId);
-    if(scopedEvidenceV5135.ok){
-      return finalizeAssociated_(record,contactId,customerId,scopedEvidenceV5135.source+' CONFIRMED CUSTOMER-SCOPED CONTACT — GLOBAL GET SKIPPED');
-    }
+    if(scopedEvidenceV5135.ok)return finalizeAssociated_(record,contactId,customerId,scopedEvidenceV5135.source+' CONFIRMED CUSTOMER-SCOPED CONTACT — GLOBAL GET SKIPPED');
 
     var response;
     try { response=d.http.requestJson('/v1/contacts/'+encodeURIComponent(contactId),{method:'get',attempts:1,idempotent:true}); }
@@ -4061,6 +4054,19 @@ function rootJournal_(record) {
       return {ok:false,status:'CONTACT_OWNERSHIP_CONFLICT',requestId:clean_(record['Request ID']),matchedContactId:contactId,ownerCustomerIds:owners,ownerEvidence:ownerEvidence,directRead:true,liveWriteExecuted:false};
     }
     var state=contactJournal_(record),cj=clone_(state.contact||{});
+    var reportedDuplicates=duplicateContactIdsFromJournal_(cj);
+    if(reportedDuplicates.indexOf(contactId)!==-1){
+      cj.reconciliation=cj.reconciliation||{};
+      cj.reconciliation.lastAttemptAt=d.util.nowString();
+      cj.reconciliation.contactId=contactId;
+      cj.reconciliation.customerId=customerId;
+      cj.reconciliation.reason='GLOBAL DUPLICATE CONTACT IDENTITY MATCHED; CUSTOMER OWNERSHIP UNVERIFIED';
+      cj.associationStatus='READ_ONLY_RECONCILE_REQUIRED';
+      cj.status='DUPLICATE_CONTACT_OWNERSHIP_GET_ONLY';
+      state.root.contactCreate=cj;
+      patchRequest_(record,{'Updated At':d.util.nowString(),'Current Stage':'NEEDS REVIEW','Request Status':'BLOCKED','Manual Review?':'NO','Blocking Issue':'Striven reported Contact '+contactId+' as a global duplicate, but GET/cache did not prove it belongs to Customer '+customerId+'. Do not associate or create a Contact.','Next Action':'GET-ONLY VERIFY CUSTOMER CONTACT — DO NOT POST','Contact Association Status':'RECONCILE','Customer Structure Status':'CONTACT OWNERSHIP UNVERIFIED','Write Journal JSON':safeJson_(state.root),'Striven Sync Status':'RECONCILE REQUIRED','Reconciliation Status':'GLOBAL DUPLICATE CONTACT OWNERSHIP UNVERIFIED'});
+      return{ok:false,status:'DUPLICATE_CONTACT_OWNERSHIP_GET_ONLY',requestId:clean_(record['Request ID']),candidateContactId:contactId,matchedCustomerId:customerId,directRead:true,automaticPostRetry:false,liveWriteExecuted:false};
+    }
     cj.reconciliation=cj.reconciliation||{};cj.reconciliation.lastAttemptAt=d.util.nowString();cj.reconciliation.contactId=contactId;cj.reconciliation.customerId=customerId;cj.reconciliation.reason='DIRECT CONTACT GET IDENTITY CONFIRMED — ASSOCIATION REQUIRED';cj.reconciliation.directRead=true;
     state.root.contactCreate=cj;
     patchRequest_(record,{'Updated At':d.util.nowString(),'Matched Contact ID':contactId,'Created Contact ID':contactId,'Matched Contact Name':clean_(record['Full Name']),'Contact Match Status':'MATCHED','Contact Action':'LINK EXISTING','Contact Association Status':'PENDING RECONCILIATION','Customer Structure Status':'CONTACT RECONCILED — ASSOCIATION PENDING','Blocking Issue':'Existing Contact '+contactId+' verified directly. Controlled Customer association remains.','Next Action':'RECONCILE CONTACT ASSOCIATION','Write Journal JSON':safeJson_(state.root),'Striven Sync Status':'PARTIAL','Striven Sync Error':'','Reconciliation Status':'CONTACT DIRECT ID RECONCILED'});
@@ -4208,7 +4214,16 @@ function executeControlledContactCreate(requestIdOrRow, options) {
       if(!contactId&&priorDuplicateIds.length){
         if(priorDuplicateIds.length===1){
           var duplicateId=priorDuplicateIds[0];
-          var recovered=reconcileKnownContact_(record,duplicateId,customerId);
+          if(!cj.duplicateCandidateRefreshAt&&postPredatesCache_(cj.postFinishedAt)){
+            cj.duplicateCandidateRefreshAt=d.util.nowString();
+            state.root.contactCreate=cj;
+            patchRequest_(record,{'Write Journal JSON':safeJson_(state.root)});
+            try{d.data.refreshCustomerData({});}
+            catch(refreshError){return{ok:false,status:'DUPLICATE_CONTACT_REFRESH_FAILED_GET_ONLY',requestId:clean_(record['Request ID']),error:String(refreshError&&refreshError.message||refreshError),automaticPostRetry:false,liveWriteExecuted:false};}
+          }
+          var scoped=contactCandidates_(record).filter(function(x){return x.customerId===customerId;});
+          if(scoped.length>1)return{ok:false,status:'CUSTOMER_CONTACT_CANDIDATES_AMBIGUOUS',requestId:clean_(record['Request ID']),candidateIds:scoped.map(function(x){return x.contactId;}),automaticPostRetry:false,liveWriteExecuted:false};
+          var recovered=reconcileKnownContact_(record,scoped.length===1?scoped[0].contactId:duplicateId,customerId);
           recovered.existingDuplicateContactId=duplicateId;
           recovered.existingDuplicateContactIds=priorDuplicateIds;
           recovered.automaticPostRetry=false;
@@ -4228,9 +4243,6 @@ function executeControlledContactCreate(requestIdOrRow, options) {
       }
 
       if (contactId) {
-        var row = contactById_(contactId);
-        if (row && clean_(row['Customer ID']) === customerId) return finalizeAssociated_(record, contactId, customerId, 'CONTACT CACHE ALREADY ASSOCIATED');
-
         if (upper_(cj.associationStatus).indexOf('UNCERTAIN') !== -1 || upper_(cj.status).indexOf('ASSOCIATION_UNCERTAIN') !== -1) {
           return reconcileKnownContact_(record, contactId, customerId);
         }
@@ -4304,15 +4316,9 @@ function executeControlledContactCreate(requestIdOrRow, options) {
       }
 
       if (Number(cj.postAttempts || 0) > 0 && (cj.remoteWriteMayHaveSucceeded === true || upper_(cj.status).indexOf('UNCERTAIN') !== -1 || upper_(cj.status).indexOf('SUCCESS_ID_MISSING') !== -1)) return reconcileUncertainCreate_(record, cj);
-      /* CF_SERVICEOPS_V5_12_7_EMAIL_DUPLICATE_GUARD_FAST_PATH_R1 */
-      var requestHasEmailV5127=!!(clean_(record['Normalized Email'])||clean_(record['Email']));
-      var refresh={refreshed:false,before:freshnessSnapshot_(),after:freshnessSnapshot_(),bypassedForEmailDuplicateGuard:false};
-      if(!cacheFresh_()&&requestHasEmailV5127){
-        refresh.bypassedForEmailDuplicateGuard=true;
-        try{log_(record,'CONTACT_CACHE_REFRESH','STALE_CACHE_BYPASS_EMAIL_DUPLICATE_GUARD',{customerId:customerId,emailPresent:true,automaticPostRetry:false},'Stale Contact cache bypassed because Striven server duplicate-email validation plus guarded reconciliation protects the single-attempt Contact create.');}catch(ignoredV5127Bypass){}
-      }else{
-        refresh=refreshContactsIfStale_();
-      }
+      // A global duplicate-email response does not identify the Contact under
+      // this Customer. Refresh stale ownership evidence before choosing a POST.
+      var refresh=refreshContactsIfStale_();
       if(refresh.refreshed){
         var refreshElapsedV5127=Date.now()-started;
         try{log_(record,'CONTACT_CACHE_REFRESH','REFRESHED_CONTINUE_SAME_RUN',{freshness:refresh.after,refreshElapsedMs:refreshElapsedV5127,runtimeContinuationBudgetMs:240000},'Customer/Contact cache refreshed. Continue duplicate check in this same execution when runtime budget allows.');}catch(ignoredV5127RefreshLog){}
@@ -4320,11 +4326,11 @@ function executeControlledContactCreate(requestIdOrRow, options) {
       }
 
       var candidates = contactCandidates_(record);
+      var customerCandidates=candidates.filter(function(x){return x.customerId===customerId;});
+      if(customerCandidates.length===1){
+        return reconcileKnownContact_(record,customerCandidates[0].contactId,customerId);
+      }
       if (candidates.length === 1) {
-        if (candidates[0].customerId === customerId) {
-          patchRequest_(record, { 'Matched Contact ID': candidates[0].contactId, 'Matched Contact Name': candidates[0].fullName || clean_(record['Full Name']), 'Contact Match Status': 'MATCHED', 'Contact Action': 'LINK EXISTING', 'Contact Association Status': 'ASSOCIATED' });
-          return finalizeAssociated_(request_(record.__rowNumber), candidates[0].contactId, customerId, 'EXACT EXISTING CONTACT FOR CUSTOMER');
-        }
         patchRequest_(record, {
           'Updated At': d.util.nowString(), 'Current Stage': 'NEEDS REVIEW', 'Request Status': 'BLOCKED', 'Manual Review?': 'YES',
           'Manual Review Reason': 'Existing Contact ID ' + candidates[0].contactId + ' already matches the phone/email under Customer ' + (candidates[0].customerId || 'UNRESOLVED') + '.',
@@ -5984,8 +5990,8 @@ CF.CustomerContactInfoSync = (function () {
 
   function journalRoot_(r){var root=parse_(r&&r['Write Journal JSON'],{});if(!root||typeof root!=='object'||Array.isArray(root))root={};return root;}
   /* CF_SERVICEOPS_V5_13_5_INFO_SYNC_CUSTOMER_SCOPED_CONTACT_R1
-   * Customer/contact enrichment is secondary. If the durable Contact ref is explicitly
-   * customer-scoped, do not spend a failing global Contact GET or block Sales Order flow.
+   * Customer/contact enrichment is secondary. A proven customer-scoped Contact
+   * must not trigger an invalid global Contact GET/POST or block downstream work.
    */
   function customerScopedContactInfoEvidenceV5135_(r,contactId,customerId){
     var root=journalRoot_(r),cc=root.contactCreate||{},rec=cc.reconciliation||{},tech=cc.technicalRecovery||{},identity=root.contactIdentity||{};
@@ -6033,7 +6039,7 @@ CF.CustomerContactInfoSync = (function () {
     return /CUSTOM_FIELD.*BYPASS|ENRICHMENT_SKIPPED|REJECTED_VALIDATION_CUSTOM_FIELDS/i.test(status)||(/REJECTED_VALIDATION/i.test(status)&&/Invalid Custom Fields|Custom Field Id\s+\d+/i.test(error));
   }
 
-function reconcile(requestId,options){options=options||{};var r=req_(requestId);if(!r)return{ok:false,version:VERSION,status:'SERVICE_REQUEST_NOT_FOUND',requestId:clean_(requestId),liveWriteExecuted:false};var customerId=clean_(r['Created Customer ID']||r['Matched Customer ID']),contactId=clean_(r['Created Contact ID']||r['Matched Contact ID']);if(!customerId||!contactId)return fail_(r,'CUSTOMER_CONTACT_INFO_SYNC_IDS_INCOMPLETE','Durable Customer ID and Contact ID are both required.',{customerId:customerId,contactId:contactId,writeAttempted:false});var scopedInfoEvidenceV5135=customerScopedContactInfoEvidenceV5135_(r,contactId,customerId);if(scopedInfoEvidenceV5135.ok){var scopedPatchV5135={'Last Striven Sync':now_(),'Striven Sync Status':'PARTIAL','Striven Sync Error':'','Blocking Issue':'','Reconciliation Status':'CUSTOMER + CONTACT INFO CONFIRMED — CUSTOMER-SCOPED CONTACT ENRICHMENT DEFERRED'};patch_(r,scopedPatchV5135);var scopedOutV5135={ok:true,version:VERSION,status:'CUSTOMER_CONTACT_INFO_CONFIRMED_CUSTOMER_SCOPED_CONTACT_DEFERRED',requestId:clean_(requestId),customerId:customerId,contactId:contactId,contactScope:'CUSTOMER',contactEnrichmentDeferred:true,evidenceSource:scopedInfoEvidenceV5135.source,writeAttempted:false,liveWriteExecuted:false,automaticPostRetry:false};log_(r,scopedOutV5135.status,scopedOutV5135,'Global Contact GET/POST skipped because the canonical Contact reference is customer-scoped.');return scopedOutV5135;}var submittedPhones=submittedPhones_(r),phone=clean_(r['Phone']),email=clean_(r['Email']),ext=clean_(r['Phone Extension']),desiredAddress=desiredAddr_(r);var lock=LockService.getScriptLock();if(!lock.tryLock(30000))return{ok:false,version:VERSION,status:'INFO_SYNC_SKIPPED_ALREADY_RUNNING',requestId:clean_(requestId),retrySafeNoWrite:true,writeAttempted:false,liveWriteExecuted:false,automaticPostRetry:false};try{
+function reconcile(requestId,options){options=options||{};var r=req_(requestId);if(!r)return{ok:false,version:VERSION,status:'SERVICE_REQUEST_NOT_FOUND',requestId:clean_(requestId),liveWriteExecuted:false};var customerId=clean_(r['Created Customer ID']||r['Matched Customer ID']),contactId=clean_(r['Created Contact ID']||r['Matched Contact ID']);if(!customerId||!contactId)return fail_(r,'CUSTOMER_CONTACT_INFO_SYNC_IDS_INCOMPLETE','Durable Customer ID and Contact ID are both required.',{customerId:customerId,contactId:contactId,writeAttempted:false});var scopedInfoEvidenceV5135=customerScopedContactInfoEvidenceV5135_(r,contactId,customerId);if(scopedInfoEvidenceV5135.ok){patch_(r,{'Last Striven Sync':now_(),'Striven Sync Status':'PARTIAL','Striven Sync Error':'','Blocking Issue':'','Reconciliation Status':'CUSTOMER + CONTACT INFO CONFIRMED — CUSTOMER-SCOPED CONTACT ENRICHMENT DEFERRED'});var scopedOutV5135={ok:true,version:VERSION,status:'CUSTOMER_CONTACT_INFO_CONFIRMED_CUSTOMER_SCOPED_CONTACT_DEFERRED',requestId:clean_(requestId),customerId:customerId,contactId:contactId,contactScope:'CUSTOMER',contactEnrichmentDeferred:true,evidenceSource:scopedInfoEvidenceV5135.source,writeAttempted:false,liveWriteExecuted:false,automaticPostRetry:false};log_(r,scopedOutV5135.status,scopedOutV5135,'Global Contact GET/POST skipped because the canonical Contact reference is customer-scoped.');return scopedOutV5135;}var submittedPhones=submittedPhones_(r),phone=clean_(r['Phone']),email=clean_(r['Email']),ext=clean_(r['Phone Extension']),desiredAddress=desiredAddr_(r);var lock=LockService.getScriptLock();if(!lock.tryLock(30000))return{ok:false,version:VERSION,status:'INFO_SYNC_SKIPPED_ALREADY_RUNNING',requestId:clean_(requestId),retrySafeNoWrite:true,writeAttempted:false,liveWriteExecuted:false,automaticPostRetry:false};try{
       var customer,contact;try{customer=get_(endpoint_(CUSTOMER_GET,customerId));contact=get_(endpoint_(CONTACT_GET,contactId));}catch(e){return fail_(r,'CUSTOMER_CONTACT_INFO_GET_FAILED',e&&e.message?e.message:String(e),{customerId:customerId,contactId:contactId,writeAttempted:false});}
       if(objectId_(customer)!==customerId)return fail_(r,'UNSAFE_CUSTOMER_ID_MISMATCH','Customer GET returned a different ID.',{expectedCustomerId:customerId,actualCustomerId:objectId_(customer),writeAttempted:false});
       if(objectId_(contact)!==contactId)return fail_(r,'UNSAFE_CONTACT_ID_MISMATCH','Contact GET returned a different ID.',{expectedContactId:contactId,actualContactId:objectId_(contact),writeAttempted:false});
