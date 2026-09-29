@@ -3906,7 +3906,7 @@ function rootJournal_(record) {
     var cj = clone_(state.contact || {});
     var priorCreatedId = clean_(record['Created Contact ID']);
     var responseId = clean_(cj.responseContactId);
-    var responseIdMismatch = !!(responseId && responseId !== contactId);
+    var responseIdMismatch = !!((responseId && responseId !== contactId) || (priorCreatedId && priorCreatedId !== contactId));
 
     cj.status = 'CONTACT_ASSOCIATED_RECONCILED';
     cj.reconciliation = cj.reconciliation || {};
@@ -3916,6 +3916,7 @@ function rootJournal_(record) {
     cj.reconciliation.reason = reason || 'CONTACT CACHE CUSTOMER ID CONFIRMED';
     if (responseIdMismatch) {
       cj.reconciliation.responseIdentifier = responseId;
+      cj.reconciliation.priorCreatedContactId = priorCreatedId;
       cj.reconciliation.canonicalContactId = contactId;
       cj.reconciliation.responseIdentifierDidNotMatchContactReport = true;
     }
@@ -4491,6 +4492,32 @@ function executeControlledContactCreate(requestIdOrRow, options) {
   }
 
   /* Read-only recovery entrypoint. Never calls the association POST. */
+  function reconcileVerifiedAlternateContactReadOnly(requestId,expectedContactId,candidateContactId) {
+    return withWriteLock_(function(){
+      var record=request_(requestId),expected=clean_(expectedContactId),candidate=clean_(candidateContactId);
+      if(!record||!expected||!candidate||expected===candidate)return{ok:false,status:'ALTERNATE_CONTACT_INPUT_INVALID',liveWriteExecuted:false};
+      var customerId=resolvedCustomerId_(record);
+      if(!customerId||resolvedContactId_(record)!==expected||upper_(record['Contact Association Status'])!=='RECONCILE'||clean_(record['Work Order ID']))
+        return{ok:false,status:'ALTERNATE_CONTACT_STATE_CHANGED',requestId:clean_(requestId),liveWriteExecuted:false};
+      var verified=verifyContactIdByGetV5127_(candidate,record);
+      if(!verified.ok)return{ok:false,status:'ALTERNATE_CONTACT_IDENTITY_UNVERIFIED',requestId:clean_(requestId),reason:verified.reason,liveWriteExecuted:false};
+      if((clean_(record['Email'])&&!verified.identity.emailMatch)||(clean_(record['Phone'])&&!verified.identity.phoneMatch))
+        return{ok:false,status:'ALTERNATE_CONTACT_CHANNEL_CONFLICT',requestId:clean_(requestId),liveWriteExecuted:false};
+      var remote=verified.remote||{},first=upper_(remote.FirstName||remote.firstName),last=upper_(remote.LastName||remote.lastName);
+      if(!first||!last||first!==upper_(record['First Name'])||last!==upper_(record['Last Name']))
+        return{ok:false,status:'ALTERNATE_CONTACT_NAME_CONFLICT',requestId:clean_(requestId),liveWriteExecuted:false};
+      var owners=(verified.associationCustomerIds||[]).slice();
+      var direct=clean_(remote.CustomerId||remote.customerId||remote.CustomerID||(remote.Customer&&remote.Customer.Id));
+      if(direct&&owners.indexOf(direct)<0)owners.push(direct);
+      if(owners.indexOf(customerId)<0)return{ok:false,status:'ALTERNATE_CONTACT_CUSTOMER_UNVERIFIED',requestId:clean_(requestId),candidateContactId:candidate,liveWriteExecuted:false};
+      var result=finalizeAssociated_(record,candidate,customerId,'DIRECT GET VERIFIED ALTERNATE CONTACT IDENTITY + CUSTOMER OWNERSHIP; PRIOR CONTACT '+expected);
+      result.salesOrderRecoveryGate=applyRecoveryOrderGate_(request_(record.__rowNumber),customerId);
+      result.readOnlyRecovery=true;result.automaticPostRetry=false;
+      return result;
+    });
+  }
+
+  /* Read-only recovery entrypoint. Never calls the association POST. */
   function reconcileContactAssociationReadOnly(requestIdOrRow) {
     return withWriteLock_(function(){
       var record=request_(requestIdOrRow);
@@ -4582,6 +4609,7 @@ function executeControlledContactCreate(requestIdOrRow, options) {
     previewAutoContactCreate: previewAutoContactCreate,
     executeAutoContactCreate: executeAutoContactCreate,
     reconcileContactAssociationReadOnly: reconcileContactAssociationReadOnly,
+    reconcileVerifiedAlternateContactReadOnly: reconcileVerifiedAlternateContactReadOnly,
     recoverTechnicalAssociationsReadOnly: recoverTechnicalAssociationsReadOnly,
     inspectReadiness: inspectReadiness
   };
