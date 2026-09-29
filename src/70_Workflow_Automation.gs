@@ -1581,7 +1581,10 @@ function worker(e,invocation) {
       var v5132OuterStatus=upper_(structureStatus);
       var v5132Unsafe=/UNCERTAIN|AMBIGUOUS|OWNERSHIP_CONFLICT|IDENTITY_CONFLICT|DIRECT_GET_ID_MISMATCH|DIRECT_IDENTITY_CONFLICT|DUPLICATE_CONTACT_IDS_AMBIGUOUS|MANUAL_REVIEW|NEEDS_REVIEW|BLOCKED/.test(nestedStructureStatus+' '+v5132OuterStatus);
       var v5132Transient=v5132OuterStatus==='MATCHING_CACHE_REFRESHED'||v5132OuterStatus==='SKIPPED_ALREADY_RUNNING';
-      var v5132SameState=!v5132Transient&&v5132BeforeBusinessState===v5132AfterBusinessState&&!(structureResult&&structureResult.liveWriteExecuted===true);
+      // A newly created Customer can take time to appear in Location read-back.
+      // Let the dedicated bounded Location policy handle this exact pending state.
+      var v5132LocationPending=nestedStructureStatus==='CUSTOMER_RECONCILED_LOCATION_PENDING';
+      var v5132SameState=!v5132Transient&&!v5132LocationPending&&v5132BeforeBusinessState===v5132AfterBusinessState&&!(structureResult&&structureResult.liveWriteExecuted===true);
       if(v5132Unsafe||v5132SameState){
         try{dequeue_(queued.id);}catch(ignoredV5132Dequeue){}
         var v5132Reason=v5132Unsafe?('Unsafe customer/contact reconciliation state '+(nestedStructureStatus||v5132OuterStatus)+' was parked. Automatic continuation is disabled.'):('Customer structure phase produced no measurable business-state progress. Same-phase automatic continuation is disabled after one attempt.');
@@ -1594,15 +1597,6 @@ function worker(e,invocation) {
       if(nestedStructureStatus==='CUSTOMER_RECONCILED_LOCATION_PENDING') {
         var pendingRow=request_(queued.id)||queued.row||{};
         var stall=trackLocationStall_(queued.id,structureResult,pendingRow);
-        var others=readQueue_().filter(function(id){return clean_(id)!==clean_(queued.id);});
-        if(others.length) {
-          var rotated=rotateQueuedRequestToTail_(queued.id);
-          var nextFair=scheduleNext_('LOCATION_PENDING_ROTATED_QUEUE_FAIRNESS',currentUid);
-          finalReason='LOCATION_RECONCILIATION_DEFERRED_QUEUE_FAIRNESS';
-          finalResult={ok:true,version:VERSION,status:'LOCATION_RECONCILIATION_DEFERRED_QUEUE_FAIRNESS',requestId:queued.id,structure:structureResult,stallCount:stall.count,queuedRequestIds:rotated,nextTrigger:nextFair,liveWriteExecuted:false,automaticWriteRetry:false};
-          log_('LOCATION_RECONCILIATION_STALL','ROTATED_QUEUE_CONTINUES',queued.id,{stallCount:stall.count,nextRequestId:others[0],queuedRequestIds:rotated},'Location reconciliation is unchanged; moving this request behind other queued work.');
-          return finalResult;
-        }
         if(stall.count>=LOCATION_STALL_LIMIT) {
           dequeue_(queued.id);
           var parked=parkStalledLocationRequest_(queued.id,stall);
@@ -1611,6 +1605,15 @@ function worker(e,invocation) {
           else parked.nextTrigger={ok:true,scheduled:false,reason:'LOCATION_STALL_PARKED_NO_OTHER_QUEUE',liveWriteExecuted:false};
           finalReason='LOCATION_RECONCILIATION_STALLED_PARKED';
           finalResult=parked;
+          return finalResult;
+        }
+        var others=readQueue_().filter(function(id){return clean_(id)!==clean_(queued.id);});
+        if(others.length) {
+          var rotated=rotateQueuedRequestToTail_(queued.id);
+          var nextFair=scheduleNext_('LOCATION_PENDING_ROTATED_QUEUE_FAIRNESS',currentUid);
+          finalReason='LOCATION_RECONCILIATION_DEFERRED_QUEUE_FAIRNESS';
+          finalResult={ok:true,version:VERSION,status:'LOCATION_RECONCILIATION_DEFERRED_QUEUE_FAIRNESS',requestId:queued.id,structure:structureResult,stallCount:stall.count,queuedRequestIds:rotated,nextTrigger:nextFair,liveWriteExecuted:false,automaticWriteRetry:false};
+          log_('LOCATION_RECONCILIATION_STALL','ROTATED_QUEUE_CONTINUES',queued.id,{stallCount:stall.count,nextRequestId:others[0],queuedRequestIds:rotated},'Location reconciliation is unchanged; moving this request behind other queued work.');
           return finalResult;
         }
       } else {
