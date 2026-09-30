@@ -11,7 +11,7 @@ jobs:
   run:
     runs-on: ubuntu-latest
     steps:
-      - name: Continue Les after duplicate-email recovery patch
+      - name: Certify Les Work Order 585565
         shell: bash
         run: |
           set -euo pipefail
