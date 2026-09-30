@@ -1,3 +1,4 @@
+/* CF_SERVICEOPS_V5_13_6_EXECUTABLE_LOCATION_STAGE_R1 */
 /* CF_SERVICEOPS_V5_13_5_TARGETED_RECONCILIATION_LOW_API_R1 */
 /* CF_SERVICEOPS_V5_13_2_STABILIZATION_R1_WRITE */
 /************************************************************
@@ -6086,7 +6087,21 @@ CF.StandaloneLocationCreateV5128=(function(){
   function resolved_(r,a,b){return clean_(r[a]||r[b]);}
   function rootJournal_(r){var raw=clean_(r['Write Journal JSON']);if(!raw)return{};try{var x=JSON.parse(raw);return x&&typeof x==='object'?x:{};}catch(e){return{};}}
   function patch_(r,p){if(!r||!r.__rowNumber)throw new Error('Service Request row unavailable.');CF.Util.patchRow('SERVICE_REQUESTS',r.__rowNumber,p);}
-  function payload_(r){return{Name:'Primary Location',Address1:clean_(r['Street']),City:clean_(r['City']),State:province_(r['Province']),PostalCode:postal_(r['Postal Code']),Country:clean_(r['Country'])||'Canada'};}
+  function payload_(r){
+    var address={
+      Address1:clean_(r['Street']),
+      Address2:'',
+      Address3:'',
+      City:clean_(r['City']),
+      State:province_(r['Province']),
+      PostalCode:postal_(r['Postal Code']),
+      Country:clean_(r['Country'])||'Canada',
+      Latitude:0,
+      Longitude:0,
+      FullAddress:clean_(r['Full Address'])
+    };
+    return{Name:'Primary Location',Address:address};
+  }
   function rows_(body){
     if(Array.isArray(body))return body;body=body||{};
     var candidates=[body.Items,body.items,body.Results,body.results,body.Records,body.records,body.Data,body.data];
@@ -6107,7 +6122,7 @@ CF.StandaloneLocationCreateV5128=(function(){
   function finalize_(r,location,created){
     var id=rowId_(location),contactId=resolved_(r,'Matched Contact ID','Created Contact ID'),complete=!!contactId;
     var root=rootJournal_(r),j=root.standaloneLocationCreate||{};j.status='LOCATION_RECONCILED';j.canonicalLocationId=id;j.reconciledAt=CF.Util.nowString();root.standaloneLocationCreate=j;
-    patch_(r,{'Updated At':CF.Util.nowString(),'Current Stage':complete?'CUSTOMER STRUCTURE COMPLETE':'READY FOR CONTACT CREATE','Request Status':'OPEN','Manual Review?':'NO','Manual Review Reason':'','Blocking Issue':'','Next Action':complete?'CONTINUE TO WORK ORDER':'CREATE CONTACT','Location Match Status':'MATCHED','Matched Location ID':id,'Created Location ID':created?id:clean_(r['Created Location ID']),'Location Action':'LINK EXISTING','Customer Structure Status':complete?'COMPLETE':'CUSTOMER + LOCATION CONFIRMED — CONTACT PENDING','Write Journal JSON':JSON.stringify(root),'Striven Sync Status':'PARTIAL','Striven Sync Error':'','Reconciliation Status':'STANDALONE LOCATION RECONCILED'});
+    patch_(r,{'Updated At':CF.Util.nowString(),'Current Stage':complete?'CUSTOMER STRUCTURE COMPLETE':'READY FOR CONTACT CREATE','Request Status':'OPEN','Manual Review?':'NO','Manual Review Reason':'','Blocking Issue':'','Next Action':complete?'CONTINUE TO WORK ORDER':'CREATE CONTACT','Location Match Status':'MATCHED','Matched Location ID':id,'Matched Location Address':clean_(r['Full Address']),'Created Location ID':created?id:clean_(r['Created Location ID']),'Location Action':'LINK EXISTING','Customer Structure Status':complete?'COMPLETE':'CUSTOMER + LOCATION CONFIRMED — CONTACT PENDING','Write Journal JSON':JSON.stringify(root),'Striven Sync Status':'PARTIAL','Striven Sync Error':'','Reconciliation Status':'STANDALONE LOCATION RECONCILED'});
     return{ok:true,version:VERSION,status:created?'LOCATION_CREATED_RECONCILED':'LOCATION_EXISTING_RECONCILED',requestId:clean_(r['Request ID']),locationId:id,liveWriteExecuted:false,automaticPostRetry:false};
   }
   function process(requestId,options){
