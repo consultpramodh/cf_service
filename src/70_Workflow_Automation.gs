@@ -1,3 +1,5 @@
+/* CF_SERVICEOPS_V5_13_9_REQUEST_ID_INTEGRITY_FALSE_PARK_RECOVERY_R1 */
+/* CF_SERVICEOPS_V5_13_6_EXECUTABLE_LOCATION_STAGE_R1 */
 /* CF_SERVICEOPS_V5_13_3_WORKFLOW_API_BRAKE_R1 */
 /* CF_SERVICEOPS_V5_13_2_STABILIZATION_R1_WORKFLOW */
 /************************************************************
@@ -242,8 +244,9 @@ function nextCandidate_(rows) {
     var priorities = {
       'CREATING CUSTOMER STRUCTURE': 1,
       'READY FOR CUSTOMER CREATE': 2,
-      'READY FOR CONTACT CREATE': 3,
-      'CUSTOMER RESOLVED': 4
+      'READY FOR LOCATION CREATE': 3,
+      'READY FOR CONTACT CREATE': 4,
+      'CUSTOMER RESOLVED': 5
     };
     var candidates = rows.filter(function (row) {
       return (green_(row) || recoverableBlockedDuplicateContact_(row)) && priorities[upper_(row['Current Stage'])];
@@ -358,7 +361,12 @@ function nextCandidate_(rows) {
         return { ok:matching&&matching.ok!==false, version:VERSION, status:'MATCHING_PROCESSED', requestId:requestId, requestScoped:true, matching:matching, liveWriteExecuted:false, durationMs:Date.now()-started };
       }
       if (stage === 'CUSTOMER STRUCTURE COMPLETE') return { ok:true, version:VERSION, status:'CUSTOMER_STRUCTURE_ALREADY_COMPLETE', requestId:requestId, requestScoped:true, liveWriteExecuted:false, durationMs:Date.now()-started };
-      if (stage === 'READY FOR LOCATION CREATE') return { ok:true, version:VERSION, status:'WAITING_FOR_STANDALONE_LOCATION_CONTRACT', requestId:requestId, requestScoped:true, liveWriteExecuted:false, durationMs:Date.now()-started };
+      if (stage === 'READY FOR LOCATION CREATE') {
+        if(!CF.StandaloneLocationCreateV5128||typeof CF.StandaloneLocationCreateV5128.process!=='function')return{ok:false,version:VERSION,status:'STANDALONE_LOCATION_MODULE_MISSING',requestId:requestId,requestScoped:true,liveWriteExecuted:false,durationMs:Date.now()-started};
+        var locationStep=CF.StandaloneLocationCreateV5128.process(requestId,{autoMode:true});
+        refreshQueue_();
+        return{ok:locationStep&&locationStep.ok!==false,version:VERSION,status:'AUTO_STEP_COMPLETE',requestId:requestId,requestScoped:true,stageBefore:stage,stepResult:locationStep,liveWriteExecuted:!!(locationStep&&locationStep.liveWriteExecuted===true),durationMs:Date.now()-started,stopsBeforeSalesOrder:true};
+      }
       if (!green_(record)) return { ok:true, version:VERSION, status:'WAITING_FOR_OPERATOR_REVIEW', requestId:requestId, requestScoped:true, stage:clean_(record['Current Stage']), liveWriteExecuted:false, durationMs:Date.now()-started };
       var customerId=clean_(record['Matched Customer ID']||record['Created Customer ID']),contactId=clean_(record['Matched Contact ID']||record['Created Contact ID']),locationId=clean_(record['Matched Location ID']||record['Created Location ID']),associationStatus=upper_(record['Contact Association Status']),result;
       if(stage==='CUSTOMER RESOLVED') result=finalizeResolved_(record,'REQUEST-SCOPED CUSTOMER STRUCTURE RESOLVED FROM EXISTING STRIVEN DATA');
@@ -473,6 +481,10 @@ function nextCandidate_(rows) {
         result = finalizeResolved_(candidate, 'CUSTOMER STRUCTURE RESOLVED FROM EXISTING STRIVEN DATA');
       } else if (stage === 'READY FOR CUSTOMER CREATE') {
         result = d.customer.executeAutoCustomerCreate(requestId);
+      } else if (stage === 'READY FOR LOCATION CREATE') {
+        result = CF.StandaloneLocationCreateV5128&&typeof CF.StandaloneLocationCreateV5128.process==='function'
+          ? CF.StandaloneLocationCreateV5128.process(requestId,{autoMode:true})
+          : {ok:false,status:'STANDALONE_LOCATION_MODULE_MISSING',requestId:requestId,liveWriteExecuted:false};
       } else if (stage === 'READY FOR CONTACT CREATE') {
         result = d.contact.executeAutoContactCreate(requestId);
       } else if (stage === 'CREATING CUSTOMER STRUCTURE') {
@@ -1369,7 +1381,7 @@ CF.EventDrivenServiceAutomation = (function () {
     var removed=removeAllHandlerTriggers_(),p=props_();
     p.setProperty(ENABLED,'true');p.setProperty(AUTO_SALES_ORDER,'true');p.setProperty(PREPARATION_ONLY,'false');p.setProperty(STRUCTURE_CUTOFF,String(Date.now()));
     writeQueue_([]);
-    return{ok:true,version:VERSION,mode:'INCOMING_REQUEST_TO_GUARDED_SALES_ORDER',handler:HANDLER,cadence:'NO_PERMANENT_CADENCE',triggerCreatedOnIncomingRequest:true,oneShotChain:true,removedExistingHandlerTriggers:removed,activeHandlerTriggers:handlerTriggers_().length,preparationOnly:false,automaticCustomerContactWrites:true,automaticSalesOrderCreate:true,standaloneExistingCustomerLocationCreate:false,liveWriteExecuted:false,next:'SUBMIT ONE NEW WEBFORM REQUEST; SAFE REQUESTS WILL CONTINUE THROUGH RECONCILED QUOTED SALES ORDER'};
+    return{ok:true,version:VERSION,mode:'INCOMING_REQUEST_TO_GUARDED_SALES_ORDER',handler:HANDLER,cadence:'NO_PERMANENT_CADENCE',triggerCreatedOnIncomingRequest:true,oneShotChain:true,removedExistingHandlerTriggers:removed,activeHandlerTriggers:handlerTriggers_().length,preparationOnly:false,automaticCustomerContactWrites:true,automaticSalesOrderCreate:true,standaloneExistingCustomerLocationCreate:true,liveWriteExecuted:false,next:'SUBMIT ONE NEW WEBFORM REQUEST; SAFE REQUESTS WILL CONTINUE THROUGH RECONCILED QUOTED SALES ORDER'};
   }
   function disable() {
     return withEventLock_(function(){var removed=removeAllHandlerTriggers_(),p=props_();p.setProperty(ENABLED,'false');p.setProperty(AUTO_SALES_ORDER,'false');writeQueue_([]);return{ok:true,version:'5.10.12',status:'EVENT_DRIVEN_AUTOMATION_DISABLED',removedHandlerTriggers:removed,queueConcurrency:'SCRIPT_LOCK_SERIALIZED',liveWriteExecuted:false};});
@@ -1410,7 +1422,14 @@ CF.EventDrivenServiceAutomation = (function () {
     }
 
     var stage=upper_(row['Current Stage']),status=upper_(row['Request Status']);
-    if(stage==='READY FOR LOCATION CREATE')return safeStop_(requestId,'STANDALONE_LOCATION_CREATE_NOT_PROVEN','Existing-Customer standalone Location creation remains operator-reviewed until its live API contract is proven.',row);
+    if(stage==='READY FOR LOCATION CREATE'){
+      if(!CF.StandaloneLocationCreateV5128||typeof CF.StandaloneLocationCreateV5128.process!=='function')return safeStop_(requestId,'STANDALONE_LOCATION_MODULE_MISSING','Guarded standalone Location module is unavailable.',row);
+      var locationGateResult=CF.StandaloneLocationCreateV5128.process(requestId,{autoMode:true});
+      if(locationGateResult&&locationGateResult.liveWriteExecuted===true)return{ok:true,version:VERSION,status:'CUSTOMER_STRUCTURE_WRITE_COMPLETE',requestId:requestId,location:locationGateResult,automaticPostRetry:false,liveWriteExecuted:true};
+      if(!locationGateResult||locationGateResult.ok===false)return{ok:false,version:VERSION,status:clean_(locationGateResult&&locationGateResult.status)||'LOCATION_EXECUTION_FAILED',requestId:requestId,location:locationGateResult||{},automaticPostRetry:false,liveWriteExecuted:false};
+      row=request_(requestId);stage=upper_(row&&row['Current Stage']);status=upper_(row&&row['Request Status']);
+      if(stage!=='CUSTOMER STRUCTURE COMPLETE')return{ok:true,version:VERSION,status:'WAITING_FOR_CUSTOMER_STRUCTURE',requestId:requestId,stage:clean_(row&&row['Current Stage']),location:locationGateResult,automaticPostRetry:false,liveWriteExecuted:false};
+    }
     if(stage==='NEEDS REVIEW'||upper_(row['Manual Review?'])==='YES'||upper_(row['Duplicate Risk Status'])!=='NONE'||['BLOCKED','DUPLICATE','CANCELLED','CANCELED','ERROR'].indexOf(status)!==-1)return safeStop_(requestId,'REQUEST_REVIEW_OR_RISK','Request requires operator review or has unresolved duplicate/risk state.',row);
     if(stage!=='CUSTOMER STRUCTURE COMPLETE'||upper_(row['Customer Structure Status'])!=='COMPLETE')return{ok:true,version:VERSION,status:'WAITING_FOR_CUSTOMER_STRUCTURE',requestId:requestId,stage:clean_(row['Current Stage']),liveWriteExecuted:false};
     if(!CF.SalesOrderDraft||typeof CF.SalesOrderDraft.build!=='function')return safeStop_(requestId,'DRAFT_MODULE_MISSING','Sales Order draft module is unavailable.',row);
@@ -1469,6 +1488,21 @@ CF.EventDrivenServiceAutomation = (function () {
   var LOCATION_STALL_PREFIX='CF_E2E_LOCATION_STALL_';
   function structureStepStatus_(structureResult) {
     return clean_(structureResult&&structureResult.stepResult&&structureResult.stepResult.status || structureResult&&structureResult.result&&structureResult.result.status || '');
+  }
+  function structureResultRequestIdsV5139_(result){
+    var out=[],seen={};
+    function add(v){v=clean_(v);if(v&&!seen[v]){seen[v]=true;out.push(v);}}
+    result=result||{};
+    add(result.requestId);
+    add(result.stepResult&&result.stepResult.requestId);
+    add(result.result&&result.result.requestId);
+    add(result.matching&&result.matching.requestId);
+    add(result.matching&&result.matching.result&&result.matching.result.requestId);
+    return out;
+  }
+  function crossRequestResultIdsV5139_(expectedId,result){
+    expectedId=clean_(expectedId);
+    return structureResultRequestIdsV5139_(result).filter(function(id){return id&&id!==expectedId;});
   }
   function locationPendingSignature_(requestId,structureResult,row) {
     var step=structureResult&&structureResult.stepResult||{};
@@ -1566,6 +1600,15 @@ function worker(e,invocation) {
       var structureResult=CF.AutoCustomerStructure&&typeof CF.AutoCustomerStructure.process==='function'
         ? CF.AutoCustomerStructure.process({requestIds:[queued.id],fastPath:true})
         : {ok:false,status:'CUSTOMER_STRUCTURE_MODULE_MISSING',liveWriteExecuted:false};
+
+      var mismatchedResultIdsV5139=crossRequestResultIdsV5139_(queued.id,structureResult);
+      if(mismatchedResultIdsV5139.length){
+        var nextIntegrityV5139=scheduleNext_('CROSS_REQUEST_RESULT_REJECTED',currentUid);
+        finalReason='CROSS_REQUEST_RESULT_REJECTED';
+        finalResult={ok:false,version:VERSION,status:'CROSS_REQUEST_RESULT_REJECTED',requestId:queued.id,rejectedRequestIds:mismatchedResultIdsV5139,structure:structureResult,nextTrigger:nextIntegrityV5139,liveWriteExecuted:!!(structureResult&&structureResult.liveWriteExecuted===true),automaticWriteRetry:false};
+        try{log_('REQUEST_ID_INTEGRITY_GUARD','REJECTED_CROSS_REQUEST_RESULT',queued.id,{expectedRequestId:queued.id,resultRequestIds:structureResultRequestIdsV5139_(structureResult),rejectedRequestIds:mismatchedResultIdsV5139,liveWriteExecuted:finalResult.liveWriteExecuted},'Customer-structure result referenced a different request. Current request was not parked or advanced.');}catch(ignoredV5139IntegrityLog){}
+        return finalResult;
+      }
 
       if(structureResult&&structureResult.liveWriteExecuted===true) {
         var next2=scheduleNext_('AFTER_CUSTOMER_STRUCTURE_WRITE',currentUid);
@@ -1769,7 +1812,7 @@ function worker(e,invocation) {
       var p=PropertiesService.getScriptProperties(),existing=triggers_();existing.forEach(function(t){ScriptApp.deleteTrigger(t);});
       p.setProperty(ENABLED,'true');p.setProperty(AUTO_SALES_ORDER,'true');p.setProperty(PREPARATION_ONLY,'false');if(!clean_(p.getProperty(STRUCTURE_CUTOFF)))p.setProperty(STRUCTURE_CUTOFF,String(Date.now()));
       var q=queue_(),stage=clean_(p.getProperty(INTAKE_STAGE_PROP)),scheduled=false;if(q.length||stage){ScriptApp.newTrigger(HANDLER).timeBased().after(10000).create();scheduled=true;}
-      return{ok:true,version:'5.10.12',mode:'ATOMIC_REQUEST_SCOPED_SMART_TTL_INLINE_INCOMING_TO_GUARDED_SALES_ORDER',handler:HANDLER,cadence:'NO_PERMANENT_CADENCE',triggerCreatedOnIncomingRequest:true,oneShotChain:true,resumePendingChain:true,preservedQueuedRequestIds:q,activeIntakeStage:stage,removedExistingHandlerTriggers:existing.length,activeHandlerTriggers:triggers_().length,resumeTriggerScheduled:scheduled,preparationOnly:false,automaticCustomerContactWrites:true,automaticSalesOrderCreate:true,standaloneExistingCustomerLocationCreate:false,smartFreshness:{customerMinutes:120,locationMinutes:120,operationalMinutes:30},inlineSoftBudgetSeconds:SOFT_BUDGET_MS/1000,queueConcurrency:'SCRIPT_LOCK_SERIALIZED',customerStructureScope:'QUEUED_REQUEST_ID_ONLY',liveWriteExecuted:false,next:q.length||stage?'PENDING CHAIN RESUMED; DO NOT RUN MANUAL STEPS':'SUBMIT ONE NEW WEBFORM REQUEST'};
+      return{ok:true,version:'5.10.12',mode:'ATOMIC_REQUEST_SCOPED_SMART_TTL_INLINE_INCOMING_TO_GUARDED_SALES_ORDER',handler:HANDLER,cadence:'NO_PERMANENT_CADENCE',triggerCreatedOnIncomingRequest:true,oneShotChain:true,resumePendingChain:true,preservedQueuedRequestIds:q,activeIntakeStage:stage,removedExistingHandlerTriggers:existing.length,activeHandlerTriggers:triggers_().length,resumeTriggerScheduled:scheduled,preparationOnly:false,automaticCustomerContactWrites:true,automaticSalesOrderCreate:true,standaloneExistingCustomerLocationCreate:true,smartFreshness:{customerMinutes:120,locationMinutes:120,operationalMinutes:30},inlineSoftBudgetSeconds:SOFT_BUDGET_MS/1000,queueConcurrency:'SCRIPT_LOCK_SERIALIZED',customerStructureScope:'QUEUED_REQUEST_ID_ONLY',liveWriteExecuted:false,next:q.length||stage?'PENDING CHAIN RESUMED; DO NOT RUN MANUAL STEPS':'SUBMIT ONE NEW WEBFORM REQUEST'};
     });
   };
   CF.EventDrivenServiceAutomation.__inlineV51010R2=true;
@@ -1846,14 +1889,47 @@ function AUTO_refreshQueueSnapshot(e) {
   }
   function recentlyExplicitlyKicked(id){var p=props(),lastId=clean(p.getProperty(LAST_REQUEST)),raw=clean(p.getProperty(LAST_KICK)),t=raw?new Date(raw).getTime():0;return lastId===clean(id)&&t>0&&(Date.now()-t)<=EXPLICIT_KICK_GRACE_MS;}
   function terminal(row){return !!(CF.Config&&typeof CF.Config.isTerminalState==='function'&&(CF.Config.isTerminalState(row['Current Stage'])||CF.Config.isTerminalState(row['Final Outcome'])));}
+  function falsePreflightParkRecoverableV5139(row){
+    if(!row)return false;
+    if(upper(row['Current Stage'])!=='NEEDS REVIEW'||upper(row['Request Status'])!=='BLOCKED'||upper(row['Manual Review?'])!=='YES')return false;
+    var reason=[row['Manual Review Reason'],row['Blocking Issue'],row['Reconciliation Status']].map(clean).join(' ');
+    if(!/PREFLIGHT_BLOCKED/i.test(reason))return false;
+    if(upper(row['Duplicate Risk Status'])!=='NONE')return false;
+    if(upper(row['Customer Match Status'])!=='NOT FOUND'||upper(row['Customer Action'])!=='CREATE')return false;
+    if(upper(row['Contact Action'])!=='CREATE'||upper(row['Location Action'])!=='CREATE'||upper(row['Work Order Action'])!=='CREATE')return false;
+    if(clean(row['Matched Customer ID']||row['Created Customer ID']||row['Matched Contact ID']||row['Created Contact ID']||row['Matched Location ID']||row['Created Location ID']||row['Work Order ID']))return false;
+    var root=parseRoot(row),targets=['customerCreate','contactCreate','standaloneLocationCreate','salesOrderCreate'];
+    for(var i=0;i<targets.length;i++){var x=root&&root[targets[i]]||{};if(Number(x.postAttempts||0)>0||x.remoteWriteMayHaveSucceeded===true)return false;}
+    return true;
+  }
+  function restoreFalsePreflightParkV5139(row){
+    if(!falsePreflightParkRecoverableV5139(row))return row;
+    CF.Util.patchRow('SERVICE_REQUESTS',row.__rowNumber,{
+      'Updated At':CF.Util.nowString(),
+      'Current Stage':'READY FOR CUSTOMER CREATE',
+      'Request Status':'OPEN',
+      'Manual Review?':'NO',
+      'Manual Review Reason':'',
+      'Blocking Issue':'',
+      'Next Action':'CREATE CUSTOMER',
+      'Striven Sync Status':'PARTIAL',
+      'Striven Sync Error':'',
+      'Reconciliation Status':'AUTO-RECOVERED FALSE PREFLIGHT PARK — REQUEST-SCOPED RECHECK REQUIRED'
+    });
+    try{SpreadsheetApp.flush();}catch(e){}
+    var restored=CF.Util.findRecord('SERVICE_REQUESTS','Request ID',clean(row['Request ID']))||row;
+    try{CF.Util.logEvent({module:'70_Workflow_Automation',action:'FALSE_PREFLIGHT_PARK_RECOVERY',status:'RESTORED_REQUEST_SCOPED',requestId:clean(row['Request ID']),details:{priorStage:clean(row['Current Stage']),priorStatus:clean(row['Request Status']),nextStage:'READY FOR CUSTOMER CREATE',strivenWriteExecuted:false},version:'5.13.9'});}catch(e){}
+    return restored;
+  }
   function ledgerRecoverable(row){
     if(!row||terminal(row))return false;
     var risk=upper(row['Duplicate Risk Status']);if(risk&&risk!=='NONE')return false;
     if(requestAgeMs(row)>LOOKBACK_MS)return false; // historical cleanup must not occupy realtime recovery queue
     if(knownOrderId(row))return true; // exact GET certification may clear a false review state
+    if(falsePreflightParkRecoverableV5139(row))return true;
     if(upper(row['Manual Review?'])==='YES')return false;
     var status=upper(row['Request Status']);if(['BLOCKED','DUPLICATE','CANCELLED','CANCELED','ERROR'].indexOf(status)!==-1)return false;
-    return ['NEW INTAKE','CUSTOMER RESOLVED','READY FOR CUSTOMER CREATE','READY FOR CONTACT CREATE','CREATING CUSTOMER STRUCTURE','CUSTOMER STRUCTURE COMPLETE'].indexOf(upper(row['Current Stage']))!==-1;
+    return ['NEW INTAKE','CUSTOMER RESOLVED','READY FOR CUSTOMER CREATE','READY FOR LOCATION CREATE','READY FOR CONTACT CREATE','CREATING CUSTOMER STRUCTURE','CUSTOMER STRUCTURE COMPLETE'].indexOf(upper(row['Current Stage']))!==-1;
   }
   function queuedEligible(id,row){
     if(!row||terminal(row))return false;
@@ -1909,6 +1985,7 @@ function AUTO_refreshQueueSnapshot(e) {
       var candidate=newestLedgerCandidate();
       if(!candidate.row)return{ok:true,version:'5.11.1',status:'RECOVERY_IDLE_NO_RECENT_RECOVERABLE_REQUESTS',recoveryLookbackDays:7,liveWriteExecuted:false};
       var id=clean(candidate.row['Request ID']);if(!id)return{ok:true,version:'5.11.1',status:'RECOVERY_IDLE_REQUEST_ID_MISSING',liveWriteExecuted:false};
+      if(falsePreflightParkRecoverableV5139(candidate.row))candidate.row=restoreFalsePreflightParkV5139(candidate.row);
       q=writeQueue([id]);
       var rebuilt2=rebuildTrigger('WATCHDOG_RECOVER_RECENT_DURABLE_LEDGER_NEWEST_FIRST');
       try{CF.Util.logEvent({module:'70_Workflow_Automation',action:'E2E_RECOVERY_WATCHDOG',status:'RECOVERED_RECENT_NEWEST_FIRST',requestId:id,details:{recommendedHandler:rebuilt2.handler,recommendedPhase:rebuilt2.phase,recoverableRecentCount:candidate.count,recoveryLookbackDays:7},version:'5.11.1'});}catch(e){}
@@ -2893,3 +2970,239 @@ function TESTING_20260903_under10SloStatus() {
   CF.EventDrivenServiceAutomation.__workflowQueueCommitV5130R1=true;
 })();
 /* END CF_SERVICEOPS_V5_13_0_WORKFLOW_QUEUE_COMMIT_R1 */
+
+
+/* CF_SERVICEOPS_V5_14_0_CANONICAL_AUTOMATION_OVERWRITE_R1
+ * FINAL AUTOMATION CONTRACT
+ * - One request worker: AUTO_FINAL_ServiceOps.
+ * - One permanent liveness trigger: AUTO_98_E2E_Recovery_Watchdog.
+ * - Legacy phase handlers remain only as compatibility aliases.
+ * - Every worker/kick/watchdog boundary canonicalizes trigger topology.
+ * - Existing durable queue state is preserved.
+ * - No Striven mutation is performed by trigger migration itself.
+ */
+(function(){
+  'use strict';
+  if(!CF.EventDrivenServiceAutomation||typeof CF.EventDrivenServiceAutomation.worker!=='function')return;
+  var a=CF.EventDrivenServiceAutomation;
+  if(a.__canonicalAutomationV5140R1)return;
+
+  var VERSION='5.14.0';
+  var FINAL_HANDLER='AUTO_FINAL_ServiceOps';
+  var WATCHDOG_HANDLER='AUTO_98_E2E_Recovery_Watchdog';
+  var ENABLED_PROP='CF_EVENT_DRIVEN_SERVICE_AUTOMATION_ENABLED';
+  var QUEUE_PROP='CF_EVENT_DRIVEN_SERVICE_REQUEST_IDS';
+  var NEXT_TRIGGER_AT='CF_EVENT_DRIVEN_SERVICE_NEXT_TRIGGER_AT';
+  var LEGACY_HANDLERS=[
+    'AUTO_processCustomerStructure',
+    'AUTO_00_E2E_Route_Request',
+    'AUTO_01_E2E_Customer_Match_Create',
+    'AUTO_02_E2E_Location_Reconcile',
+    'AUTO_03_E2E_Contact_Create_Recover',
+    'AUTO_04_E2E_Customer_Contact_Info_Sync',
+    'AUTO_05_E2E_Sales_Order_Create_Verify',
+    'AUTO_99_E2E_Safe_Stop_Review'
+  ];
+
+  function clean_(v){return v===null||v===undefined?'':String(v).trim();}
+  function upper_(v){return clean_(v).toUpperCase();}
+  function props_(){return PropertiesService.getScriptProperties();}
+  function uid_(t){try{return clean_(t.getUniqueId());}catch(e){return'';}}
+  function handler_(t){try{return clean_(t.getHandlerFunction&&t.getHandlerFunction());}catch(e){return'';}}
+  function enabled_(){return upper_(props_().getProperty(ENABLED_PROP))==='TRUE';}
+  function queue_(){
+    try{
+      if(typeof a.queuedRequestIds==='function'){
+        var q=a.queuedRequestIds();
+        if(Array.isArray(q))return q.map(clean_).filter(Boolean);
+      }
+      var raw=props_().getProperty(QUEUE_PROP);
+      var x=raw?JSON.parse(raw):[];
+      return Array.isArray(x)?x.map(clean_).filter(Boolean):[];
+    }catch(e){return[];}
+  }
+  function log_(status,details,message){
+    try{
+      if(CF.Util&&typeof CF.Util.logEvent==='function')CF.Util.logEvent({
+        module:'70_Workflow_Automation',
+        action:'CANONICAL_AUTOMATION_TOPOLOGY',
+        status:status,
+        message:message||'',
+        details:details||{},
+        version:VERSION
+      });
+    }catch(e){}
+  }
+
+  function canonicalizeTriggers_(currentUid,ensureWorker){
+    currentUid=clean_(currentUid);
+    var lock=LockService.getScriptLock();
+    if(!lock.tryLock(30000))return{ok:false,status:'CANONICAL_TRIGGER_LOCK_BUSY',liveWriteExecuted:false};
+    try{
+      var triggers=ScriptApp.getProjectTriggers(),removedLegacy=0,removedDuplicateFinal=0,removedDuplicateWatchdog=0;
+      var keptFinal='',keptWatchdog='';
+      triggers.forEach(function(t){
+        var h=handler_(t),id=uid_(t);
+        if(LEGACY_HANDLERS.indexOf(h)!==-1){
+          try{ScriptApp.deleteTrigger(t);removedLegacy+=1;}catch(e){}
+          return;
+        }
+        if(h===FINAL_HANDLER){
+          if(currentUid&&id===currentUid){keptFinal=id;return;}
+          if(!keptFinal){keptFinal=id;return;}
+          try{ScriptApp.deleteTrigger(t);removedDuplicateFinal+=1;}catch(e){}
+          return;
+        }
+        if(h===WATCHDOG_HANDLER){
+          if(currentUid&&id===currentUid){keptWatchdog=id;return;}
+          if(!keptWatchdog){keptWatchdog=id;return;}
+          try{ScriptApp.deleteTrigger(t);removedDuplicateWatchdog+=1;}catch(e){}
+        }
+      });
+
+      var watchdogCreated=false,workerCreated=false,scheduledAt='';
+      if(enabled_()){
+        var after=ScriptApp.getProjectTriggers();
+        var watchdogs=after.filter(function(t){return handler_(t)===WATCHDOG_HANDLER;});
+        if(!watchdogs.length){
+          try{ScriptApp.newTrigger(WATCHDOG_HANDLER).timeBased().everyMinutes(5).create();watchdogCreated=true;}catch(e){}
+        }
+
+        var q=queue_();
+        if(ensureWorker===true&&q.length){
+          var finals=ScriptApp.getProjectTriggers().filter(function(t){
+            if(handler_(t)!==FINAL_HANDLER)return false;
+            var id=uid_(t);
+            return !currentUid||!id||id!==currentUid;
+          });
+          if(!finals.length){
+            try{
+              ScriptApp.newTrigger(FINAL_HANDLER).timeBased().after(10000).create();
+              scheduledAt=new Date(Date.now()+10000).toISOString();
+              props_().setProperty(NEXT_TRIGGER_AT,scheduledAt);
+              workerCreated=true;
+            }catch(e){}
+          }
+        }
+      }
+
+      var out={
+        ok:true,
+        version:VERSION,
+        status:'CANONICAL_TRIGGER_TOPOLOGY_APPLIED',
+        finalHandler:FINAL_HANDLER,
+        watchdogHandler:WATCHDOG_HANDLER,
+        removedLegacyTriggers:removedLegacy,
+        removedDuplicateFinalTriggers:removedDuplicateFinal,
+        removedDuplicateWatchdogTriggers:removedDuplicateWatchdog,
+        watchdogCreated:watchdogCreated,
+        workerCreated:workerCreated,
+        scheduledAt:scheduledAt,
+        queuedRequestIds:queue_(),
+        liveWriteExecuted:false
+      };
+      log_('APPLIED',out,'Legacy automation triggers were replaced by the canonical worker/watchdog topology.');
+      return out;
+    }finally{lock.releaseLock();}
+  }
+
+  var baseWorker=a.worker;
+  a.worker=function(e,invocation){
+    e=e||{};
+    var before=canonicalizeTriggers_(e.triggerUid,false);
+    var result=baseWorker(e,{executionFunction:FINAL_HANDLER,phase:'CANONICAL END TO END'});
+    var after=canonicalizeTriggers_(e.triggerUid,true);
+    if(result&&typeof result==='object'){
+      result.version=VERSION;
+      result.canonicalAutomation={
+        active:true,
+        version:VERSION,
+        finalHandler:FINAL_HANDLER,
+        watchdogHandler:WATCHDOG_HANDLER,
+        topologyBefore:before,
+        topologyAfter:after
+      };
+    }
+    return result;
+  };
+
+  var baseKick=typeof a.kick==='function'?a.kick:null;
+  if(baseKick)a.kick=function(requestId){
+    var result=baseKick.apply(a,arguments);
+    var topology=canonicalizeTriggers_('',true);
+    if(result&&typeof result==='object'){
+      result.version=VERSION;
+      result.handler=FINAL_HANDLER;
+      result.canonicalAutomation=topology;
+    }
+    return result;
+  };
+
+  var baseWatchdog=typeof a.recoveryWatchdog==='function'?a.recoveryWatchdog:null;
+  if(baseWatchdog)a.recoveryWatchdog=function(){
+    var before=canonicalizeTriggers_('',false);
+    var result=baseWatchdog.apply(a,arguments);
+    var after=canonicalizeTriggers_('',true);
+    if(result&&typeof result==='object'){
+      result.version=VERSION;
+      result.canonicalAutomation={active:true,version:VERSION,topologyBefore:before,topologyAfter:after};
+    }
+    return result;
+  };
+
+  var baseVerify=typeof a.verifySetup==='function'?a.verifySetup:null;
+  if(baseVerify)a.verifySetup=function(){
+    var existingQueue=queue_();
+    var result=baseVerify.apply(a,arguments);
+    // Some legacy verifySetup generations clear the queue. Restore only the durable
+    // queue IDs that existed before setup; no request state is invented here.
+    try{
+      if(existingQueue.length){
+        var nowQueue=queue_(),seen={};
+        var merged=nowQueue.concat(existingQueue).map(clean_).filter(function(id){if(!id||seen[id])return false;seen[id]=true;return true;});
+        props_().setProperty(QUEUE_PROP,JSON.stringify(merged));
+      }
+    }catch(e){}
+    var topology=canonicalizeTriggers_('',true);
+    if(result&&typeof result==='object'){
+      result.version=VERSION;
+      result.handler=FINAL_HANDLER;
+      result.canonicalAutomation=topology;
+      result.preservedQueuedRequestIds=queue_();
+    }
+    return result;
+  };
+
+  var baseDisable=typeof a.disable==='function'?a.disable:null;
+  if(baseDisable)a.disable=function(){
+    var result=baseDisable.apply(a,arguments);
+    var removed=0;
+    try{
+      ScriptApp.getProjectTriggers().forEach(function(t){
+        var h=handler_(t);
+        if(h===FINAL_HANDLER||h===WATCHDOG_HANDLER||LEGACY_HANDLERS.indexOf(h)!==-1){
+          try{ScriptApp.deleteTrigger(t);removed+=1;}catch(e){}
+        }
+      });
+    }catch(e){}
+    if(result&&typeof result==='object'){
+      result.version=VERSION;
+      result.canonicalTriggersRemoved=removed;
+    }
+    return result;
+  };
+
+  a.allHandlerNames=function(){return [FINAL_HANDLER,WATCHDOG_HANDLER].concat(LEGACY_HANDLERS);};
+  a.canonicalizeTriggers=function(options){options=options||{};return canonicalizeTriggers_(clean_(options.currentTriggerUid),options.ensureWorker!==false);};
+  a.activateCanonical=function(){
+    props_().setProperty(ENABLED_PROP,'true');
+    props_().setProperty('CF_EVENT_DRIVEN_AUTO_SALES_ORDER','true');
+    props_().setProperty('CF_SERVICEOPS_AUTOMATION_PREPARATION_ONLY','false');
+    var topology=canonicalizeTriggers_('',true);
+    var recovery=null;
+    try{if(typeof a.recoveryWatchdog==='function')recovery=a.recoveryWatchdog();}catch(e){recovery={ok:false,status:'CANONICAL_RECOVERY_START_FAILED',error:String(e&&e.message||e),liveWriteExecuted:false};}
+    return{ok:true,version:VERSION,status:'CANONICAL_SERVICEOPS_ACTIVE',finalHandler:FINAL_HANDLER,watchdogHandler:WATCHDOG_HANDLER,topology:topology,recovery:recovery,queuedRequestIds:queue_(),liveWriteExecuted:false};
+  };
+  a.canonicalVersion=VERSION;
+  a.__canonicalAutomationV5140R1=true;
+})();

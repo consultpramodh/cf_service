@@ -1,3 +1,4 @@
+/* CF_SERVICEOPS_V5_13_5_DURABLE_OPERATIONAL_EVIDENCE_R1 */
 /* CF_SERVICEOPS_V5_13_3_QUEUE_TRIGGER_HYGIENE_R1 */
 /************************************************************
  * APPS SCRIPT — 50_Operator_Queue.gs
@@ -546,13 +547,28 @@ CF.OperatorQueue = (function () {
     var root={};
     try{root=deps_().util.parseJson(row['Write Journal JSON'],{})||{};}catch(e){root={};}
     var so=root&&root.salesOrderCreate||{};
+    var recovery=root&&root.existingSalesOrderRecovery||{};
     var body=so&&so.verification&&so.verification.result&&so.verification.result.body||so.responseBody||{};
-    if(!id)id=clean_(so.canonicalSalesOrderId||so.responseIdentifier||body.id);
-    if(!number)number=clean_(so.canonicalOrderNumber||body.orderNumber);
-    name=clean_(body.orderName||row['Work Order Name']||row['Sales Order Name']);
-    if(!status)status=clean_(body.status&&body.status.name);
+    if(!id)id=clean_(so.canonicalSalesOrderId||so.responseIdentifier||recovery.salesOrderId||body.id);
+    if(!number)number=clean_(so.canonicalOrderNumber||recovery.salesOrderNumber||body.orderNumber);
+    name=clean_(body.orderName||recovery.salesOrderName||row['Work Order Name']||row['Sales Order Name']);
+    if(!status)status=clean_((body.status&&body.status.name)||recovery.salesOrderStatus);
+    if(!url)url=clean_(recovery.salesOrderUrl);
     if(!url&&id)url='https://classicfireplace.striven.com/next/crm#/sales-orders/'+id;
     return{id:id,number:number||id,name:name||'Sales Order',status:status,url:url};
+  }
+
+  function durableTask_(row){
+    var root={};
+    try{root=deps_().util.parseJson(row['Write Journal JSON'],{})||{};}catch(e){root={};}
+    var recovery=root&&root.existingSalesOrderRecovery||{};
+    var task=root&&root.serviceTaskRecovery||{};
+    var id=clean_(recovery.taskId||task.taskId||task.canonicalTaskId);
+    var name=clean_(recovery.taskName||task.taskName);
+    var status=clean_(recovery.taskStatus||task.taskStatus);
+    var url=clean_(recovery.taskUrl||task.taskUrl);
+    if(!url&&id)url='https://classicfireplace.striven.com/Tasks/TaskInfo.aspx?nav=1&TaskID='+encodeURIComponent(id);
+    return{id:id,name:name||'Task',status:status,url:url};
   }
 function salesOrderText_(row,operationalIndex){
     var workOrders=relevantWorkOrders_(row,operationalIndex);
@@ -578,7 +594,14 @@ function salesOrderText_(row,operationalIndex){
   function taskText_(row,operationalIndex){
     var workOrders=relevantWorkOrders_(row,operationalIndex);
     var tasks=relevantTasks_(row,operationalIndex,workOrders);
-    if(!tasks.length)return'—';
+    if(!tasks.length){
+      var durable=durableTask_(row);
+      if(!durable.id)return'—';
+      return line_([
+        [(durable.id?'#'+durable.id:''),deps_().util.truncate(durable.name,125)].filter(Boolean).join(' - '),
+        durable.status
+      ]);
+    }
     var task=tasks[0];
     var number=clean_(task['Task ID']||task['Entity ID']);
     var name=clean_(task['Task Name']||task['Description'])||'Task';
@@ -613,6 +636,12 @@ function salesOrderText_(row,operationalIndex){
       var taskName=clean_(task['Task Name']||task['Description'])||'Task';
       var taskLine=[(taskId?'#'+taskId:''),deps_().util.truncate(taskName,125)].filter(Boolean).join(' - ');
       addLinkSpec_(out.tasks,taskLine,strivenUrl_('TASK',{entityId:taskId}),'',taskLine);
+    }else{
+      var durableTask=durableTask_(row);
+      if(durableTask.id){
+        var durableTaskLine=[(durableTask.id?'#'+durableTask.id:''),deps_().util.truncate(durableTask.name,125)].filter(Boolean).join(' - ');
+        addLinkSpec_(out.tasks,durableTaskLine,durableTask.url,'',durableTaskLine);
+      }
     }
     return out;
   }

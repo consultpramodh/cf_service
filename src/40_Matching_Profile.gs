@@ -1,3 +1,4 @@
+/* CF_SERVICEOPS_V5_13_7_PARTIAL_LOCATION_IDENTITY_R1 */
 /************************************************************
  * APPS SCRIPT — 40_Matching_Profile.gs
  * CF ServiceOps — Automatic Customer / Contact / Location Resolution
@@ -749,6 +750,15 @@ function samePersonName_(left, right) {
   // Secondary household identity fallback for incomplete Striven addresses.
   // It is NEVER sufficient alone to auto-link a Customer; resolveCustomer_
   // still requires exact person-name corroboration and uniqueness.
+  function postalMissingOrPlaceholderV5137_(row) {
+    var raw=clean_(row&&row['Postal Code']);
+    var norm=normalizedCachePostal_(row);
+    var compact=String(raw||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
+    if(!norm)return true;
+    return /PLACEHOLDER|UNKNOWN|NOTPROVIDED|NOTAVAILABLE|TBD|N\/?A/i.test(String(raw||'')) ||
+      compact==='000000' || compact==='00000' || compact==='999999';
+  }
+
   function canonicalCity_(row) {
     return upper_(row && row['City']).replace(/[^A-Z0-9]+/g, '');
   }
@@ -1319,28 +1329,37 @@ function contactNameCandidates_(request, contacts) {
       };
     }
 
-    // Rule 3: Striven sometimes has a Location street/city but no postal code.
-    // Within an ALREADY resolved Customer, a unique exact street+city candidate
-    // whose cached postal is blank is safe to link. A conflicting populated
-    // postal is never ignored.
+    // Rule 3: same resolved Customer + exact street/city may safely reuse an
+    // incomplete historical Location. Blank and obvious placeholder postals are
+    // incomplete data, not a conflicting address. A real conflicting postal is
+    // never ignored.
     var requestCity = canonicalCity_(request);
-    var streetCityMissingPostal = locations.filter(function (row) {
+    var streetCityIncompletePostal = locations.filter(function (row) {
       return requestStreet && requestCity &&
         requestStreet === canonicalStreet_(row) &&
         requestCity === canonicalCity_(row) &&
-        !normalizedCachePostal_(row);
+        postalMissingOrPlaceholderV5137_(row);
     });
-    if (streetCityMissingPostal.length === 1) {
+    if (streetCityIncompletePostal.length === 1) {
       return {
-        status: 'MATCHED', id: String(streetCityMissingPostal[0]['Location ID']), row: streetCityMissingPostal[0],
-        action: 'LINK EXISTING', method: 'STREET + CITY (STRIVEN POSTAL MISSING)'
+        status: 'MATCHED', id: String(streetCityIncompletePostal[0]['Location ID']), row: streetCityIncompletePostal[0],
+        action: 'LINK EXISTING', method: 'STREET + CITY (STRIVEN POSTAL INCOMPLETE)'
       };
     }
-    if (streetCityMissingPostal.length > 1) {
+    if (streetCityIncompletePostal.length > 1) {
+      var primaryNamed = streetCityIncompletePostal.filter(function (row) {
+        return clean_(row['Location Name']).toUpperCase() === 'PRIMARY LOCATION';
+      });
+      if (primaryNamed.length === 1) {
+        return {
+          status: 'MATCHED', id: String(primaryNamed[0]['Location ID']), row: primaryNamed[0],
+          action: 'LINK EXISTING', method: 'STREET + CITY + PRIMARY LOCATION (STRIVEN POSTAL INCOMPLETE)'
+        };
+      }
       return {
-        status: 'AMBIGUOUS', id: '', row: {}, action: 'REVIEW', method: 'MULTIPLE STREET + CITY LOCATIONS WITH MISSING POSTAL',
-        candidates: streetCityMissingPostal,
-        reviewReason: 'Blocked location match. Why: multiple Locations on the resolved Customer share the submitted street/city and have no postal code in Striven. Correct: select the exact service Location or correct the Location address in Striven.'
+        status: 'AMBIGUOUS', id: '', row: {}, action: 'REVIEW', method: 'MULTIPLE STREET + CITY LOCATIONS WITH INCOMPLETE POSTAL',
+        candidates: streetCityIncompletePostal,
+        reviewReason: 'Multiple same-premises Locations have incomplete postal data and no unique Primary Location. Select the correct service Location; do not create another one.'
       };
     }
 

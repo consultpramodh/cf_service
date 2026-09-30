@@ -1,3 +1,8 @@
+/* CF_SERVICEOPS_V5_13_9_TARGETED_POST_CUSTOMER_LOCATION_RECONCILIATION_R1 */
+/* CF_SERVICEOPS_V5_13_8_SCOPED_CONTACT_CUSTOMER_ENRICHMENT_R1 */
+/* CF_SERVICEOPS_V5_13_7_PARTIAL_LOCATION_IDENTITY_R1 */
+/* CF_SERVICEOPS_V5_13_6_EXECUTABLE_LOCATION_STAGE_R1 */
+/* CF_SERVICEOPS_V5_13_5_TARGETED_RECONCILIATION_LOW_API_R1 */
 /* CF_SERVICEOPS_V5_13_2_STABILIZATION_R1_WRITE */
 /************************************************************
  * APPS SCRIPT — 60_Striven_Write.gs
@@ -118,7 +123,7 @@ CF.StrivenWrite = (function () {
       );
 
     return {
-      Name: clean_(record['Street'] || record['Full Name'] || 'Primary Location'),
+      Name: 'Primary Location',
       Address1: clean_(record['Street']),
       City: clean_(record['City']),
       State: provinceCode_(record['Province']),
@@ -155,7 +160,7 @@ CF.StrivenWrite = (function () {
 
   function locationPayload_(record) {
     return {
-      Name: clean_(record['Full Name'] || record['Street'] || 'Service Location'),
+      Name: 'Primary Location',
       Address1: clean_(record['Street']),
       City: clean_(record['City']),
       State: clean_(record['Province']),
@@ -2475,7 +2480,7 @@ CF.StrivenControlledCustomerCreate = (function () {
     return {
       // Live-verified from Striven HTTP 400 on 2026-08-20:
       // customer.PrimaryLocation.LocationName is required.
-      LocationName: clean_(record['Street'] || record['Full Address'] || 'Primary Location'),
+      LocationName: 'Primary Location',
       Address1: clean_(record['Street']),
       City: clean_(record['City']),
       State: normalizeProvinceForStriven_(record['Province']),
@@ -2973,8 +2978,21 @@ CF.StrivenControlledCustomerCreate = (function () {
 
   function reconcileKnownCustomer_(record, journal, customerId) {
     var d = deps_();
-    var refresh = refreshLocationAfterPostIfNeeded_(journal || {});
-    var locations = exactLocationCandidates_(record, customerId);
+    var locations=[],targeted={ok:false,status:'TARGETED_LOCATION_MODULE_UNAVAILABLE',matches:[],liveWriteExecuted:false};
+    try{
+      if(CF.StandaloneLocationCreateV5128&&typeof CF.StandaloneLocationCreateV5128.findExisting==='function'){
+        var createdByThisRequest=clean_(journal&&journal.responseCustomerId)===clean_(customerId)&&
+          (upper_(journal&&journal.postOutcome)==='SUCCESS'||upper_(journal&&journal.status).indexOf('CREATED')!==-1||Number(journal&&journal.postAttempts||0)>0);
+        targeted=CF.StandaloneLocationCreateV5128.findExisting(record,customerId,{allowUniquePrimaryFallback:createdByThisRequest});
+        locations=targeted&&Array.isArray(targeted.matches)?targeted.matches:[];
+      }
+    }catch(targetedLocationError){
+      targeted={ok:false,status:'TARGETED_LOCATION_READ_FAILED',matches:[],error:String(targetedLocationError&&targetedLocationError.message||targetedLocationError),liveWriteExecuted:false};
+    }
+    // Cache is only a no-call fallback. Never refresh the full Location report for
+    // one request's post-create reconciliation.
+    if(!locations.length)locations=exactLocationCandidates_(record,customerId);
+    var refresh={refreshed:false,targeted:true,targetedStatus:clean_(targeted&&targeted.status),fullLocationRefreshExecuted:false};
 
     if (locations.length === 1) {
       var locationId = clean_(locations[0]['Location ID']);
@@ -3020,7 +3038,9 @@ CF.StrivenControlledCustomerCreate = (function () {
         matchedLocationId: locationId,
         locationMatchMethod: clean_(locations[0].__cfLocationMatchMethod) || 'CUSTOMER_ID + EXACT_NORMALIZED_ADDRESS',
         liveWriteExecuted: false,
-        locationRefreshExecuted: refresh.refreshed
+        targetedLocationReadExecuted: targeted&&targeted.status!=='TARGETED_LOCATION_MODULE_UNAVAILABLE',
+        targetedLocationStatus: clean_(targeted&&targeted.status),
+        locationRefreshExecuted: false
       };
     }
 
@@ -3062,7 +3082,9 @@ CF.StrivenControlledCustomerCreate = (function () {
       matchedLocationId: '',
       locationCandidates: locations.map(function (row) { return clean_(row['Location ID']); }),
       liveWriteExecuted: false,
-      locationRefreshExecuted: refresh.refreshed
+      targetedLocationReadExecuted: targeted&&targeted.status!=='TARGETED_LOCATION_MODULE_UNAVAILABLE',
+      targetedLocationStatus: clean_(targeted&&targeted.status),
+      locationRefreshExecuted: false
     };
   }
 
@@ -3844,6 +3866,8 @@ CF.StrivenControlledContactCreate = (function () {
   function verifyContactIdByGetV5127_(contactId,record) {
     contactId=clean_(contactId);
     if(!contactId)return{ok:false,reason:'NO_CANDIDATE_ID'};
+    var scopedEvidence=customerScopedContactEvidenceV5135_(record,contactId,resolvedCustomerId_(record));
+    if(scopedEvidence.ok)return{ok:false,reason:'CUSTOMER_SCOPED_CONTACT_NOT_GLOBAL_GETTABLE',customerScoped:true,evidence:scopedEvidence};
     try{
       var response=deps_().http.requestJson('/v1/contacts/'+encodeURIComponent(contactId),{method:'get',attempts:1,idempotent:true});
       var remote=response&&response.json?response.json:{};
@@ -3953,6 +3977,30 @@ function rootJournal_(record) {
     };
   }
 
+  /* CF_SERVICEOPS_V5_13_5_CUSTOMER_SCOPED_CONTACT_EVIDENCE_R1
+   * Customer-scoped Contact refs are not assumed to be global /v1/contacts/{id} IDs.
+   * This helper uses durable journal evidence only; it performs zero Striven API calls.
+   */
+  function customerScopedContactEvidenceV5135_(record,contactId,customerId){
+    contactId=clean_(contactId);customerId=clean_(customerId);
+    if(!record||!contactId||!customerId)return{ok:false,scope:'UNKNOWN'};
+    var state=contactJournal_(record),cj=state.contact||{},rec=cj.reconciliation||{},tech=cj.technicalRecovery||{};
+    var identity=(state.root&&state.root.contactIdentity)||{};
+    var identityScoped=upper_(identity.scope)==='CUSTOMER'&&clean_(identity.customerId)===customerId&&clean_(identity.customerScopedContactId||identity.contactId)===contactId&&identity.identityVerified===true;
+    if(identityScoped)return{ok:true,scope:'CUSTOMER',source:'CONTACT_IDENTITY_JOURNAL',customerId:customerId,contactId:contactId};
+    var scopedId=clean_(tech.customerScopedContactId||rec.customerScopedContactId);
+    var scopedCustomerId=clean_(tech.customerId||rec.customerId||customerId);
+    var reason=String(rec.reason||'');
+    var explicit=tech.operatorApprovedCustomerScopedContact===true||/CUSTOMER-SCOPED CONTACT/i.test(reason);
+    var duplicateIds=[];
+    if(Array.isArray(cj.existingDuplicateContactIds))duplicateIds=cj.existingDuplicateContactIds.map(clean_).filter(Boolean);
+    if(!duplicateIds.length&&clean_(cj.existingDuplicateContactId))duplicateIds=[clean_(cj.existingDuplicateContactId)];
+    var canonicalDiffersFromGlobal=clean_(rec.canonicalContactId)===contactId&&duplicateIds.some(function(id){return id!==contactId;});
+    if(scopedId===contactId&&scopedCustomerId===customerId&&(explicit||canonicalDiffersFromGlobal))return{ok:true,scope:'CUSTOMER',source:explicit?'CUSTOMER_SCOPED_TECHNICAL_RECOVERY':'CANONICAL_CONTACT_DIFFERS_FROM_GLOBAL_DUPLICATE',customerId:customerId,contactId:contactId,globalDuplicateContactIds:duplicateIds};
+    if(clean_(rec.canonicalContactId)===contactId&&clean_(rec.customerId)===customerId&&(explicit||canonicalDiffersFromGlobal))return{ok:true,scope:'CUSTOMER',source:explicit?'CANONICAL_CUSTOMER_SCOPED_RECONCILIATION':'CANONICAL_CONTACT_DIFFERS_FROM_GLOBAL_DUPLICATE',customerId:customerId,contactId:contactId,globalDuplicateContactIds:duplicateIds};
+    return{ok:false,scope:'UNKNOWN',customerId:customerId,contactId:contactId};
+  }
+
   function reconcileKnownContact_(record, contactId, customerId) {
     var d=deps_();
     contactId=clean_(contactId); customerId=clean_(customerId);
@@ -3997,6 +4045,9 @@ function rootJournal_(record) {
       var nameConflict=(reqFirst&&gotFirst&&reqFirst!==gotFirst)||(reqLast&&gotLast&&reqLast!==gotLast);
       return {ok:channelMatch&&!nameConflict,emailMatch:emailMatch,phoneMatch:phoneMatch,nameConflict:nameConflict,remoteFirstName:gotFirst,remoteLastName:gotLast};
     }
+    var scopedEvidenceV5135=customerScopedContactEvidenceV5135_(record,contactId,customerId);
+    if(scopedEvidenceV5135.ok)return finalizeAssociated_(record,contactId,customerId,scopedEvidenceV5135.source+' CONFIRMED CUSTOMER-SCOPED CONTACT — GLOBAL GET SKIPPED');
+
     var response;
     try { response=d.http.requestJson('/v1/contacts/'+encodeURIComponent(contactId),{method:'get',attempts:1,idempotent:true}); }
     catch(e){
@@ -4024,6 +4075,19 @@ function rootJournal_(record) {
       return {ok:false,status:'CONTACT_OWNERSHIP_CONFLICT',requestId:clean_(record['Request ID']),matchedContactId:contactId,ownerCustomerIds:owners,ownerEvidence:ownerEvidence,directRead:true,liveWriteExecuted:false};
     }
     var state=contactJournal_(record),cj=clone_(state.contact||{});
+    var reportedDuplicates=duplicateContactIdsFromJournal_(cj);
+    if(reportedDuplicates.indexOf(contactId)!==-1){
+      cj.reconciliation=cj.reconciliation||{};
+      cj.reconciliation.lastAttemptAt=d.util.nowString();
+      cj.reconciliation.contactId=contactId;
+      cj.reconciliation.customerId=customerId;
+      cj.reconciliation.reason='GLOBAL DUPLICATE CONTACT IDENTITY MATCHED; CUSTOMER OWNERSHIP UNVERIFIED';
+      cj.associationStatus='READ_ONLY_RECONCILE_REQUIRED';
+      cj.status='DUPLICATE_CONTACT_OWNERSHIP_GET_ONLY';
+      state.root.contactCreate=cj;
+      patchRequest_(record,{'Updated At':d.util.nowString(),'Current Stage':'NEEDS REVIEW','Request Status':'BLOCKED','Manual Review?':'NO','Blocking Issue':'Striven reported Contact '+contactId+' as a global duplicate, but GET/cache did not prove it belongs to Customer '+customerId+'. Do not associate or create a Contact.','Next Action':'GET-ONLY VERIFY CUSTOMER CONTACT — DO NOT POST','Contact Association Status':'RECONCILE','Customer Structure Status':'CONTACT OWNERSHIP UNVERIFIED','Write Journal JSON':safeJson_(state.root),'Striven Sync Status':'RECONCILE REQUIRED','Reconciliation Status':'GLOBAL DUPLICATE CONTACT OWNERSHIP UNVERIFIED'});
+      return{ok:false,status:'DUPLICATE_CONTACT_OWNERSHIP_GET_ONLY',requestId:clean_(record['Request ID']),candidateContactId:contactId,matchedCustomerId:customerId,directRead:true,automaticPostRetry:false,liveWriteExecuted:false};
+    }
     cj.reconciliation=cj.reconciliation||{};cj.reconciliation.lastAttemptAt=d.util.nowString();cj.reconciliation.contactId=contactId;cj.reconciliation.customerId=customerId;cj.reconciliation.reason='DIRECT CONTACT GET IDENTITY CONFIRMED — ASSOCIATION REQUIRED';cj.reconciliation.directRead=true;
     state.root.contactCreate=cj;
     patchRequest_(record,{'Updated At':d.util.nowString(),'Matched Contact ID':contactId,'Created Contact ID':contactId,'Matched Contact Name':clean_(record['Full Name']),'Contact Match Status':'MATCHED','Contact Action':'LINK EXISTING','Contact Association Status':'PENDING RECONCILIATION','Customer Structure Status':'CONTACT RECONCILED — ASSOCIATION PENDING','Blocking Issue':'Existing Contact '+contactId+' verified directly. Controlled Customer association remains.','Next Action':'RECONCILE CONTACT ASSOCIATION','Write Journal JSON':safeJson_(state.root),'Striven Sync Status':'PARTIAL','Striven Sync Error':'','Reconciliation Status':'CONTACT DIRECT ID RECONCILED'});
@@ -4171,7 +4235,16 @@ function executeControlledContactCreate(requestIdOrRow, options) {
       if(!contactId&&priorDuplicateIds.length){
         if(priorDuplicateIds.length===1){
           var duplicateId=priorDuplicateIds[0];
-          var recovered=reconcileKnownContact_(record,duplicateId,customerId);
+          if(!cj.duplicateCandidateRefreshAt&&postPredatesCache_(cj.postFinishedAt)){
+            cj.duplicateCandidateRefreshAt=d.util.nowString();
+            state.root.contactCreate=cj;
+            patchRequest_(record,{'Write Journal JSON':safeJson_(state.root)});
+            try{d.data.refreshCustomerData({});}
+            catch(refreshError){return{ok:false,status:'DUPLICATE_CONTACT_REFRESH_FAILED_GET_ONLY',requestId:clean_(record['Request ID']),error:String(refreshError&&refreshError.message||refreshError),automaticPostRetry:false,liveWriteExecuted:false};}
+          }
+          var scoped=contactCandidates_(record).filter(function(x){return x.customerId===customerId;});
+          if(scoped.length>1)return{ok:false,status:'CUSTOMER_CONTACT_CANDIDATES_AMBIGUOUS',requestId:clean_(record['Request ID']),candidateIds:scoped.map(function(x){return x.contactId;}),automaticPostRetry:false,liveWriteExecuted:false};
+          var recovered=reconcileKnownContact_(record,scoped.length===1?scoped[0].contactId:duplicateId,customerId);
           recovered.existingDuplicateContactId=duplicateId;
           recovered.existingDuplicateContactIds=priorDuplicateIds;
           recovered.automaticPostRetry=false;
@@ -4191,9 +4264,6 @@ function executeControlledContactCreate(requestIdOrRow, options) {
       }
 
       if (contactId) {
-        var row = contactById_(contactId);
-        if (row && clean_(row['Customer ID']) === customerId) return finalizeAssociated_(record, contactId, customerId, 'CONTACT CACHE ALREADY ASSOCIATED');
-
         if (upper_(cj.associationStatus).indexOf('UNCERTAIN') !== -1 || upper_(cj.status).indexOf('ASSOCIATION_UNCERTAIN') !== -1) {
           return reconcileKnownContact_(record, contactId, customerId);
         }
@@ -4267,15 +4337,9 @@ function executeControlledContactCreate(requestIdOrRow, options) {
       }
 
       if (Number(cj.postAttempts || 0) > 0 && (cj.remoteWriteMayHaveSucceeded === true || upper_(cj.status).indexOf('UNCERTAIN') !== -1 || upper_(cj.status).indexOf('SUCCESS_ID_MISSING') !== -1)) return reconcileUncertainCreate_(record, cj);
-      /* CF_SERVICEOPS_V5_12_7_EMAIL_DUPLICATE_GUARD_FAST_PATH_R1 */
-      var requestHasEmailV5127=!!(clean_(record['Normalized Email'])||clean_(record['Email']));
-      var refresh={refreshed:false,before:freshnessSnapshot_(),after:freshnessSnapshot_(),bypassedForEmailDuplicateGuard:false};
-      if(!cacheFresh_()&&requestHasEmailV5127){
-        refresh.bypassedForEmailDuplicateGuard=true;
-        try{log_(record,'CONTACT_CACHE_REFRESH','STALE_CACHE_BYPASS_EMAIL_DUPLICATE_GUARD',{customerId:customerId,emailPresent:true,automaticPostRetry:false},'Stale Contact cache bypassed because Striven server duplicate-email validation plus guarded reconciliation protects the single-attempt Contact create.');}catch(ignoredV5127Bypass){}
-      }else{
-        refresh=refreshContactsIfStale_();
-      }
+      // A global duplicate-email response does not identify the Contact under
+      // this Customer. Refresh stale ownership evidence before choosing a POST.
+      var refresh=refreshContactsIfStale_();
       if(refresh.refreshed){
         var refreshElapsedV5127=Date.now()-started;
         try{log_(record,'CONTACT_CACHE_REFRESH','REFRESHED_CONTINUE_SAME_RUN',{freshness:refresh.after,refreshElapsedMs:refreshElapsedV5127,runtimeContinuationBudgetMs:240000},'Customer/Contact cache refreshed. Continue duplicate check in this same execution when runtime budget allows.');}catch(ignoredV5127RefreshLog){}
@@ -4283,11 +4347,11 @@ function executeControlledContactCreate(requestIdOrRow, options) {
       }
 
       var candidates = contactCandidates_(record);
+      var customerCandidates=candidates.filter(function(x){return x.customerId===customerId;});
+      if(customerCandidates.length===1){
+        return reconcileKnownContact_(record,customerCandidates[0].contactId,customerId);
+      }
       if (candidates.length === 1) {
-        if (candidates[0].customerId === customerId) {
-          patchRequest_(record, { 'Matched Contact ID': candidates[0].contactId, 'Matched Contact Name': candidates[0].fullName || clean_(record['Full Name']), 'Contact Match Status': 'MATCHED', 'Contact Action': 'LINK EXISTING', 'Contact Association Status': 'ASSOCIATED' });
-          return finalizeAssociated_(request_(record.__rowNumber), candidates[0].contactId, customerId, 'EXACT EXISTING CONTACT FOR CUSTOMER');
-        }
         patchRequest_(record, {
           'Updated At': d.util.nowString(), 'Current Stage': 'NEEDS REVIEW', 'Request Status': 'BLOCKED', 'Manual Review?': 'YES',
           'Manual Review Reason': 'Existing Contact ID ' + candidates[0].contactId + ' already matches the phone/email under Customer ' + (candidates[0].customerId || 'UNRESOLVED') + '.',
@@ -5935,7 +5999,31 @@ CF.CustomerContactInfoSync = (function () {
   function desiredAddr_(r){var a={Address1:clean_(r['Street']),Address2:'',Address3:'',City:clean_(r['City']),State:province_(r['Province']),PostalCode:clean_(r['Postal Code']),Country:country_(r['Country']),Latitude:0,Longitude:0,FullAddress:clean_(r['Full Address'])};if(!a.FullAddress)a.FullAddress=[a.Address1,a.City,a.State,a.PostalCode,a.Country].filter(Boolean).join(', ');return a;}
   function addrBlank_(a){a=addrDto_(a);return !a.Address1&&!a.City&&!a.State&&!a.PostalCode&&!a.FullAddress;}
   function addrNorm_(a){a=addrDto_(a);var text=a.FullAddress||[a.Address1,a.City,a.State,a.PostalCode,a.Country].join(' ');try{return d_().u.normalizeAddress(text);}catch(e){return String(text||'').toUpperCase().replace(/[^A-Z0-9]/g,'');}}
-  function mergeAddr_(current,desired){var c=addrDto_(current),d=addrDto_(desired);if(addrBlank_(d))return{value:c,applied:false,preservedDifferent:false};if(addrBlank_(c))return{value:d,applied:true,preservedDifferent:false};if(addrNorm_(c)===addrNorm_(d)){Object.keys(d).forEach(function(k){if((c[k]===undefined||c[k]===null||c[k]==='')&&d[k]!==''&&d[k]!==undefined)c[k]=d[k];});return{value:c,applied:true,preservedDifferent:false};}return{value:c,applied:false,preservedDifferent:true};}
+  function addrPartNorm_(v){return String(v||'').toUpperCase().replace(/[^A-Z0-9]/g,'');}
+  function addrPostalIncompleteV5137_(v){var raw=String(v||'').toUpperCase(),compact=addrPartNorm_(v);return !compact||/PLACEHOLDER|UNKNOWN|NOTPROVIDED|NOTAVAILABLE|TBD|N\/?A/.test(raw)||compact==='000000'||compact==='00000'||compact==='999999';}
+  function addrStateIncompleteV5137_(v){var compact=addrPartNorm_(v);return !compact||compact.length<2||compact==='UNKNOWN'||compact==='PLACEHOLDER';}
+  function samePremisesIncompleteV5137_(c,d){
+    c=addrDto_(c);d=addrDto_(d);
+    return !!addrPartNorm_(c.Address1)&&addrPartNorm_(c.Address1)===addrPartNorm_(d.Address1)&&
+      !!addrPartNorm_(c.City)&&addrPartNorm_(c.City)===addrPartNorm_(d.City)&&
+      (addrPostalIncompleteV5137_(c.PostalCode)||addrStateIncompleteV5137_(c.State));
+  }
+  function mergeAddr_(current,desired){
+    var c=addrDto_(current),d=addrDto_(desired);
+    if(addrBlank_(d))return{value:c,applied:false,preservedDifferent:false};
+    if(addrBlank_(c))return{value:d,applied:true,preservedDifferent:false};
+    if(addrNorm_(c)===addrNorm_(d)){
+      Object.keys(d).forEach(function(k){if((c[k]===undefined||c[k]===null||c[k]==='')&&d[k]!==''&&d[k]!==undefined)c[k]=d[k];});
+      return{value:c,applied:true,preservedDifferent:false};
+    }
+    if(samePremisesIncompleteV5137_(c,d)){
+      ['Address1','City','State','PostalCode','Country','FullAddress'].forEach(function(k){if(d[k]!==''&&d[k]!==undefined)c[k]=d[k];});
+      if(!c.Latitude&&d.Latitude)c.Latitude=d.Latitude;
+      if(!c.Longitude&&d.Longitude)c.Longitude=d.Longitude;
+      return{value:c,applied:true,preservedDifferent:false,enrichedIncompleteSamePremises:true};
+    }
+    return{value:c,applied:false,preservedDifferent:true};
+  }
 
   function customerDto_(cur,mergedPhones,mergedAddr){var out={Id:num_(objectId_(cur)),Name:clean_(prop_(cur,['Name','name']))};function cp(n,alts){var v=prop_(cur,alts||[n,n.charAt(0).toLowerCase()+n.slice(1)]);if(v!==undefined&&v!==null)out[n]=v;}cp('Number',['Number','number']);cp('IsVendor',['IsVendor','isVendor']);cp('IsConsumerAccount',['IsConsumerAccount','isConsumerAccount']);var pc=pair_(prop_(cur,['PrimaryContact','primaryContact']));if(pc)out.PrimaryContact=pc;var st=pair_(prop_(cur,['Status','status']));if(st)out.Status=st;var cats=pairs_(prop_(cur,['Categories','categories']));if(cats.length)out.Categories=cats;var rs=pair_(prop_(cur,['ReferralSource','referralSource']));if(rs)out.ReferralSource=rs;var ind=pair_(prop_(cur,['Industry','industry']));if(ind)out.Industry=ind;cp('CustomerSince',['CustomerSince','customerSince']);cp('CreditLimit',['CreditLimit','creditLimit']);cp('WebSite',['WebSite','webSite']);cp('IsTaxExempt',['IsTaxExempt','isTaxExempt']);cp('IsFinanceChargeExempt',['IsFinanceChargeExempt','isFinanceChargeExempt']);var pt=pair_(prop_(cur,['PaymentTerm','paymentTerm']));if(pt)out.PaymentTerm=pt;var bl=pair_(prop_(cur,['BillToLocation','billToLocation']));if(bl)out.BillToLocation=bl;var sl=pair_(prop_(cur,['ShipToLocation','shipToLocation']));if(sl)out.ShipToLocation=sl;out.Phones=mergedPhones;out.PrimaryAddress=mergedAddr;var pl=pair_(prop_(cur,['PriceList','priceList']));if(pl)out.PriceList=pl;var cfs=cf_(prop_(cur,['CustomFields','customFields']));if(cfs.length)out.CustomFields=cfs;var curcy=currency_(prop_(cur,['Currency','currency']));if(curcy)out.Currency=curcy;return out;}
   function contactDto_(cur,r,mergedPhones,mergedEmails,mergedAddr){var cfs=cf_(prop_(cur,['CustomFields','customFields']));var out={Id:num_(objectId_(cur)),FirstName:clean_(prop_(cur,['FirstName','firstName']))||clean_(r['First Name']),LastName:clean_(prop_(cur,['LastName','lastName']))||clean_(r['Last Name']),Phones:mergedPhones,Emails:mergedEmails,Address:mergedAddr};if(cfs.length)out.CustomFields=cfs;return out;}
@@ -5946,6 +6034,24 @@ CF.CustomerContactInfoSync = (function () {
   function preexistingEmailsPreserved_(before,after){var ae=emails_(after);return emails_(before).every(function(e){var id=String(e.Id||'');return ae.some(function(x){return (id&&String(x.Id||'')===id)||(!id&&normEmail_(x.Email)===normEmail_(e.Email));});});}
 
   function journalRoot_(r){var root=parse_(r&&r['Write Journal JSON'],{});if(!root||typeof root!=='object'||Array.isArray(root))root={};return root;}
+  /* CF_SERVICEOPS_V5_13_5_INFO_SYNC_CUSTOMER_SCOPED_CONTACT_R1
+   * Customer/contact enrichment is secondary. A proven customer-scoped Contact
+   * must not trigger an invalid global Contact GET/POST or block downstream work.
+   */
+  function customerScopedContactInfoEvidenceV5135_(r,contactId,customerId){
+    var root=journalRoot_(r),cc=root.contactCreate||{},rec=cc.reconciliation||{},tech=cc.technicalRecovery||{},identity=root.contactIdentity||{};
+    var identityScoped=String(identity.scope||'').toUpperCase()==='CUSTOMER'&&clean_(identity.customerId)===customerId&&clean_(identity.customerScopedContactId||identity.contactId)===contactId&&identity.identityVerified===true;
+    if(identityScoped)return{ok:true,source:'CONTACT_IDENTITY_JOURNAL'};
+    var duplicateIds=[];
+    if(Array.isArray(cc.existingDuplicateContactIds))duplicateIds=cc.existingDuplicateContactIds.map(clean_).filter(Boolean);
+    if(!duplicateIds.length&&clean_(cc.existingDuplicateContactId))duplicateIds=[clean_(cc.existingDuplicateContactId)];
+    var explicit=tech.operatorApprovedCustomerScopedContact===true||/CUSTOMER-SCOPED CONTACT/i.test(String(rec.reason||''));
+    var scopedId=clean_(tech.customerScopedContactId||rec.customerScopedContactId||rec.canonicalContactId);
+    var scopedCustomerId=clean_(tech.customerId||rec.customerId||customerId);
+    var canonicalDiffersFromGlobal=clean_(rec.canonicalContactId)===contactId&&duplicateIds.some(function(id){return id!==contactId;});
+    return{ok:scopedId===contactId&&scopedCustomerId===customerId&&(explicit||canonicalDiffersFromGlobal),source:explicit?'CUSTOMER_SCOPED_CONTACT_JOURNAL':'CANONICAL_CONTACT_DIFFERS_FROM_GLOBAL_DUPLICATE',globalDuplicateContactIds:duplicateIds};
+  }
+
   function journalState_(r){var root=journalRoot_(r),state=root.customerContactInfoSync||{};if(!state||typeof state!=='object'||Array.isArray(state))state={};return{root:root,state:state};}
   function saveJournal_(r,state,patchExtra){var root=journalRoot_(r);root.customerContactInfoSync=state;var p={'Updated At':now_(),'Write Journal JSON':d_().u.safeJson?d_().u.safeJson(root):JSON.stringify(root)};Object.keys(patchExtra||{}).forEach(function(k){p[k]=patchExtra[k];});patch_(r,p);}
   function fingerprint_(target,id,endpoint,payload){if(typeof d_().u.canonicalHash!=='function')throw new Error('CF.Util.canonicalHash is required for guarded Customer/Contact sync.');return d_().u.canonicalHash({requestId:'',action:'SYNC_'+target,entityId:String(id),endpoint:endpoint,payload:payload});}
@@ -5978,13 +6084,13 @@ CF.CustomerContactInfoSync = (function () {
     return /CUSTOM_FIELD.*BYPASS|ENRICHMENT_SKIPPED|REJECTED_VALIDATION_CUSTOM_FIELDS/i.test(status)||(/REJECTED_VALIDATION/i.test(status)&&/Invalid Custom Fields|Custom Field Id\s+\d+/i.test(error));
   }
 
-function reconcile(requestId,options){options=options||{};var r=req_(requestId);if(!r)return{ok:false,version:VERSION,status:'SERVICE_REQUEST_NOT_FOUND',requestId:clean_(requestId),liveWriteExecuted:false};var customerId=clean_(r['Created Customer ID']||r['Matched Customer ID']),contactId=clean_(r['Created Contact ID']||r['Matched Contact ID']);if(!customerId||!contactId)return fail_(r,'CUSTOMER_CONTACT_INFO_SYNC_IDS_INCOMPLETE','Durable Customer ID and Contact ID are both required.',{customerId:customerId,contactId:contactId,writeAttempted:false});var submittedPhones=submittedPhones_(r),phone=clean_(r['Phone']),email=clean_(r['Email']),ext=clean_(r['Phone Extension']),desiredAddress=desiredAddr_(r);var lock=LockService.getScriptLock();if(!lock.tryLock(30000))return{ok:false,version:VERSION,status:'INFO_SYNC_SKIPPED_ALREADY_RUNNING',requestId:clean_(requestId),retrySafeNoWrite:true,writeAttempted:false,liveWriteExecuted:false,automaticPostRetry:false};try{
-      var customer,contact;try{customer=get_(endpoint_(CUSTOMER_GET,customerId));contact=get_(endpoint_(CONTACT_GET,contactId));}catch(e){return fail_(r,'CUSTOMER_CONTACT_INFO_GET_FAILED',e&&e.message?e.message:String(e),{customerId:customerId,contactId:contactId,writeAttempted:false});}
+function reconcile(requestId,options){options=options||{};var r=req_(requestId);if(!r)return{ok:false,version:VERSION,status:'SERVICE_REQUEST_NOT_FOUND',requestId:clean_(requestId),liveWriteExecuted:false};var customerId=clean_(r['Created Customer ID']||r['Matched Customer ID']),contactId=clean_(r['Created Contact ID']||r['Matched Contact ID']);if(!customerId||!contactId)return fail_(r,'CUSTOMER_CONTACT_INFO_SYNC_IDS_INCOMPLETE','Durable Customer ID and Contact ID are both required.',{customerId:customerId,contactId:contactId,writeAttempted:false});var scopedInfoEvidenceV5135=customerScopedContactInfoEvidenceV5135_(r,contactId,customerId);var customerScopedContactV5138=scopedInfoEvidenceV5135.ok===true;var submittedPhones=submittedPhones_(r),phone=clean_(r['Phone']),email=clean_(r['Email']),ext=clean_(r['Phone Extension']),desiredAddress=desiredAddr_(r);var lock=LockService.getScriptLock();if(!lock.tryLock(30000))return{ok:false,version:VERSION,status:'INFO_SYNC_SKIPPED_ALREADY_RUNNING',requestId:clean_(requestId),retrySafeNoWrite:true,writeAttempted:false,liveWriteExecuted:false,automaticPostRetry:false};try{
+      var customer,contact={};try{customer=get_(endpoint_(CUSTOMER_GET,customerId));if(!customerScopedContactV5138)contact=get_(endpoint_(CONTACT_GET,contactId));}catch(e){return fail_(r,'CUSTOMER_CONTACT_INFO_GET_FAILED',e&&e.message?e.message:String(e),{customerId:customerId,contactId:contactId,contactScope:customerScopedContactV5138?'CUSTOMER':'GLOBAL',writeAttempted:false});}
       if(objectId_(customer)!==customerId)return fail_(r,'UNSAFE_CUSTOMER_ID_MISMATCH','Customer GET returned a different ID.',{expectedCustomerId:customerId,actualCustomerId:objectId_(customer),writeAttempted:false});
-      if(objectId_(contact)!==contactId)return fail_(r,'UNSAFE_CONTACT_ID_MISMATCH','Contact GET returned a different ID.',{expectedContactId:contactId,actualContactId:objectId_(contact),writeAttempted:false});
+      if(!customerScopedContactV5138&&objectId_(contact)!==contactId)return fail_(r,'UNSAFE_CONTACT_ID_MISMATCH','Contact GET returned a different ID.',{expectedContactId:contactId,actualContactId:objectId_(contact),writeAttempted:false});
 
       var currentCustomerAddress=prop_(customer,['PrimaryAddress','primaryAddress']),cp=phones_(customer),ca=mergeAddr_(currentCustomerAddress,desiredAddress);var customerAddressNeeds=ca.applied&&json_(addrDto_(currentCustomerAddress))!==json_(addrDto_(ca.value));var customerNeeds=!allSubmittedMobilePhonesPresent_(cp,submittedPhones)||customerAddressNeeds;
-      var currentContactAddress=prop_(contact,['Address','address']),ps=phones_(contact),es=emails_(contact),addrMerge=mergeAddr_(currentContactAddress,desiredAddress);var contactAddressNeeds=addrMerge.applied&&json_(addrDto_(currentContactAddress))!==json_(addrDto_(addrMerge.value));var contactNeeds=!allSubmittedMobilePhonesPresent_(ps,submittedPhones)|| (!!email&&!hasEmail_(es,email)) || contactAddressNeeds;
+      var currentContactAddress=customerScopedContactV5138?{}:prop_(contact,['Address','address']),ps=customerScopedContactV5138?[]:phones_(contact),es=customerScopedContactV5138?[]:emails_(contact),addrMerge=customerScopedContactV5138?{value:{},applied:false,preservedDifferent:false}:mergeAddr_(currentContactAddress,desiredAddress);var contactAddressNeeds=!customerScopedContactV5138&&addrMerge.applied&&json_(addrDto_(currentContactAddress))!==json_(addrDto_(addrMerge.value));var contactNeeds=!customerScopedContactV5138&&(!allSubmittedMobilePhonesPresent_(ps,submittedPhones)|| (!!email&&!hasEmail_(es,email)) || contactAddressNeeds);
       var customerEnrichmentSkipped=false;
       var requiredCustomerCfIds=unresolvedRequiredCustomerCustomFieldIds_(customer);
       var priorCustomerJournal=targetJournal_(r,'customer').entry;
@@ -5999,13 +6105,13 @@ function reconcile(requestId,options){options=options||{};var r=req_(requestId);
       }
 
       var cj0=targetJournal_(r,'customer').entry;if(priorUncertain_(cj0)){if(customerNeeds)return fail_(r,'CUSTOMER_INFO_PRIOR_WRITE_RECONCILIATION_REQUIRED_NO_RETRY','A prior Customer info write crossed or may have crossed the write boundary. Current GET does not confirm the desired state; no retry is allowed.',{customerId:customerId,prior:cj0,writeAttempted:false,remoteWriteMayHaveSucceeded:true});markPriorReconciled_(r,'customer',cj0);r=req_(requestId)||r;}
-      var tj0=targetJournal_(r,'contact').entry;if(priorUncertain_(tj0)){if(contactNeeds)return fail_(r,'CONTACT_INFO_PRIOR_WRITE_RECONCILIATION_REQUIRED_NO_RETRY','A prior Contact info write crossed or may have crossed the write boundary. Current GET does not confirm the desired state; no retry is allowed.',{contactId:contactId,prior:tj0,writeAttempted:false,remoteWriteMayHaveSucceeded:true});markPriorReconciled_(r,'contact',tj0);r=req_(requestId)||r;}
+      var tj0=customerScopedContactV5138?{}:targetJournal_(r,'contact').entry;if(!customerScopedContactV5138&&priorUncertain_(tj0)){if(contactNeeds)return fail_(r,'CONTACT_INFO_PRIOR_WRITE_RECONCILIATION_REQUIRED_NO_RETRY','A prior Contact info write crossed or may have crossed the write boundary. Current GET does not confirm the desired state; no retry is allowed.',{contactId:contactId,prior:tj0,writeAttempted:false,remoteWriteMayHaveSucceeded:true});markPriorReconciled_(r,'contact',tj0);r=req_(requestId)||r;}
 
       if(customerNeeds){var beforeCritical=criticalCustomer_(customer),mergedCP=mergeSubmittedMobilePhones_(cp,submittedPhones),dto=customerDto_(customer,mergedCP,ca.value),intent=beginWrite_(r,'customer',customerId,CUSTOMER_POST,dto);if(!intent.ok)return fail_(r,intent.status,'Identical Customer info payload already crossed a guarded write boundary; no retry.',{customerId:customerId,payloadFingerprint:intent.payloadFingerprint,prior:intent.prior,writeAttempted:false});var responseC;try{responseC=post_(CUSTOMER_POST,dto);}catch(e1){var cc=classify_(e1),customerErrorText=String(e1&&e1.message||e1);if(cc.status==='REJECTED_VALIDATION'&&collateralCustomerCustomFieldValidation_(e1)){finishWrite_(r,'customer',{status:'REJECTED_VALIDATION_CUSTOM_FIELDS_AUTO_BYPASS',postFinishedAt:now_(),httpStatus:cc.httpStatus,remoteWriteMayHaveSucceeded:false,error:customerErrorText,noAutomaticWriteRetry:true});patch_(r,{'Last Striven Sync':now_(),'Striven Sync Status':'PARTIAL','Striven Sync Error':'','Blocking Issue':'','Reconciliation Status':'CUSTOMER UPDATE CUSTOM FIELDS REJECTED — AUTO CONTINUE VIA CONTACT','Next Action':'AUTO CONTINUE CUSTOMER/CONTACT INFO SYNC'});log_(r,'CUSTOMER_INFO_CUSTOM_FIELDS_REJECTED_AUTO_BYPASS',{customerId:customerId,httpStatus:cc.httpStatus,writeAttempted:true,remoteWriteMayHaveSucceeded:false,automaticPostRetry:false},customerErrorText);return{ok:true,version:VERSION,status:'CUSTOMER_INFO_CUSTOM_FIELDS_REJECTED_AUTO_BYPASS',requestId:clean_(requestId),customerId:customerId,contactId:contactId,customerUpdated:false,customerEnrichmentSkipped:true,writeAttempted:true,liveWriteExecuted:true,remoteWriteMayHaveSucceeded:false,automaticPostRetry:false,next:'AUTOMATIC CONTINUATION WILL SKIP CUSTOMER ENRICHMENT AND CONTINUE CONTACT SYNC'};}finishWrite_(r,'customer',{status:cc.status,postFinishedAt:now_(),httpStatus:cc.httpStatus,remoteWriteMayHaveSucceeded:cc.remoteWriteMayHaveSucceeded,error:customerErrorText});return fail_(r,'CUSTOMER_INFO_'+cc.status,customerErrorText,{customerId:customerId,writeAttempted:true,httpStatus:cc.httpStatus,remoteWriteMayHaveSucceeded:cc.remoteWriteMayHaveSucceeded,automaticPostRetry:false});}finishWrite_(r,'customer',{status:'POST_ACCEPTED_GET_VERIFY_PENDING',postFinishedAt:now_(),httpStatus:responseC&&responseC.status||200,remoteWriteMayHaveSucceeded:true});var afterC;try{afterC=get_(endpoint_(CUSTOMER_GET,customerId));}catch(e2){finishWrite_(r,'customer',{status:'POST_ACCEPTED_GET_FAILED_RECONCILIATION_REQUIRED',verifyFailedAt:now_(),remoteWriteMayHaveSucceeded:true,error:String(e2&&e2.message||e2)});return fail_(r,'CUSTOMER_INFO_POST_OUTCOME_UNCERTAIN_GET_FAILED_DO_NOT_RETRY',e2&&e2.message?e2.message:String(e2),{customerId:customerId,writeAttempted:true,remoteWriteMayHaveSucceeded:true});}var verified=objectId_(afterC)===customerId&&allSubmittedMobilePhonesPresent_(phones_(afterC),submittedPhones)&&(!customerAddressNeeds||addrNorm_(prop_(afterC,['PrimaryAddress','primaryAddress']))===addrNorm_(ca.value))&&json_(criticalCustomer_(afterC))===json_(beforeCritical)&&preexistingPhonesPreserved_(customer,afterC);if(!verified){finishWrite_(r,'customer',{status:'POSTWRITE_VERIFICATION_FAILED_RECONCILIATION_REQUIRED',verifyFailedAt:now_(),remoteWriteMayHaveSucceeded:true});return fail_(r,'CUSTOMER_INFO_POSTWRITE_VERIFICATION_FAILED_DO_NOT_RETRY','Customer update did not pass identity/collateral verification.',{customerId:customerId,writeAttempted:true,remoteWriteMayHaveSucceeded:true});}finishWrite_(r,'customer',{status:'CONFIRMED',verifiedAt:now_(),canonicalEntityId:customerId,remoteWriteMayHaveSucceeded:false});patch_(r,{'Last Striven Sync':now_(),'Striven Sync Status':'PARTIAL','Striven Sync Error':'','Reconciliation Status':'CUSTOMER CONTACT INFO SYNC — CUSTOMER UPDATED'});log_(r,'CUSTOMER_INFO_UPDATED',{customerId:customerId,submittedMobilePhonesApplied:submittedPhones.length,addressApplied:ca.applied},'');return{ok:true,version:VERSION,status:'CUSTOMER_INFO_UPDATED_WRITE_BOUNDARY',requestId:clean_(requestId),customerId:customerId,contactId:contactId,customerUpdated:true,contactUpdated:false,writeAttempted:true,liveWriteExecuted:true,automaticPostRetry:false,next:'RUN AGAIN TO VERIFY/UPDATE CONTACT'};}
 
       if(contactNeeds){var beforeAssoc=contactAssociations_(contact),dto2=contactDto_(contact,r,mergeSubmittedMobilePhones_(ps,submittedPhones),mergeEmails_(es,email),addrMerge.value),intent2=beginWrite_(r,'contact',contactId,CONTACT_POST,dto2);if(!intent2.ok)return fail_(r,intent2.status,'Identical Contact info payload already crossed a guarded write boundary; no retry.',{contactId:contactId,payloadFingerprint:intent2.payloadFingerprint,prior:intent2.prior,writeAttempted:false});var responseT;try{responseT=post_(CONTACT_POST,dto2);}catch(e3){var ct=classify_(e3);finishWrite_(r,'contact',{status:ct.status,postFinishedAt:now_(),httpStatus:ct.httpStatus,remoteWriteMayHaveSucceeded:ct.remoteWriteMayHaveSucceeded,error:String(e3&&e3.message||e3)});return fail_(r,'CONTACT_INFO_'+ct.status,String(e3&&e3.message||e3),{contactId:contactId,writeAttempted:true,httpStatus:ct.httpStatus,remoteWriteMayHaveSucceeded:ct.remoteWriteMayHaveSucceeded,automaticPostRetry:false});}finishWrite_(r,'contact',{status:'POST_ACCEPTED_GET_VERIFY_PENDING',postFinishedAt:now_(),httpStatus:responseT&&responseT.status||200,remoteWriteMayHaveSucceeded:true});var afterT;try{afterT=get_(endpoint_(CONTACT_GET,contactId));}catch(e4){finishWrite_(r,'contact',{status:'POST_ACCEPTED_GET_FAILED_RECONCILIATION_REQUIRED',verifyFailedAt:now_(),remoteWriteMayHaveSucceeded:true,error:String(e4&&e4.message||e4)});return fail_(r,'CONTACT_INFO_POST_OUTCOME_UNCERTAIN_GET_FAILED_DO_NOT_RETRY',e4&&e4.message?e4.message:String(e4),{contactId:contactId,writeAttempted:true,remoteWriteMayHaveSucceeded:true});}var verifiedT=objectId_(afterT)===contactId&&allSubmittedMobilePhonesPresent_(phones_(afterT),submittedPhones)&&(!email||hasEmail_(emails_(afterT),email))&&(!contactAddressNeeds||addrNorm_(prop_(afterT,['Address','address']))===addrNorm_(addrMerge.value))&&json_(contactAssociations_(afterT))===json_(beforeAssoc)&&preexistingPhonesPreserved_(contact,afterT)&&preexistingEmailsPreserved_(contact,afterT);if(!verifiedT){finishWrite_(r,'contact',{status:'POSTWRITE_VERIFICATION_FAILED_RECONCILIATION_REQUIRED',verifyFailedAt:now_(),remoteWriteMayHaveSucceeded:true});return fail_(r,'CONTACT_INFO_POSTWRITE_VERIFICATION_FAILED_DO_NOT_RETRY','Contact update did not pass identity/collateral verification.',{contactId:contactId,writeAttempted:true,remoteWriteMayHaveSucceeded:true});}finishWrite_(r,'contact',{status:'CONFIRMED',verifiedAt:now_(),canonicalEntityId:contactId,remoteWriteMayHaveSucceeded:false});patch_(r,{'Last Striven Sync':now_(),'Striven Sync Status':'PARTIAL','Striven Sync Error':'','Reconciliation Status':'CUSTOMER CONTACT INFO SYNC — CONTACT UPDATED'});log_(r,'CONTACT_INFO_UPDATED',{contactId:contactId,submittedMobilePhonesApplied:submittedPhones.length,emailAdded:!!email,addressApplied:addrMerge.applied},'');return{ok:true,version:VERSION,status:'CONTACT_INFO_UPDATED_WRITE_BOUNDARY',requestId:clean_(requestId),customerId:customerId,contactId:contactId,customerUpdated:false,contactUpdated:true,writeAttempted:true,liveWriteExecuted:true,automaticPostRetry:false,next:'RUN AGAIN TO VERIFY BOTH'};}
 
-      patch_(r,{'Last Striven Sync':now_(),'Striven Sync Error':'','Reconciliation Status':'CUSTOMER + CONTACT INFO CONFIRMED'});var out={ok:true,version:VERSION,status:'CUSTOMER_CONTACT_INFO_CONFIRMED',requestId:clean_(requestId),customerId:customerId,contactId:contactId,customerHasPhone:allSubmittedMobilePhonesPresent_(cp,submittedPhones),contactHasPhone:allSubmittedMobilePhonesPresent_(ps,submittedPhones),submittedPhoneCount:submittedPhones.length,submittedPhoneType:'Mobile',contactHasEmail:!email||hasEmail_(es,email),customerAddressDifferentPreserved:ca.preservedDifferent,contactAddressDifferentPreserved:addrMerge.preservedDifferent,customerEnrichmentSkipped:customerEnrichmentSkipped,unresolvedRequiredCustomerCustomFieldIds:requiredCustomerCfIds,writeAttempted:false,liveWriteExecuted:false,automaticPostRetry:false};log_(r,out.status,out,'');return out;
+      var finalReconciliationV5138=customerScopedContactV5138?'CUSTOMER + CONTACT INFO CONFIRMED — CUSTOMER ENRICHMENT CHECKED / CUSTOMER-SCOPED CONTACT WRITE DEFERRED':'CUSTOMER + CONTACT INFO CONFIRMED';patch_(r,{'Last Striven Sync':now_(),'Striven Sync Error':'','Reconciliation Status':finalReconciliationV5138});var out={ok:true,version:VERSION,status:customerScopedContactV5138?'CUSTOMER_CONTACT_INFO_CONFIRMED_CUSTOMER_SCOPED_CONTACT_DEFERRED':'CUSTOMER_CONTACT_INFO_CONFIRMED',requestId:clean_(requestId),customerId:customerId,contactId:contactId,contactScope:customerScopedContactV5138?'CUSTOMER':'GLOBAL',contactEnrichmentDeferred:customerScopedContactV5138,customerHasPhone:allSubmittedMobilePhonesPresent_(cp,submittedPhones),contactHasPhone:customerScopedContactV5138?true:allSubmittedMobilePhonesPresent_(ps,submittedPhones),submittedPhoneCount:submittedPhones.length,submittedPhoneType:'Mobile',contactHasEmail:customerScopedContactV5138?true:(!email||hasEmail_(es,email)),customerAddressDifferentPreserved:ca.preservedDifferent,contactAddressDifferentPreserved:customerScopedContactV5138?false:addrMerge.preservedDifferent,customerAddressEnrichedSamePremises:ca.enrichedIncompleteSamePremises===true,customerEnrichmentSkipped:customerEnrichmentSkipped,unresolvedRequiredCustomerCustomFieldIds:requiredCustomerCfIds,evidenceSource:customerScopedContactV5138?scopedInfoEvidenceV5135.source:'',writeAttempted:false,liveWriteExecuted:false,automaticPostRetry:false};log_(r,out.status,out,'');return out;
     } finally {try{lock.releaseLock();}catch(e){}}
   }
 
@@ -6025,7 +6131,21 @@ CF.StandaloneLocationCreateV5128=(function(){
   function resolved_(r,a,b){return clean_(r[a]||r[b]);}
   function rootJournal_(r){var raw=clean_(r['Write Journal JSON']);if(!raw)return{};try{var x=JSON.parse(raw);return x&&typeof x==='object'?x:{};}catch(e){return{};}}
   function patch_(r,p){if(!r||!r.__rowNumber)throw new Error('Service Request row unavailable.');CF.Util.patchRow('SERVICE_REQUESTS',r.__rowNumber,p);}
-  function payload_(r){return{Name:clean_(r['Full Name']||r['Street']||'Service Location'),Address1:clean_(r['Street']),City:clean_(r['City']),State:province_(r['Province']),PostalCode:postal_(r['Postal Code']),Country:clean_(r['Country'])||'Canada'};}
+  function payload_(r){
+    var address={
+      Address1:clean_(r['Street']),
+      Address2:'',
+      Address3:'',
+      City:clean_(r['City']),
+      State:province_(r['Province']),
+      PostalCode:postal_(r['Postal Code']),
+      Country:clean_(r['Country'])||'Canada',
+      Latitude:0,
+      Longitude:0,
+      FullAddress:clean_(r['Full Address'])
+    };
+    return{Name:'Primary Location',Address:address};
+  }
   function rows_(body){
     if(Array.isArray(body))return body;body=body||{};
     var candidates=[body.Items,body.items,body.Results,body.results,body.Records,body.records,body.Data,body.data];
@@ -6035,18 +6155,50 @@ CF.StandaloneLocationCreateV5128=(function(){
   function rowId_(x){x=x||{};return clean_(x.LocationId||x.locationId||x.Id||x.id||x.ID);}
   function rowStreet_(x){x=x||{};var a=x.Address||x.address||{};return clean_(x.Address1||x.address1||a.Address1||a.address1||a.Street||a.street);}
   function rowPostal_(x){x=x||{};var a=x.Address||x.address||{};return clean_(x.PostalCode||x.postalCode||x.Zip||x.zip||a.PostalCode||a.postalCode||a.Zip||a.zip);}
+  function rowCity_(x){x=x||{};var a=x.Address||x.address||{};return clean_(x.City||x.city||a.City||a.city);}
+  function rowName_(x){x=x||{};return clean_(x.Name||x.name||x.LocationName||x.locationName);}
   function canonicalStreetV5129_(v){var s=upper_(v).replace(/#/g,' UNIT ').replace(/[.,]/g,' ');s=s.replace(/\bAPARTMENT\b|\bAPT\b/g,' UNIT ').replace(/\bCRESENT\b|\bCRESCENT\b|\bCRES\b/g,' CRESCENT ').replace(/\bROAD\b|\bRD\b/g,' ROAD ').replace(/\bSTREET\b|\bST\b/g,' STREET ').replace(/\bAVENUE\b|\bAVE\b/g,' AVENUE ').replace(/\bDRIVE\b|\bDR\b/g,' DRIVE ').replace(/\bTRAIL\b|\bTRL\b/g,' TRAIL ').replace(/\bPLACE\b|\bPL\b/g,' PLACE ').replace(/\bCOURT\b|\bCT\b/g,' COURT ').replace(/\bLANE\b|\bLN\b/g,' LANE ').replace(/\bBOULEVARD\b|\bBLVD\b/g,' BOULEVARD ').replace(/\bTERRACE\b|\bTER\b/g,' TERRACE ').replace(/\bSQUARE\b|\bSQ\b/g,' SQUARE ');return s.replace(/[^A-Z0-9]/g,'');}
+  function postalIncompleteV5137_(v){var raw=upper_(v),compact=raw.replace(/[^A-Z0-9]/g,'');return !compact||/PLACEHOLDER|UNKNOWN|NOTPROVIDED|NOTAVAILABLE|TBD|N\/?A/.test(raw)||compact==='000000'||compact==='00000'||compact==='999999';}
   function exact_(r,x){return !!rowId_(x)&&norm_(r['Postal Code'])===norm_(rowPostal_(x))&&canonicalStreetV5129_(r['Street'])===canonicalStreetV5129_(rowStreet_(x));}
-  function search_(r,customerId){
+  function incompleteSamePremises_(r,x){return !!rowId_(x)&&canonicalStreetV5129_(r['Street'])===canonicalStreetV5129_(rowStreet_(x))&&norm_(r['City'])===norm_(rowCity_(x))&&postalIncompleteV5137_(rowPostal_(x));}
+  function search_(r,customerId,options){
+    options=options||{};
     var ep=CF.Config.getEndpoint('CUSTOMER_LOCATION_SEARCH');
     var n=Number(customerId),ref=isNaN(n)?customerId:n;
     var response=CF.StrivenHttp.requestJson(ep,{method:'post',payload:{PageIndex:0,PageSize:100,Customer:{Id:ref}},attempts:1,idempotent:true});
-    return rows_(response&&response.json?response.json:{}).filter(function(x){return exact_(r,x);});
+    var all=rows_(response&&response.json?response.json:{});
+    var exact=all.filter(function(x){return exact_(r,x);});
+    if(exact.length)return exact;
+    var partial=all.filter(function(x){return incompleteSamePremises_(r,x);});
+    if(partial.length>1){
+      var primaryPartial=partial.filter(function(x){return upper_(rowName_(x))==='PRIMARY LOCATION';});
+      if(primaryPartial.length===1)return primaryPartial;
+    }
+    if(partial.length)return partial;
+    // Only the post-Customer-create reconciler may use this fallback. The request
+    // itself just created the Customer with PrimaryLocation in the same guarded POST,
+    // so a unique Primary Location under that new Customer is authoritative enough
+    // to recover its Location ID even if Striven has not finished formatting the
+    // returned address yet.
+    if(options.allowUniquePrimaryFallback===true){
+      var primary=all.filter(function(x){return !!rowId_(x)&&upper_(rowName_(x))==='PRIMARY LOCATION';});
+      if(primary.length===1)return primary;
+      if(all.length===1&&rowId_(all[0]))return all;
+    }
+    return[];
+  }
+  function findExisting_(requestId,customerId,options){
+    var r=typeof requestId==='object'&&requestId?requestId:request_(requestId);
+    if(!r)return{ok:false,status:'LOCATION_REQUEST_NOT_FOUND',requestId:clean_(requestId),customerId:clean_(customerId),matches:[],liveWriteExecuted:false};
+    var cid=clean_(customerId)||resolved_(r,'Matched Customer ID','Created Customer ID');
+    if(!cid)return{ok:false,status:'LOCATION_CUSTOMER_ID_REQUIRED',requestId:clean_(r['Request ID']),customerId:'',matches:[],liveWriteExecuted:false};
+    var matches=search_(r,cid,options||{});
+    return{ok:true,status:matches.length===1?'LOCATION_TARGETED_MATCHED':matches.length>1?'LOCATION_TARGETED_AMBIGUOUS':'LOCATION_TARGETED_NOT_FOUND',requestId:clean_(r['Request ID']),customerId:cid,matches:matches,matchIds:matches.map(rowId_),liveWriteExecuted:false};
   }
   function finalize_(r,location,created){
     var id=rowId_(location),contactId=resolved_(r,'Matched Contact ID','Created Contact ID'),complete=!!contactId;
     var root=rootJournal_(r),j=root.standaloneLocationCreate||{};j.status='LOCATION_RECONCILED';j.canonicalLocationId=id;j.reconciledAt=CF.Util.nowString();root.standaloneLocationCreate=j;
-    patch_(r,{'Updated At':CF.Util.nowString(),'Current Stage':complete?'CUSTOMER STRUCTURE COMPLETE':'READY FOR CONTACT CREATE','Request Status':'OPEN','Manual Review?':'NO','Manual Review Reason':'','Blocking Issue':'','Next Action':complete?'CONTINUE TO WORK ORDER':'CREATE CONTACT','Location Match Status':'MATCHED','Matched Location ID':id,'Created Location ID':created?id:clean_(r['Created Location ID']),'Location Action':'LINK EXISTING','Customer Structure Status':complete?'COMPLETE':'CUSTOMER + LOCATION CONFIRMED — CONTACT PENDING','Write Journal JSON':JSON.stringify(root),'Striven Sync Status':'PARTIAL','Striven Sync Error':'','Reconciliation Status':'STANDALONE LOCATION RECONCILED'});
+    patch_(r,{'Updated At':CF.Util.nowString(),'Current Stage':complete?'CUSTOMER STRUCTURE COMPLETE':'READY FOR CONTACT CREATE','Request Status':'OPEN','Manual Review?':'NO','Manual Review Reason':'','Blocking Issue':'','Next Action':complete?'CONTINUE TO WORK ORDER':'CREATE CONTACT','Location Match Status':'MATCHED','Matched Location ID':id,'Matched Location Address':clean_(r['Full Address']),'Created Location ID':created?id:clean_(r['Created Location ID']),'Location Action':'LINK EXISTING','Customer Structure Status':complete?'COMPLETE':'CUSTOMER + LOCATION CONFIRMED — CONTACT PENDING','Write Journal JSON':JSON.stringify(root),'Striven Sync Status':'PARTIAL','Striven Sync Error':'','Reconciliation Status':'STANDALONE LOCATION RECONCILED'});
     return{ok:true,version:VERSION,status:created?'LOCATION_CREATED_RECONCILED':'LOCATION_EXISTING_RECONCILED',requestId:clean_(r['Request ID']),locationId:id,liveWriteExecuted:false,automaticPostRetry:false};
   }
   function process(requestId,options){
@@ -6057,7 +6209,7 @@ CF.StandaloneLocationCreateV5128=(function(){
     if(upper_(r['Manual Review?'])==='YES'||(upper_(r['Duplicate Risk Status'])&&upper_(r['Duplicate Risk Status'])!=='NONE'))return{ok:false,status:'LOCATION_CREATE_REVIEW_OR_RISK_BLOCKED',requestId:clean_(requestId),liveWriteExecuted:false};
     if(!clean_(r['Street'])||!clean_(r['City'])||!clean_(r['Postal Code']))return{ok:false,status:'LOCATION_CREATE_ADDRESS_INCOMPLETE',requestId:clean_(requestId),liveWriteExecuted:false};
     var root=rootJournal_(r),j=root.standaloneLocationCreate||{},matches=[];
-    try{matches=search_(r,customerId);}catch(searchError){return{ok:false,status:'LOCATION_READ_RECONCILE_FAILED',requestId:clean_(requestId),error:String(searchError&&searchError.message||searchError),liveWriteExecuted:false,automaticPostRetry:false};}
+    try{matches=search_(r,customerId,{allowUniquePrimaryFallback:false});}catch(searchError){return{ok:false,status:'LOCATION_READ_RECONCILE_FAILED',requestId:clean_(requestId),error:String(searchError&&searchError.message||searchError),liveWriteExecuted:false,automaticPostRetry:false};}
     if(matches.length===1)return finalize_(r,matches[0],Number(j.postAttempts||0)>0);
     if(matches.length>1){var msg='Multiple exact Customer Locations match the submitted service address. Do not create another Location.';patch_(r,{'Updated At':CF.Util.nowString(),'Current Stage':'NEEDS REVIEW','Request Status':'BLOCKED','Manual Review?':'YES','Manual Review Reason':msg,'Blocking Issue':msg,'Next Action':'REVIEW LOCATION CANDIDATES','Striven Sync Status':'BLOCKED','Reconciliation Status':'LOCATION EXACT MATCH AMBIGUOUS'});return{ok:false,status:'LOCATION_EXACT_MATCH_AMBIGUOUS',requestId:clean_(requestId),candidateCount:matches.length,liveWriteExecuted:false};}
     if(Number(j.postAttempts||0)>0)return{ok:true,status:'LOCATION_POST_RECONCILE_PENDING',requestId:clean_(requestId),liveWriteExecuted:false,automaticPostRetry:false};
@@ -6075,7 +6227,7 @@ CF.StandaloneLocationCreateV5128=(function(){
       return{ok:false,version:VERSION,status:'LOCATION_POST_OUTCOME_UNCERTAIN_RECONCILE_REQUIRED',requestId:clean_(requestId),remoteWriteMayHaveSucceeded:true,automaticPostRetry:false,liveWriteExecuted:true};
     }
   }
-  return{version:VERSION,process:process};
+  return{version:VERSION,process:process,findExisting:findExisting_};
 })();
 
 /* BEGIN CF_SERVICEOPS_V5_13_0_SERVICE_ITEM_TAX_CONTRACT_R1 */
