@@ -1,3 +1,4 @@
+/* CF_SERVICEOPS_V5_13_7_PARTIAL_LOCATION_IDENTITY_R1 */
 /* CF_SERVICEOPS_V5_13_6_EXECUTABLE_LOCATION_STAGE_R1 */
 /* CF_SERVICEOPS_V5_13_5_TARGETED_RECONCILIATION_LOW_API_R1 */
 /* CF_SERVICEOPS_V5_13_2_STABILIZATION_R1_WRITE */
@@ -5979,7 +5980,31 @@ CF.CustomerContactInfoSync = (function () {
   function desiredAddr_(r){var a={Address1:clean_(r['Street']),Address2:'',Address3:'',City:clean_(r['City']),State:province_(r['Province']),PostalCode:clean_(r['Postal Code']),Country:country_(r['Country']),Latitude:0,Longitude:0,FullAddress:clean_(r['Full Address'])};if(!a.FullAddress)a.FullAddress=[a.Address1,a.City,a.State,a.PostalCode,a.Country].filter(Boolean).join(', ');return a;}
   function addrBlank_(a){a=addrDto_(a);return !a.Address1&&!a.City&&!a.State&&!a.PostalCode&&!a.FullAddress;}
   function addrNorm_(a){a=addrDto_(a);var text=a.FullAddress||[a.Address1,a.City,a.State,a.PostalCode,a.Country].join(' ');try{return d_().u.normalizeAddress(text);}catch(e){return String(text||'').toUpperCase().replace(/[^A-Z0-9]/g,'');}}
-  function mergeAddr_(current,desired){var c=addrDto_(current),d=addrDto_(desired);if(addrBlank_(d))return{value:c,applied:false,preservedDifferent:false};if(addrBlank_(c))return{value:d,applied:true,preservedDifferent:false};if(addrNorm_(c)===addrNorm_(d)){Object.keys(d).forEach(function(k){if((c[k]===undefined||c[k]===null||c[k]==='')&&d[k]!==''&&d[k]!==undefined)c[k]=d[k];});return{value:c,applied:true,preservedDifferent:false};}return{value:c,applied:false,preservedDifferent:true};}
+  function addrPartNorm_(v){return String(v||'').toUpperCase().replace(/[^A-Z0-9]/g,'');}
+  function addrPostalIncompleteV5137_(v){var raw=String(v||'').toUpperCase(),compact=addrPartNorm_(v);return !compact||/PLACEHOLDER|UNKNOWN|NOTPROVIDED|NOTAVAILABLE|TBD|N\/?A/.test(raw)||compact==='000000'||compact==='00000'||compact==='999999';}
+  function addrStateIncompleteV5137_(v){var compact=addrPartNorm_(v);return !compact||compact.length<2||compact==='UNKNOWN'||compact==='PLACEHOLDER';}
+  function samePremisesIncompleteV5137_(c,d){
+    c=addrDto_(c);d=addrDto_(d);
+    return !!addrPartNorm_(c.Address1)&&addrPartNorm_(c.Address1)===addrPartNorm_(d.Address1)&&
+      !!addrPartNorm_(c.City)&&addrPartNorm_(c.City)===addrPartNorm_(d.City)&&
+      (addrPostalIncompleteV5137_(c.PostalCode)||addrStateIncompleteV5137_(c.State));
+  }
+  function mergeAddr_(current,desired){
+    var c=addrDto_(current),d=addrDto_(desired);
+    if(addrBlank_(d))return{value:c,applied:false,preservedDifferent:false};
+    if(addrBlank_(c))return{value:d,applied:true,preservedDifferent:false};
+    if(addrNorm_(c)===addrNorm_(d)){
+      Object.keys(d).forEach(function(k){if((c[k]===undefined||c[k]===null||c[k]==='')&&d[k]!==''&&d[k]!==undefined)c[k]=d[k];});
+      return{value:c,applied:true,preservedDifferent:false};
+    }
+    if(samePremisesIncompleteV5137_(c,d)){
+      ['Address1','City','State','PostalCode','Country','FullAddress'].forEach(function(k){if(d[k]!==''&&d[k]!==undefined)c[k]=d[k];});
+      if(!c.Latitude&&d.Latitude)c.Latitude=d.Latitude;
+      if(!c.Longitude&&d.Longitude)c.Longitude=d.Longitude;
+      return{value:c,applied:true,preservedDifferent:false,enrichedIncompleteSamePremises:true};
+    }
+    return{value:c,applied:false,preservedDifferent:true};
+  }
 
   function customerDto_(cur,mergedPhones,mergedAddr){var out={Id:num_(objectId_(cur)),Name:clean_(prop_(cur,['Name','name']))};function cp(n,alts){var v=prop_(cur,alts||[n,n.charAt(0).toLowerCase()+n.slice(1)]);if(v!==undefined&&v!==null)out[n]=v;}cp('Number',['Number','number']);cp('IsVendor',['IsVendor','isVendor']);cp('IsConsumerAccount',['IsConsumerAccount','isConsumerAccount']);var pc=pair_(prop_(cur,['PrimaryContact','primaryContact']));if(pc)out.PrimaryContact=pc;var st=pair_(prop_(cur,['Status','status']));if(st)out.Status=st;var cats=pairs_(prop_(cur,['Categories','categories']));if(cats.length)out.Categories=cats;var rs=pair_(prop_(cur,['ReferralSource','referralSource']));if(rs)out.ReferralSource=rs;var ind=pair_(prop_(cur,['Industry','industry']));if(ind)out.Industry=ind;cp('CustomerSince',['CustomerSince','customerSince']);cp('CreditLimit',['CreditLimit','creditLimit']);cp('WebSite',['WebSite','webSite']);cp('IsTaxExempt',['IsTaxExempt','isTaxExempt']);cp('IsFinanceChargeExempt',['IsFinanceChargeExempt','isFinanceChargeExempt']);var pt=pair_(prop_(cur,['PaymentTerm','paymentTerm']));if(pt)out.PaymentTerm=pt;var bl=pair_(prop_(cur,['BillToLocation','billToLocation']));if(bl)out.BillToLocation=bl;var sl=pair_(prop_(cur,['ShipToLocation','shipToLocation']));if(sl)out.ShipToLocation=sl;out.Phones=mergedPhones;out.PrimaryAddress=mergedAddr;var pl=pair_(prop_(cur,['PriceList','priceList']));if(pl)out.PriceList=pl;var cfs=cf_(prop_(cur,['CustomFields','customFields']));if(cfs.length)out.CustomFields=cfs;var curcy=currency_(prop_(cur,['Currency','currency']));if(curcy)out.Currency=curcy;return out;}
   function contactDto_(cur,r,mergedPhones,mergedEmails,mergedAddr){var cfs=cf_(prop_(cur,['CustomFields','customFields']));var out={Id:num_(objectId_(cur)),FirstName:clean_(prop_(cur,['FirstName','firstName']))||clean_(r['First Name']),LastName:clean_(prop_(cur,['LastName','lastName']))||clean_(r['Last Name']),Phones:mergedPhones,Emails:mergedEmails,Address:mergedAddr};if(cfs.length)out.CustomFields=cfs;return out;}
@@ -6111,13 +6136,25 @@ CF.StandaloneLocationCreateV5128=(function(){
   function rowId_(x){x=x||{};return clean_(x.LocationId||x.locationId||x.Id||x.id||x.ID);}
   function rowStreet_(x){x=x||{};var a=x.Address||x.address||{};return clean_(x.Address1||x.address1||a.Address1||a.address1||a.Street||a.street);}
   function rowPostal_(x){x=x||{};var a=x.Address||x.address||{};return clean_(x.PostalCode||x.postalCode||x.Zip||x.zip||a.PostalCode||a.postalCode||a.Zip||a.zip);}
+  function rowCity_(x){x=x||{};var a=x.Address||x.address||{};return clean_(x.City||x.city||a.City||a.city);}
+  function rowName_(x){x=x||{};return clean_(x.Name||x.name||x.LocationName||x.locationName);}
   function canonicalStreetV5129_(v){var s=upper_(v).replace(/#/g,' UNIT ').replace(/[.,]/g,' ');s=s.replace(/\bAPARTMENT\b|\bAPT\b/g,' UNIT ').replace(/\bCRESENT\b|\bCRESCENT\b|\bCRES\b/g,' CRESCENT ').replace(/\bROAD\b|\bRD\b/g,' ROAD ').replace(/\bSTREET\b|\bST\b/g,' STREET ').replace(/\bAVENUE\b|\bAVE\b/g,' AVENUE ').replace(/\bDRIVE\b|\bDR\b/g,' DRIVE ').replace(/\bTRAIL\b|\bTRL\b/g,' TRAIL ').replace(/\bPLACE\b|\bPL\b/g,' PLACE ').replace(/\bCOURT\b|\bCT\b/g,' COURT ').replace(/\bLANE\b|\bLN\b/g,' LANE ').replace(/\bBOULEVARD\b|\bBLVD\b/g,' BOULEVARD ').replace(/\bTERRACE\b|\bTER\b/g,' TERRACE ').replace(/\bSQUARE\b|\bSQ\b/g,' SQUARE ');return s.replace(/[^A-Z0-9]/g,'');}
+  function postalIncompleteV5137_(v){var raw=upper_(v),compact=raw.replace(/[^A-Z0-9]/g,'');return !compact||/PLACEHOLDER|UNKNOWN|NOTPROVIDED|NOTAVAILABLE|TBD|N\/?A/.test(raw)||compact==='000000'||compact==='00000'||compact==='999999';}
   function exact_(r,x){return !!rowId_(x)&&norm_(r['Postal Code'])===norm_(rowPostal_(x))&&canonicalStreetV5129_(r['Street'])===canonicalStreetV5129_(rowStreet_(x));}
+  function incompleteSamePremises_(r,x){return !!rowId_(x)&&canonicalStreetV5129_(r['Street'])===canonicalStreetV5129_(rowStreet_(x))&&norm_(r['City'])===norm_(rowCity_(x))&&postalIncompleteV5137_(rowPostal_(x));}
   function search_(r,customerId){
     var ep=CF.Config.getEndpoint('CUSTOMER_LOCATION_SEARCH');
     var n=Number(customerId),ref=isNaN(n)?customerId:n;
     var response=CF.StrivenHttp.requestJson(ep,{method:'post',payload:{PageIndex:0,PageSize:100,Customer:{Id:ref}},attempts:1,idempotent:true});
-    return rows_(response&&response.json?response.json:{}).filter(function(x){return exact_(r,x);});
+    var all=rows_(response&&response.json?response.json:{});
+    var exact=all.filter(function(x){return exact_(r,x);});
+    if(exact.length)return exact;
+    var partial=all.filter(function(x){return incompleteSamePremises_(r,x);});
+    if(partial.length>1){
+      var primary=partial.filter(function(x){return upper_(rowName_(x))==='PRIMARY LOCATION';});
+      if(primary.length===1)return primary;
+    }
+    return partial;
   }
   function finalize_(r,location,created){
     var id=rowId_(location),contactId=resolved_(r,'Matched Contact ID','Created Contact ID'),complete=!!contactId;
