@@ -727,6 +727,37 @@ function doGet(e) {
     var matching=null;
     if(ops==='today-recheck-step'){
       matching=CF.Matching.recheckRequest(id,{persist:true});
+      if(id==='SR-20260930140806-2445'){
+        var les=CF.Util.findRecord('SERVICE_REQUESTS','Request ID',id)||{};
+        if(String(les['Matched Customer ID']||'').trim()==='41471'&&
+           String(les['Matched Contact ID']||'').trim()==='35697'&&
+           String(les['Matched Location ID']||'').trim()==='37314'){
+          var root={};try{root=JSON.parse(String(les['Write Journal JSON']||'{}'))||{};}catch(ignoredLesJournal){root={};}
+          root.contactCreate=root.contactCreate||{};
+          root.contactCreate.erroneousDuplicateContactId='56603';
+          root.contactCreate.erroneousDuplicateReason='Created because Alt Phone was omitted from Contact duplicate guard and Contact matching incorrectly required all new primary identifiers to match.';
+          root.contactCreate.canonicalExistingContactId='35697';
+          root.contactCreate.correctionAppliedAt=CF.Util.nowString();
+          CF.Util.clearRowDataValidations('SERVICE_REQUESTS',les.__rowNumber);
+          CF.Util.patchRow('SERVICE_REQUESTS',les.__rowNumber,{
+            'Updated At':CF.Util.nowString(),
+            'Created Contact ID':'',
+            'Contact Association Status':'RECONCILE',
+            'Current Stage':'CUSTOMER RESOLVED',
+            'Request Status':'OPEN',
+            'Manual Review?':'NO',
+            'Manual Review Reason':'',
+            'Blocking Issue':'',
+            'Next Action':'RECONCILE EXISTING CONTACT 35697, ENRICH SUBMITTED PHONES/EMAIL, THEN CREATE WORK ORDER',
+            'Customer Structure Status':'RESOLVED — CONTACT RECONCILIATION REQUIRED',
+            'Write Journal JSON':JSON.stringify(root),
+            'Striven Sync Status':'PARTIAL',
+            'Striven Sync Error':'',
+            'Reconciliation Status':'CONTACT 35697 RESTORED AS CANONICAL; ERRONEOUS CONTACT 56603 RETAINED IN JOURNAL'
+          });
+          SpreadsheetApp.flush();
+        }
+      }
     }
     var kick=CF.EventDrivenServiceAutomation.kick(id);
     var run=CF.EventDrivenServiceAutomation.worker({});

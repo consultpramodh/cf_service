@@ -1151,37 +1151,7 @@ function contactNameCandidates_(request, contacts) {
     }), 'Contact ID');
   }
 
-  function contactPrimaryIdentityV5142_(request, row) {
-    var requestEmail = clean_(request['Normalized Email'] || request['Email']).toLowerCase();
-    var requestPhone = clean_(request['Normalized Phone']);
-    var rowEmail = normalizedCacheEmail_(row);
-    var rowPhone = normalizedCachePhone_(row);
-    var emailSupplied = !!requestEmail;
-    var phoneSupplied = !!requestPhone;
-    var emailMatch = !emailSupplied || requestEmail === rowEmail;
-    var phoneMatch = !phoneSupplied || requestPhone === rowPhone;
-    return {
-      supplied: emailSupplied || phoneSupplied,
-      emailSupplied: emailSupplied,
-      phoneSupplied: phoneSupplied,
-      emailMatch: emailMatch,
-      phoneMatch: phoneMatch,
-      exact: emailMatch && phoneMatch
-    };
-  }
-
-  function newContactForChangedPrimaryIdentityV5142_(method) {
-    return {
-      status: 'NOT FOUND',
-      id: '',
-      row: {},
-      action: 'CREATE',
-      method: method || 'PRIMARY CONTACT IDENTITY CHANGED — CREATE NEW CONTACT',
-      candidates: []
-    };
-  }
-
-  function resolveContact_(request, customerId, maps, selectedContactId) {
+    function resolveContact_(request, customerId, maps, selectedContactId) {
     if (!customerId) {
       return { status: 'NOT CHECKED', id: '', row: {}, action: 'CREATE', method: '', candidates: [] };
     }
@@ -1219,24 +1189,30 @@ function contactNameCandidates_(request, contacts) {
 
       if (uniqueRows.length === 1) {
         var only = uniqueRows[0];
-        /* CF_SERVICEOPS_V5_14_2_PERSON_LEVEL_CONTACT_IDENTITY_R1
-         * Customer household evidence may reuse the Customer.
-         * Contact reuse requires every supplied PRIMARY identifier
-         * (submitted email and submitted primary phone) to agree with
-         * the existing Contact. Alt Phone, household name, address, or
-         * surname must never override changed primary Contact identity.
+        /* CF_SERVICEOPS_V5_14_3_CONTACT_IDENTIFIER_REUSE_R1
+         * An exact submitted identifier on a Contact already under the
+         * resolved Customer is durable person evidence. Phone, Alt Phone,
+         * and Email are all submitted identifiers. Changed/new identifiers
+         * are enrichment targets, not automatic reasons to create a new Contact.
          */
-        var primaryIdentityV5142 = contactPrimaryIdentityV5142_(request, only);
-        if (primaryIdentityV5142.supplied && !primaryIdentityV5142.exact) {
-          return newContactForChangedPrimaryIdentityV5142_(
-            label + ' FOUND ON HOUSEHOLD CONTACT, BUT PRIMARY PHONE/EMAIL DIFFERS — CREATE NEW CONTACT'
-          );
-        }
         var requestEmailV5128=clean_(request['Normalized Email']);
         var requestPhoneV5128=clean_(request['Normalized Phone']);
         var onlyEmailV5128=normalizedCacheEmail_(only);
         var onlyPhoneV5128=normalizedCachePhone_(only);
         if(requestEmailV5128&&requestPhoneV5128&&requestEmailV5128===onlyEmailV5128&&requestPhoneV5128===onlyPhoneV5128){return matchedContact_(only,label+' + DUAL EXACT EMAIL PHONE WITHIN RESOLVED CUSTOMER');}
+        var householdNameCompatibleV5143_=function(a,b){
+          var an=householdPersonNames_(a),bn=householdPersonNames_(b);
+          for(var ai=0;ai<an.length;ai++){
+            for(var bi=0;bi<bn.length;bi++){
+              if(simplePersonNameEqualV5105_(an[ai],bn[bi]))return true;
+              if(minorPersonNameVariantV5125_(an[ai],bn[bi]))return true;
+            }
+          }
+          return false;
+        };
+        if(householdNameCompatibleV5143_(requestPersonName_(request),clean_(only['Full Name']||only['Customer Name']))){
+          return matchedContact_(only,label+' + EXACT SUBMITTED IDENTIFIER + HOUSEHOLD/PERSON NAME');
+        }
         if (!requestPersonName_(request) || rowPersonNames_(only, false).some(function (name) {
           return samePersonName_(requestPersonName_(request), name);
         })) {
@@ -1296,18 +1272,10 @@ function contactNameCandidates_(request, contacts) {
       if (altPhoneResult) return altPhoneResult;
     }
 
-    // Exact name is only a fallback when no primary Contact identity was supplied.
-    // When a new email and/or primary phone was submitted, changed primary
-    // identity means a NEW Contact under the already-resolved Customer.
-    if (nameCandidates.length === 1) {
-      var namePrimaryIdentityV5142 = contactPrimaryIdentityV5142_(request, nameCandidates[0]);
-      if (namePrimaryIdentityV5142.supplied && !namePrimaryIdentityV5142.exact) {
-        return newContactForChangedPrimaryIdentityV5142_(
-          'NAME MATCH WITHIN CUSTOMER, BUT PRIMARY PHONE/EMAIL DIFFERS — CREATE NEW CONTACT'
-        );
-      }
-      return matchedContact_(nameCandidates[0], 'NAME WITHIN RESOLVED CUSTOMER');
-    }
+    // Within an already-resolved Customer, an exact person/household member
+    // name is a safe fallback. Any newly submitted phone/email is subsequently
+    // merged onto that same Contact by CustomerContactInfoSync.
+    if (nameCandidates.length === 1) return matchedContact_(nameCandidates[0], 'NAME WITHIN RESOLVED CUSTOMER');
     if (nameCandidates.length > 1) {
       return {
         status: 'AMBIGUOUS', id: '', row: {}, action: 'REVIEW', method: 'MULTIPLE CONTACT NAME MATCHES',

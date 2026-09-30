@@ -3642,6 +3642,7 @@ CF.StrivenControlledContactCreate = (function () {
   function contactPayload_(record, customerId) {
     /* CF_SERVICEOPS_V5_10_34_CONTACT_OFFICIAL_SCHEMA_R2 */
     var phone=clean_(record['Phone']);
+    var altPhone=clean_(record['Alt Phone']);
     var email=clean_(record['Email']);
     var street=clean_(record['Street']);
     var city=clean_(record['City']);
@@ -3659,7 +3660,16 @@ CF.StrivenControlledContactCreate = (function () {
       FirstName:clean_(record['First Name']),
       LastName:clean_(record['Last Name'])
     };
-    if(phone) payload.Phones=[{Id:0,PhoneType:{Id:2,Name:'Work'},CountryDialCode:1,Number:phone,Extension:clean_(record['Phone Extension']),IsPreferred:true,Active:true}];
+    var phoneRows=[],phoneSeen={};
+    function addSubmittedMobilePhone_(number,extension,isPreferred){
+      var norm=String(number||'').replace(/\D/g,'');if(norm.length===11&&norm.charAt(0)==='1')norm=norm.slice(1);
+      if(!norm||phoneSeen[norm])return;
+      phoneSeen[norm]=true;
+      phoneRows.push({Id:0,PhoneType:{Id:1,Name:'Mobile'},CountryDialCode:1,Number:clean_(number),Extension:clean_(extension),IsPreferred:isPreferred===true,Active:true});
+    }
+    addSubmittedMobilePhone_(phone,record['Phone Extension'],true);
+    addSubmittedMobilePhone_(altPhone,'',phoneRows.length===0);
+    if(phoneRows.length) payload.Phones=phoneRows;
     if(email) payload.Emails=[{Id:0,Email:email,IsPrimary:true,Active:true}];
     if(street||city||province||postal||full) payload.Address={Address1:street,Address2:'',Address3:'',City:city,State:province,PostalCode:postal,Country:country,Latitude:0,Longitude:0,FullAddress:full};
     return payload;
@@ -3748,8 +3758,10 @@ CF.StrivenControlledContactCreate = (function () {
       if (byId[id].reasons.indexOf(reason) === -1) byId[id].reasons.push(reason);
     }
     var phone = clean_(record['Normalized Phone']) || d.util.normalizePhone(record['Phone']);
+    var altPhone = clean_(record['Normalized Alt Phone']) || d.util.normalizePhone(record['Alt Phone']);
     var email = clean_(record['Normalized Email']) || d.util.normalizeEmail(record['Email']);
     exactFinderRows_('Normalized Phone', phone).forEach(function (row) { add_(row, 'EXACT_PHONE'); });
+    exactFinderRows_('Normalized Phone', altPhone).forEach(function (row) { add_(row, 'EXACT_ALT_PHONE'); });
     exactFinderRows_('Normalized Email', email).forEach(function (row) { add_(row, 'EXACT_EMAIL'); });
     return Object.keys(byId).map(function (id) { return byId[id]; });
   }
@@ -3849,12 +3861,14 @@ CF.StrivenControlledContactCreate = (function () {
   function remoteContactIdentityV5127_(remote, record) {
     remote=remote||{}; record=record||{};
     var wantedPhone=clean_(record['Normalized Phone'])||String(record['Phone']||'').replace(/\D/g,'').replace(/^1(?=\d{10}$)/,'');
+    var wantedAltPhone=clean_(record['Normalized Alt Phone'])||String(record['Alt Phone']||'').replace(/\D/g,'').replace(/^1(?=\d{10}$)/,'');
     var wantedEmail=(clean_(record['Normalized Email'])||clean_(record['Email'])).toLowerCase();
     var phones=remote.Phones||remote.phones||[];
     var emails=remote.Emails||remote.emails||[];
     var phoneMatch=!!wantedPhone&&phones.some(function(p){var n=String((p||{}).Number||(p||{}).number||'').replace(/\D/g,'').replace(/^1(?=\d{10}$)/,'');return n===wantedPhone;});
+    var altPhoneMatch=!!wantedAltPhone&&phones.some(function(p){var n=String((p||{}).Number||(p||{}).number||'').replace(/\D/g,'').replace(/^1(?=\d{10}$)/,'');return n===wantedAltPhone;});
     var emailMatch=!!wantedEmail&&emails.some(function(e){return String((e||{}).Email||(e||{}).email||'').trim().toLowerCase()===wantedEmail;});
-    return {phoneMatch:phoneMatch,emailMatch:emailMatch,matched:phoneMatch||emailMatch};
+    return {phoneMatch:phoneMatch,altPhoneMatch:altPhoneMatch,emailMatch:emailMatch,matched:phoneMatch||altPhoneMatch||emailMatch};
   }
   function customerAssociationIdsV5127_(remote) {
     if(!remote||typeof remote!=='object')return null;
@@ -4035,16 +4049,23 @@ function rootJournal_(record) {
     function identity_(c){
       var reqEmail=normEmail_(record['Normalized Email']||record['Email']);
       var reqPhone=normPhone_(record['Normalized Phone']||record['Phone']);
+      var reqAltPhone=normPhone_(record['Normalized Alt Phone']||record['Alt Phone']);
       var reqFirst=upper_(record['First Name']),reqLast=upper_(record['Last Name']);
       var gotFirst=upper_(prop_(c,['FirstName','firstName'])),gotLast=upper_(prop_(c,['LastName','lastName']));
       var emails=arr_(prop_(c,['Emails','emails'])).map(function(x){return normEmail_(prop_(x,['Email','email']));}).filter(Boolean);
       var phones=arr_(prop_(c,['Phones','phones'])).map(function(x){return normPhone_(prop_(x,['Number','number']));}).filter(Boolean);
       var emailMatch=!!reqEmail&&emails.indexOf(reqEmail)!==-1;
       var phoneMatch=!!reqPhone&&phones.indexOf(reqPhone)!==-1;
-      var primaryIdentitySupplied=!!reqEmail||!!reqPhone;
-      var channelMatch=primaryIdentitySupplied&&(!reqEmail||emailMatch)&&(!reqPhone||phoneMatch);
-      var nameConflict=(reqFirst&&gotFirst&&reqFirst!==gotFirst)||(reqLast&&gotLast&&reqLast!==gotLast);
-      return {ok:channelMatch&&!nameConflict,emailMatch:emailMatch,phoneMatch:phoneMatch,nameConflict:nameConflict,primaryIdentitySupplied:primaryIdentitySupplied,remoteFirstName:gotFirst,remoteLastName:gotLast};
+      var altPhoneMatch=!!reqAltPhone&&phones.indexOf(reqAltPhone)!==-1;
+      var channelMatch=emailMatch||phoneMatch||altPhoneMatch;
+      var surnameConflict=!!(reqLast&&gotLast&&reqLast!==gotLast);
+      var firstCompatible=true;
+      if(reqFirst&&gotFirst&&reqFirst!==gotFirst){
+        var gotFirstTokens=String(gotFirst).replace(/[^A-Z0-9]+/g,' ').trim().split(/\s+/).filter(Boolean);
+        firstCompatible=gotFirstTokens.indexOf(reqFirst)!==-1;
+      }
+      var nameConflict=surnameConflict||!firstCompatible;
+      return {ok:channelMatch&&!nameConflict,emailMatch:emailMatch,phoneMatch:phoneMatch,altPhoneMatch:altPhoneMatch,nameConflict:nameConflict,remoteFirstName:gotFirst,remoteLastName:gotLast};
     }
     var scopedEvidenceV5135=customerScopedContactEvidenceV5135_(record,contactId,customerId);
     if(scopedEvidenceV5135.ok)return finalizeAssociated_(record,contactId,customerId,scopedEvidenceV5135.source+' CONFIRMED CUSTOMER-SCOPED CONTACT — GLOBAL GET SKIPPED');
