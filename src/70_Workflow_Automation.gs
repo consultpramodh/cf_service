@@ -1,3 +1,4 @@
+/* CF_SERVICEOPS_V5_13_9_REQUEST_ID_INTEGRITY_FALSE_PARK_RECOVERY_R1 */
 /* CF_SERVICEOPS_V5_13_6_EXECUTABLE_LOCATION_STAGE_R1 */
 /* CF_SERVICEOPS_V5_13_3_WORKFLOW_API_BRAKE_R1 */
 /* CF_SERVICEOPS_V5_13_2_STABILIZATION_R1_WORKFLOW */
@@ -1488,6 +1489,21 @@ CF.EventDrivenServiceAutomation = (function () {
   function structureStepStatus_(structureResult) {
     return clean_(structureResult&&structureResult.stepResult&&structureResult.stepResult.status || structureResult&&structureResult.result&&structureResult.result.status || '');
   }
+  function structureResultRequestIdsV5139_(result){
+    var out=[],seen={};
+    function add(v){v=clean_(v);if(v&&!seen[v]){seen[v]=true;out.push(v);}}
+    result=result||{};
+    add(result.requestId);
+    add(result.stepResult&&result.stepResult.requestId);
+    add(result.result&&result.result.requestId);
+    add(result.matching&&result.matching.requestId);
+    add(result.matching&&result.matching.result&&result.matching.result.requestId);
+    return out;
+  }
+  function crossRequestResultIdsV5139_(expectedId,result){
+    expectedId=clean_(expectedId);
+    return structureResultRequestIdsV5139_(result).filter(function(id){return id&&id!==expectedId;});
+  }
   function locationPendingSignature_(requestId,structureResult,row) {
     var step=structureResult&&structureResult.stepResult||{};
     var candidates=step&&step.locationCandidates;
@@ -1584,6 +1600,15 @@ function worker(e,invocation) {
       var structureResult=CF.AutoCustomerStructure&&typeof CF.AutoCustomerStructure.process==='function'
         ? CF.AutoCustomerStructure.process({requestIds:[queued.id],fastPath:true})
         : {ok:false,status:'CUSTOMER_STRUCTURE_MODULE_MISSING',liveWriteExecuted:false};
+
+      var mismatchedResultIdsV5139=crossRequestResultIdsV5139_(queued.id,structureResult);
+      if(mismatchedResultIdsV5139.length){
+        var nextIntegrityV5139=scheduleNext_('CROSS_REQUEST_RESULT_REJECTED',currentUid);
+        finalReason='CROSS_REQUEST_RESULT_REJECTED';
+        finalResult={ok:false,version:VERSION,status:'CROSS_REQUEST_RESULT_REJECTED',requestId:queued.id,rejectedRequestIds:mismatchedResultIdsV5139,structure:structureResult,nextTrigger:nextIntegrityV5139,liveWriteExecuted:!!(structureResult&&structureResult.liveWriteExecuted===true),automaticWriteRetry:false};
+        try{log_('REQUEST_ID_INTEGRITY_GUARD','REJECTED_CROSS_REQUEST_RESULT',queued.id,{expectedRequestId:queued.id,resultRequestIds:structureResultRequestIdsV5139_(structureResult),rejectedRequestIds:mismatchedResultIdsV5139,liveWriteExecuted:finalResult.liveWriteExecuted},'Customer-structure result referenced a different request. Current request was not parked or advanced.');}catch(ignoredV5139IntegrityLog){}
+        return finalResult;
+      }
 
       if(structureResult&&structureResult.liveWriteExecuted===true) {
         var next2=scheduleNext_('AFTER_CUSTOMER_STRUCTURE_WRITE',currentUid);
@@ -1864,11 +1889,44 @@ function AUTO_refreshQueueSnapshot(e) {
   }
   function recentlyExplicitlyKicked(id){var p=props(),lastId=clean(p.getProperty(LAST_REQUEST)),raw=clean(p.getProperty(LAST_KICK)),t=raw?new Date(raw).getTime():0;return lastId===clean(id)&&t>0&&(Date.now()-t)<=EXPLICIT_KICK_GRACE_MS;}
   function terminal(row){return !!(CF.Config&&typeof CF.Config.isTerminalState==='function'&&(CF.Config.isTerminalState(row['Current Stage'])||CF.Config.isTerminalState(row['Final Outcome'])));}
+  function falsePreflightParkRecoverableV5139(row){
+    if(!row)return false;
+    if(upper(row['Current Stage'])!=='NEEDS REVIEW'||upper(row['Request Status'])!=='BLOCKED'||upper(row['Manual Review?'])!=='YES')return false;
+    var reason=[row['Manual Review Reason'],row['Blocking Issue'],row['Reconciliation Status']].map(clean).join(' ');
+    if(!/PREFLIGHT_BLOCKED/i.test(reason))return false;
+    if(upper(row['Duplicate Risk Status'])!=='NONE')return false;
+    if(upper(row['Customer Match Status'])!=='NOT FOUND'||upper(row['Customer Action'])!=='CREATE')return false;
+    if(upper(row['Contact Action'])!=='CREATE'||upper(row['Location Action'])!=='CREATE'||upper(row['Work Order Action'])!=='CREATE')return false;
+    if(clean(row['Matched Customer ID']||row['Created Customer ID']||row['Matched Contact ID']||row['Created Contact ID']||row['Matched Location ID']||row['Created Location ID']||row['Work Order ID']))return false;
+    var root=parseRoot(row),targets=['customerCreate','contactCreate','standaloneLocationCreate','salesOrderCreate'];
+    for(var i=0;i<targets.length;i++){var x=root&&root[targets[i]]||{};if(Number(x.postAttempts||0)>0||x.remoteWriteMayHaveSucceeded===true)return false;}
+    return true;
+  }
+  function restoreFalsePreflightParkV5139(row){
+    if(!falsePreflightParkRecoverableV5139(row))return row;
+    CF.Util.patchRow('SERVICE_REQUESTS',row.__rowNumber,{
+      'Updated At':CF.Util.nowString(),
+      'Current Stage':'READY FOR CUSTOMER CREATE',
+      'Request Status':'OPEN',
+      'Manual Review?':'NO',
+      'Manual Review Reason':'',
+      'Blocking Issue':'',
+      'Next Action':'CREATE CUSTOMER',
+      'Striven Sync Status':'PARTIAL',
+      'Striven Sync Error':'',
+      'Reconciliation Status':'AUTO-RECOVERED FALSE PREFLIGHT PARK — REQUEST-SCOPED RECHECK REQUIRED'
+    });
+    try{SpreadsheetApp.flush();}catch(e){}
+    var restored=CF.Util.findRecord('SERVICE_REQUESTS','Request ID',clean(row['Request ID']))||row;
+    try{CF.Util.logEvent({module:'70_Workflow_Automation',action:'FALSE_PREFLIGHT_PARK_RECOVERY',status:'RESTORED_REQUEST_SCOPED',requestId:clean(row['Request ID']),details:{priorStage:clean(row['Current Stage']),priorStatus:clean(row['Request Status']),nextStage:'READY FOR CUSTOMER CREATE',strivenWriteExecuted:false},version:'5.13.9'});}catch(e){}
+    return restored;
+  }
   function ledgerRecoverable(row){
     if(!row||terminal(row))return false;
     var risk=upper(row['Duplicate Risk Status']);if(risk&&risk!=='NONE')return false;
     if(requestAgeMs(row)>LOOKBACK_MS)return false; // historical cleanup must not occupy realtime recovery queue
     if(knownOrderId(row))return true; // exact GET certification may clear a false review state
+    if(falsePreflightParkRecoverableV5139(row))return true;
     if(upper(row['Manual Review?'])==='YES')return false;
     var status=upper(row['Request Status']);if(['BLOCKED','DUPLICATE','CANCELLED','CANCELED','ERROR'].indexOf(status)!==-1)return false;
     return ['NEW INTAKE','CUSTOMER RESOLVED','READY FOR CUSTOMER CREATE','READY FOR LOCATION CREATE','READY FOR CONTACT CREATE','CREATING CUSTOMER STRUCTURE','CUSTOMER STRUCTURE COMPLETE'].indexOf(upper(row['Current Stage']))!==-1;
@@ -1927,6 +1985,7 @@ function AUTO_refreshQueueSnapshot(e) {
       var candidate=newestLedgerCandidate();
       if(!candidate.row)return{ok:true,version:'5.11.1',status:'RECOVERY_IDLE_NO_RECENT_RECOVERABLE_REQUESTS',recoveryLookbackDays:7,liveWriteExecuted:false};
       var id=clean(candidate.row['Request ID']);if(!id)return{ok:true,version:'5.11.1',status:'RECOVERY_IDLE_REQUEST_ID_MISSING',liveWriteExecuted:false};
+      if(falsePreflightParkRecoverableV5139(candidate.row))candidate.row=restoreFalsePreflightParkV5139(candidate.row);
       q=writeQueue([id]);
       var rebuilt2=rebuildTrigger('WATCHDOG_RECOVER_RECENT_DURABLE_LEDGER_NEWEST_FIRST');
       try{CF.Util.logEvent({module:'70_Workflow_Automation',action:'E2E_RECOVERY_WATCHDOG',status:'RECOVERED_RECENT_NEWEST_FIRST',requestId:id,details:{recommendedHandler:rebuilt2.handler,recommendedPhase:rebuilt2.phase,recoverableRecentCount:candidate.count,recoveryLookbackDays:7},version:'5.11.1'});}catch(e){}
