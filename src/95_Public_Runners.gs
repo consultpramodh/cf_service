@@ -712,9 +712,10 @@ function CF_20260930_queueTodayEndToEndOnce_() {
 function doGet(e) {
   /* CF_SERVICEOPS_V5_14_1_TEMP_TODAY_STEP_RUNNER_R1 */
   var ops=e&&e.parameter?String(e.parameter.ops||''):'';
-  if(ops==='today-step'){
+  if(ops==='today-step'||ops==='today-recheck-step'){
     var id=e&&e.parameter?String(e.parameter.id||''):'';
     var allowed={
+      'SR-20260930140806-2445':true,
       'SR-20260930103833-2221':true,
       'SR-20260930103408-5757':true,
       'SR-20260930094108-9940':true,
@@ -723,6 +724,10 @@ function doGet(e) {
     if(!allowed[id]){
       return ContentService.createTextOutput(JSON.stringify({ok:false,status:'TODAY_STEP_REQUEST_NOT_ALLOWED'})).setMimeType(ContentService.MimeType.JSON);
     }
+    var matching=null;
+    if(ops==='today-recheck-step'){
+      matching=CF.Matching.recheckRequest(id,{persist:true});
+    }
     var kick=CF.EventDrivenServiceAutomation.kick(id);
     var run=CF.EventDrivenServiceAutomation.worker({});
     var row=CF.Util.findRecord('SERVICE_REQUESTS','Request ID',id)||{};
@@ -730,6 +735,9 @@ function doGet(e) {
       ok:run&&run.ok!==false,
       status:'TODAY_STEP_EXECUTED',
       requestId:id,
+      matchingStatus:matching&&matching.status||'',
+      contactAction:String(row['Contact Action']||''),
+      matchedContactId:String(row['Matched Contact ID']||''),
       kickStatus:kick&&kick.status||'',
       workerStatus:run&&run.status||'',
       liveWriteExecuted:!!(run&&run.liveWriteExecuted===true),

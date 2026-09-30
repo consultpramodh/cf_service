@@ -4041,9 +4041,10 @@ function rootJournal_(record) {
       var phones=arr_(prop_(c,['Phones','phones'])).map(function(x){return normPhone_(prop_(x,['Number','number']));}).filter(Boolean);
       var emailMatch=!!reqEmail&&emails.indexOf(reqEmail)!==-1;
       var phoneMatch=!!reqPhone&&phones.indexOf(reqPhone)!==-1;
-      var channelMatch=reqEmail?emailMatch:phoneMatch;
+      var primaryIdentitySupplied=!!reqEmail||!!reqPhone;
+      var channelMatch=primaryIdentitySupplied&&(!reqEmail||emailMatch)&&(!reqPhone||phoneMatch);
       var nameConflict=(reqFirst&&gotFirst&&reqFirst!==gotFirst)||(reqLast&&gotLast&&reqLast!==gotLast);
-      return {ok:channelMatch&&!nameConflict,emailMatch:emailMatch,phoneMatch:phoneMatch,nameConflict:nameConflict,remoteFirstName:gotFirst,remoteLastName:gotLast};
+      return {ok:channelMatch&&!nameConflict,emailMatch:emailMatch,phoneMatch:phoneMatch,nameConflict:nameConflict,primaryIdentitySupplied:primaryIdentitySupplied,remoteFirstName:gotFirst,remoteLastName:gotLast};
     }
     var scopedEvidenceV5135=customerScopedContactEvidenceV5135_(record,contactId,customerId);
     if(scopedEvidenceV5135.ok)return finalizeAssociated_(record,contactId,customerId,scopedEvidenceV5135.source+' CONFIRMED CUSTOMER-SCOPED CONTACT — GLOBAL GET SKIPPED');

@@ -1151,6 +1151,36 @@ function contactNameCandidates_(request, contacts) {
     }), 'Contact ID');
   }
 
+  function contactPrimaryIdentityV5142_(request, row) {
+    var requestEmail = clean_(request['Normalized Email'] || request['Email']).toLowerCase();
+    var requestPhone = clean_(request['Normalized Phone']);
+    var rowEmail = normalizedCacheEmail_(row);
+    var rowPhone = normalizedCachePhone_(row);
+    var emailSupplied = !!requestEmail;
+    var phoneSupplied = !!requestPhone;
+    var emailMatch = !emailSupplied || requestEmail === rowEmail;
+    var phoneMatch = !phoneSupplied || requestPhone === rowPhone;
+    return {
+      supplied: emailSupplied || phoneSupplied,
+      emailSupplied: emailSupplied,
+      phoneSupplied: phoneSupplied,
+      emailMatch: emailMatch,
+      phoneMatch: phoneMatch,
+      exact: emailMatch && phoneMatch
+    };
+  }
+
+  function newContactForChangedPrimaryIdentityV5142_(method) {
+    return {
+      status: 'NOT FOUND',
+      id: '',
+      row: {},
+      action: 'CREATE',
+      method: method || 'PRIMARY CONTACT IDENTITY CHANGED — CREATE NEW CONTACT',
+      candidates: []
+    };
+  }
+
   function resolveContact_(request, customerId, maps, selectedContactId) {
     if (!customerId) {
       return { status: 'NOT CHECKED', id: '', row: {}, action: 'CREATE', method: '', candidates: [] };
@@ -1189,18 +1219,24 @@ function contactNameCandidates_(request, contacts) {
 
       if (uniqueRows.length === 1) {
         var only = uniqueRows[0];
-        /* CF_SERVICEOPS_V5_12_8_DUAL_EXACT_CONTACT_IDENTITY_R1 */
+        /* CF_SERVICEOPS_V5_14_2_PERSON_LEVEL_CONTACT_IDENTITY_R1
+         * Customer household evidence may reuse the Customer.
+         * Contact reuse requires every supplied PRIMARY identifier
+         * (submitted email and submitted primary phone) to agree with
+         * the existing Contact. Alt Phone, household name, address, or
+         * surname must never override changed primary Contact identity.
+         */
+        var primaryIdentityV5142 = contactPrimaryIdentityV5142_(request, only);
+        if (primaryIdentityV5142.supplied && !primaryIdentityV5142.exact) {
+          return newContactForChangedPrimaryIdentityV5142_(
+            label + ' FOUND ON HOUSEHOLD CONTACT, BUT PRIMARY PHONE/EMAIL DIFFERS — CREATE NEW CONTACT'
+          );
+        }
         var requestEmailV5128=clean_(request['Normalized Email']);
         var requestPhoneV5128=clean_(request['Normalized Phone']);
         var onlyEmailV5128=normalizedCacheEmail_(only);
         var onlyPhoneV5128=normalizedCachePhone_(only);
         if(requestEmailV5128&&requestPhoneV5128&&requestEmailV5128===onlyEmailV5128&&requestPhoneV5128===onlyPhoneV5128){return matchedContact_(only,label+' + DUAL EXACT EMAIL PHONE WITHIN RESOLVED CUSTOMER');}
-        /* CF_SERVICEOPS_V5_12_9_HOUSEHOLD_EXACT_SIGNAL_IDENTITY_R1 */
-        var exactEmailV5129=!!requestEmailV5128&&requestEmailV5128===onlyEmailV5128;
-        var exactPhoneV5129=!!requestPhoneV5128&&requestPhoneV5128===onlyPhoneV5128;
-        var householdNameCompatibleV5129_=function(a,b){var aw=String(a||'').toUpperCase().replace(/[^A-Z0-9]+/g,' ').trim().split(/\s+/).filter(Boolean),bw=String(b||'').toUpperCase().replace(/[^A-Z0-9]+/g,' ').trim().split(/\s+/).filter(Boolean);if(aw.length<2||bw.length<2)return false;var as=aw[aw.length-1],bs=bw[bw.length-1];if(!as||as!==bs)return false;var ag=aw[0];for(var hi=0;hi<bw.length-1;hi++){var bg=bw[hi];if(bg==='AND')continue;if(bg===ag)return true;if(bg.length>=3&&ag.length>=3&&(bg.indexOf(ag)===0||ag.indexOf(bg)===0))return true;}return false;};
-        var onlyNameV5129=clean_(only['Full Name']||only['Customer Name']);
-        if((exactEmailV5129||exactPhoneV5129)&&householdNameCompatibleV5129_(clean_(request['Full Name']),onlyNameV5129)){return matchedContact_(only,label+' + HOUSEHOLD COMPATIBLE NAME + UNIQUE EXACT CONTACT SIGNAL');}
         if (!requestPersonName_(request) || rowPersonNames_(only, false).some(function (name) {
           return samePersonName_(requestPersonName_(request), name);
         })) {
@@ -1260,9 +1296,18 @@ function contactNameCandidates_(request, contacts) {
       if (altPhoneResult) return altPhoneResult;
     }
 
-    // Within an already-resolved Customer, exact person name is a safe fallback
-    // when phone/email changed over time. It does not search across Customers.
-    if (nameCandidates.length === 1) return matchedContact_(nameCandidates[0], 'NAME WITHIN RESOLVED CUSTOMER');
+    // Exact name is only a fallback when no primary Contact identity was supplied.
+    // When a new email and/or primary phone was submitted, changed primary
+    // identity means a NEW Contact under the already-resolved Customer.
+    if (nameCandidates.length === 1) {
+      var namePrimaryIdentityV5142 = contactPrimaryIdentityV5142_(request, nameCandidates[0]);
+      if (namePrimaryIdentityV5142.supplied && !namePrimaryIdentityV5142.exact) {
+        return newContactForChangedPrimaryIdentityV5142_(
+          'NAME MATCH WITHIN CUSTOMER, BUT PRIMARY PHONE/EMAIL DIFFERS — CREATE NEW CONTACT'
+        );
+      }
+      return matchedContact_(nameCandidates[0], 'NAME WITHIN RESOLVED CUSTOMER');
+    }
     if (nameCandidates.length > 1) {
       return {
         status: 'AMBIGUOUS', id: '', row: {}, action: 'REVIEW', method: 'MULTIPLE CONTACT NAME MATCHES',
