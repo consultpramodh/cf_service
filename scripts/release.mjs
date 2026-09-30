@@ -247,8 +247,29 @@ const versionText = String(versionResult.stdout || '') + '\n' + String(versionRe
 const match = versionText.match(/version\s+(\d+)/i);
 if (!match) throw new Error('Could not parse Apps Script version.');
 const versionNumber = match[1];
-clasp(['redeploy', DEPLOYMENT_ID, versionNumber, description], {cwd: live});
-clasp(['deployments'], {cwd: live});
+const redeployResult = clasp([
+  'redeploy',
+  DEPLOYMENT_ID,
+  '--versionNumber',
+  versionNumber,
+  '--description',
+  description,
+  '--json'
+], {cwd: live, capture: true});
+const redeployText = String(redeployResult.stdout || '').trim();
+let redeployJson = null;
+try { redeployJson = JSON.parse(redeployText); } catch (ignoredRedeployJson) {}
+if (!redeployJson ||
+    String(redeployJson.deploymentId || '') !== DEPLOYMENT_ID ||
+    String(redeployJson.versionNumber || '') !== String(versionNumber)) {
+  throw new Error('REDEPLOY_VERIFY_FAILED: ' + redeployText);
+}
+const deploymentsResult = clasp(['deployments'], {cwd: live, capture: true});
+const deploymentsText = String(deploymentsResult.stdout || '') + '\n' + String(deploymentsResult.stderr || '');
+if (!deploymentsText.includes(DEPLOYMENT_ID + ' @' + versionNumber)) {
+  throw new Error('DEPLOYMENT_PIN_VERIFY_FAILED: expected ' + DEPLOYMENT_ID + ' @' + versionNumber);
+}
+console.log('DEPLOYMENT_PIN_PASS: ' + DEPLOYMENT_ID + ' @' + versionNumber);
 writeFileSync(resolve(work, 'deployed-version.txt'), versionNumber + '\n');
 
 console.log('\n=== 10/10 Final source report ===');

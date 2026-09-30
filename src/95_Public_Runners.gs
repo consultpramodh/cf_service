@@ -651,32 +651,44 @@ function TESTING_16_previewLocationSelfHealingSelectedRow() {
   });
 }
 function doGet() {
-  /* CF_SERVICEOPS_V5_11_2_DURABLE_SO_STATUS_CERTIFICATION_R1 */
+  /* CF_SERVICEOPS_V5_14_1_PUBLIC_HEALTH_R1 */
+  var verification = {
+    singleModel: false,
+    enabled: false,
+    finalWorkerTriggers: 0,
+    watchdogTriggers: 0,
+    legacyAutomationTriggerCount: -1
+  };
+  try {
+    if (CF.EventDrivenServiceAutomation &&
+        typeof CF.EventDrivenServiceAutomation.inspect === 'function') {
+      var state = CF.EventDrivenServiceAutomation.inspect();
+      verification.enabled = state.enabled === true;
+      verification.finalWorkerTriggers = Number(state.finalWorkerTriggers || 0);
+      verification.watchdogTriggers = Number(state.watchdogTriggers || 0);
+      verification.legacyAutomationTriggerCount = Number(state.legacyAutomationTriggerCount || 0);
+      verification.singleModel =
+        state.singleModel === true &&
+        verification.legacyAutomationTriggerCount === 0 &&
+        verification.watchdogTriggers === 1 &&
+        verification.finalWorkerTriggers <= 1;
+    }
+  } catch (ignoredHealthCheck) {
+    verification.error = 'HEALTH_CHECK_UNAVAILABLE';
+  }
   return ContentService.createTextOutput(JSON.stringify({
-    ok:true,
-    service:'CF ServiceOps',
-    version:'5.11.2',
-    deploymentMarker:'CF_SERVICEOPS_V5_11_2_DURABLE_SO_STATUS_CERTIFICATION_R1',
-    salesOrderCertification:'READ_AFTER_WRITE_AUTHORITATIVE_GET_ONLY',
-    successfulSalesOrderTerminalState:'COMPLETED',
-    successfulSalesOrderManualReview:false,
-    salesOrderStatusTransition:'PRESERVED_QUOTED_NO_AUTOMATIC_TRANSITION',
-    durableSalesOrderBehavior:'CERTIFY_EXISTING_NEVER_CREATE_AGAIN',
-    internalNotesVerification:'EXPECTED_PAYLOAD_VS_ACTUAL_STRIVEN_SEMANTIC',
-    recoveryWatchdog:'EVERY_5_MINUTES',
-    recoveryPriority:'REALTIME_QUEUE_THEN_RECENT_7_DAYS_NEWEST_FIRST',
-    historicalBacklogOnRealtimeQueue:false,
-    triggerLiveness:'NEXT_TRIGGER_AT_OVERDUE_REBUILD',
-    initialMatchingFreshnessMinutes:240,
-    prewriteCustomerDuplicateFreshnessMinutes:15,
-    initialMatchingOperationalRefresh:false,
-    salesOrderOperationalFreshness:'PRESERVED_30_MINUTES_AT_PREWRITE_BOUNDARY',
-    automaticCustomerContactPostRetry:false,
-    automaticSalesOrderPostRetry:false,
-    customerCreateLogic:'PRESERVED',
-    contactRecovery:'PRESERVED',
-    salesOrderName:'Early Bird Offer 2026',
-    status:'AVAILABLE'
+    ok: true,
+    service: 'CF ServiceOps',
+    version: '5.14.1',
+    automationModel: 'SINGLE',
+    singleModelVerified: verification.singleModel,
+    automationEnabled: verification.enabled,
+    finalWorkerTriggers: verification.finalWorkerTriggers,
+    watchdogTriggers: verification.watchdogTriggers,
+    legacyAutomationTriggerCount: verification.legacyAutomationTriggerCount,
+    status: verification.singleModel
+      ? 'SINGLE_SERVICEOPS_MODEL_VERIFIED'
+      : 'SINGLE_SERVICEOPS_MODEL_NOT_VERIFIED'
   })).setMimeType(ContentService.MimeType.JSON);
 }
 
