@@ -457,7 +457,7 @@ function TESTING_11_e2eSnapshot_(requestId) {
   try {
     var handlerNames=CF.EventDrivenServiceAutomation&&typeof CF.EventDrivenServiceAutomation.allHandlerNames==='function'
       ? CF.EventDrivenServiceAutomation.allHandlerNames()
-      : ['AUTO_processCustomerStructure'];
+      : ['AUTO_FINAL_ServiceOps','AUTO_98_E2E_Recovery_Watchdog'];
     triggerRows = ScriptApp.getProjectTriggers().filter(function(t){
       try { return t.getHandlerFunction && handlerNames.indexOf(String(t.getHandlerFunction()))!==-1; } catch(ignored){ return false; }
     }).map(function(t){
@@ -899,68 +899,92 @@ function PHASE5D_executeTestContactCreate() {
   });
 }
 
+/* CF_SERVICEOPS_V5_14_1_SINGLE_PUBLIC_AUTOMATION_R1 */
 function AUTO_previewCustomerStructure() {
-  return CF.PublicRunners.run('Automatic Customer Structure preview', function () {
-    return CF.AutoCustomerStructure.inspect();
+  return CF.PublicRunners.run('Final ServiceOps status', function () {
+    if(!CF.EventDrivenServiceAutomation||typeof CF.EventDrivenServiceAutomation.inspect!=='function') {
+      throw new Error('Final ServiceOps v5.14.1 is not loaded.');
+    }
+    return CF.EventDrivenServiceAutomation.inspect();
   });
 }
 
 function AUTO_installCustomerStructureAutomation() {
-  return CF.PublicRunners.run('Enable incoming-request automation', function () {
-    return CF.EventDrivenServiceAutomation.verifySetup();
-  });
+  return FINALIZE_20260930_activateCanonicalServiceOps();
 }
 
 function AUTO_removeCustomerStructureAutomation() {
-  return CF.PublicRunners.run('Disable incoming-request automation', function () {
+  return CF.PublicRunners.run('Disable final ServiceOps automation', function () {
     return CF.EventDrivenServiceAutomation.disable();
   });
 }
 
 function FINALIZE_20260930_activateCanonicalServiceOps() {
-  return CF.PublicRunners.run('Activate canonical ServiceOps v5.14.0', function () {
-    if(!CF.EventDrivenServiceAutomation||typeof CF.EventDrivenServiceAutomation.activateCanonical!=='function') {
-      throw new Error('Canonical ServiceOps v5.14.0 is not loaded.');
+  return CF.PublicRunners.run('Activate final ServiceOps v5.14.1', function () {
+    if(!CF.EventDrivenServiceAutomation||typeof CF.EventDrivenServiceAutomation.activate!=='function') {
+      throw new Error('Final ServiceOps v5.14.1 is not loaded.');
     }
-    return CF.EventDrivenServiceAutomation.activateCanonical();
+    return CF.EventDrivenServiceAutomation.activate();
   });
 }
 
+function FINALIZE_20260930_verifySingleServiceOpsModel() {
+  return CF.PublicRunners.run('Verify single ServiceOps model', function () {
+    if(!CF.EventDrivenServiceAutomation||typeof CF.EventDrivenServiceAutomation.inspect!=='function') {
+      throw new Error('Final ServiceOps v5.14.1 is not loaded.');
+    }
+    var state=CF.EventDrivenServiceAutomation.inspect();
+    var automationHandlers=[];
+    ScriptApp.getProjectTriggers().forEach(function(t){
+      try{
+        var h=String(t.getHandlerFunction&&t.getHandlerFunction()||'');
+        if(h==='AUTO_FINAL_ServiceOps'||h==='AUTO_98_E2E_Recovery_Watchdog'||h==='CFH_refreshOperationalCacheIfIdle'){
+          automationHandlers.push(h);
+        }
+      }catch(ignored){}
+    });
+    var counts={};
+    automationHandlers.forEach(function(h){counts[h]=(counts[h]||0)+1;});
+    var ok=state.singleModel===true &&
+      Number(state.legacyAutomationTriggerCount||0)===0 &&
+      Number(counts.AUTO_98_E2E_Recovery_Watchdog||0)===1 &&
+      Number(counts.AUTO_FINAL_ServiceOps||0)<=1;
+    return{
+      ok:ok,
+      version:'5.14.1',
+      status:ok?'SINGLE_SERVICEOPS_MODEL_VERIFIED':'SINGLE_SERVICEOPS_MODEL_NOT_VERIFIED',
+      state:state,
+      activeAutomationHandlers:automationHandlers,
+      handlerCounts:counts,
+      liveWriteExecuted:false
+    };
+  });
+}
 
-/* CF_SERVICEOPS_V5_10_37_PHASE_RUNNER_WRAPPERS_R1 */
-function AUTO_E2E_runPhase_(executionFunction,phase,e) {
-  var before={};
-  try{before=CF.EventDrivenServiceAutomation&&typeof CF.EventDrivenServiceAutomation.describeQueuedWork==='function'?CF.EventDrivenServiceAutomation.describeQueuedWork():{};}catch(ignoredBefore){before={};}
-  console.log('AUTO E2E START: '+JSON.stringify({function:executionFunction,phase:phase,requestId:before.requestId||'',customer:before.customerName||'',currentStage:before.currentStage||'',requestStatus:before.requestStatus||'',nextAction:before.nextAction||'',customerId:before.customerId||'',contactId:before.contactId||'',locationId:before.locationId||''}));
+function AUTO_FINAL_ServiceOps(e) {
+  console.log('SERVICEOPS FINAL START');
   try {
-    var result=CF.EventDrivenServiceAutomation.worker(e,{executionFunction:executionFunction,phase:phase});
-    console.log('AUTO E2E RESULT: '+JSON.stringify({function:executionFunction,phase:phase,requestId:(result&&result.requestId)||before.requestId||'',status:(result&&result.status)||'',liveWriteExecuted:!!(result&&result.liveWriteExecuted===true),nextFunction:result&&result.nextTrigger&&result.nextTrigger.handler||'',nextPhase:result&&result.nextTrigger&&result.nextTrigger.phase||'',operatorQueueRefresh:result&&result.operatorQueueRefresh&&result.operatorQueueRefresh.status||''}));
+    var result=CF.EventDrivenServiceAutomation.worker(e||{});
+    console.log('SERVICEOPS FINAL RESULT: '+JSON.stringify({
+      requestId:result&&result.requestId||'',
+      status:result&&result.status||'',
+      liveWriteExecuted:!!(result&&result.liveWriteExecuted===true),
+      queuedRequestIds:result&&result.queuedRequestIds||[]
+    }));
     return result;
   } catch(error) {
-    console.error('AUTO E2E ERROR: '+JSON.stringify({function:executionFunction,phase:phase,requestId:before.requestId||'',error:error&&error.message?error.message:String(error)}));
+    console.error('SERVICEOPS FINAL ERROR: '+JSON.stringify({
+      error:error&&error.message?error.message:String(error)
+    }));
     throw error;
   }
 }
-/* CF_SERVICEOPS_V5_14_0_CANONICAL_PUBLIC_ENTRYPOINTS_R1 */
-function AUTO_FINAL_ServiceOps(e){return AUTO_E2E_runPhase_('AUTO_FINAL_ServiceOps','CANONICAL END TO END',e);}
 
-/*
- * Legacy handler names are intentionally retained because historical triggers may
- * still reference them. They no longer own phase-specific behavior: every one of
- * them enters the same canonical end-to-end worker, which then migrates trigger
- * topology to AUTO_FINAL_ServiceOps.
- */
-function AUTO_00_E2E_Route_Request(e){return AUTO_FINAL_ServiceOps(e);}
-function AUTO_01_E2E_Customer_Match_Create(e){return AUTO_FINAL_ServiceOps(e);}
-function AUTO_02_E2E_Location_Reconcile(e){return AUTO_FINAL_ServiceOps(e);}
-function AUTO_03_E2E_Contact_Create_Recover(e){return AUTO_FINAL_ServiceOps(e);}
-function AUTO_04_E2E_Customer_Contact_Info_Sync(e){return AUTO_FINAL_ServiceOps(e);}
-function AUTO_05_E2E_Sales_Order_Create_Verify(e){return AUTO_FINAL_ServiceOps(e);}
-function AUTO_99_E2E_Safe_Stop_Review(e){return AUTO_FINAL_ServiceOps(e);}
-function AUTO_98_E2E_Recovery_Watchdog_BASE_V5115_R1_(e){return CF.EventDrivenServiceAutomation&&typeof CF.EventDrivenServiceAutomation.recoveryWatchdog==='function'?CF.EventDrivenServiceAutomation.recoveryWatchdog(e):{ok:false,status:'RECOVERY_WATCHDOG_MODULE_MISSING',liveWriteExecuted:false};}
-
-function AUTO_processCustomerStructure(e) {
-  return AUTO_FINAL_ServiceOps(e);
+function AUTO_98_E2E_Recovery_Watchdog(e) {
+  if(!CF.EventDrivenServiceAutomation||typeof CF.EventDrivenServiceAutomation.recoveryWatchdog!=='function') {
+    return {ok:false,version:'5.14.1',status:'RECOVERY_WATCHDOG_MODULE_MISSING',liveWriteExecuted:false};
+  }
+  return CF.EventDrivenServiceAutomation.recoveryWatchdog(e||{});
 }
 
 
@@ -3485,55 +3509,6 @@ function TESTING_10_unsupportedSnapshotEqual_(beforeList, afterList) {
 }
 
 
-/* CF_SERVICEOPS_V5_11_5_MANUAL_REVIEW_DURABLE_RECOVERY_GUARD_R1
- * Manual-review Service Requests that already have a durable Sales Order are operator-owned.
- * Recovery watchdog may not requeue them until the row is explicitly moved out of manual review.
- * This wrapper filters only the watchdog's read view; normal workflow and explicit operator actions remain unchanged.
- */
-var CF_SERVICEOPS_V5115_MANUAL_REVIEW_DURABLE_GUARD_R1_=(function(){
-  'use strict';
-  var VERSION='5.11.5';
-  var WATCHDOG='AUTO_98_E2E_Recovery_Watchdog';
-  var QUEUE_PROP='CF_EVENT_DRIVEN_SERVICE_REQUEST_IDS';
-  function clean_(v){return v===null||v===undefined?'':String(v).trim();}
-  function upper_(v){return clean_(v).toUpperCase();}
-  function requestId_(r){return clean_(r&&r['Request ID']);}
-  function durableManualReview_(r){
-    if(!r)return false;
-    var durable=!!clean_(r['Work Order ID']||r['Work Order Number']);
-    if(!durable)return false;
-    var manual=upper_(r['Manual Review?'])==='YES'||upper_(r['Current Stage'])==='NEEDS REVIEW'||/DO NOT CREATE AGAIN|REVIEW EXISTING SALES ORDER/.test(upper_(r['Next Action']));
-    return manual;
-  }
-  function log_(status,details){try{if(CF&&CF.Util&&typeof CF.Util.logEvent==='function')CF.Util.logEvent({module:'70_Workflow_Automation',action:'E2E_RECOVERY_MANUAL_REVIEW_GUARD',status:status,details:details||{},version:VERSION});}catch(ignored){}}
-  function parseQueue_(){var p=PropertiesService.getScriptProperties(),raw=p.getProperty(QUEUE_PROP);if(!raw)return[];try{var q=JSON.parse(raw);return Array.isArray(q)?q.map(clean_).filter(Boolean):[];}catch(e){return[];}}
-  function writeQueue_(q){var seen={},out=[];(q||[]).forEach(function(id){id=clean_(id);if(id&&!seen[id]){seen[id]=true;out.push(id);}});PropertiesService.getScriptProperties().setProperty(QUEUE_PROP,JSON.stringify(out));return out;}
-  function run(base,self,args){
-    if(!CF||!CF.Util||typeof CF.Util.readRecords!=='function'||typeof CF.Util.findRecord!=='function')return base.apply(self,args);
-    var originalRead=CF.Util.readRecords,originalFind=CF.Util.findRecord,excluded={},removedFromQueue=[];
-    function actualRequest_(id){try{return originalFind.call(CF.Util,'SERVICE_REQUESTS','Request ID',id);}catch(e){return null;}}
-    var q=parseQueue_(),kept=[];q.forEach(function(id){var row=actualRequest_(id);if(durableManualReview_(row)){excluded[id]=true;removedFromQueue.push(id);}else kept.push(id);});if(removedFromQueue.length)writeQueue_(kept);
-    function filterRows_(rows){return (Array.isArray(rows)?rows:[]).filter(function(r){if(durableManualReview_(r)){var id=requestId_(r);if(id)excluded[id]=true;return false;}return true;});}
-    try{
-      CF.Util.readRecords=function(key){var rows=originalRead.apply(CF.Util,arguments);return clean_(key)==='SERVICE_REQUESTS'?filterRows_(rows):rows;};
-      CF.Util.findRecord=function(sheet,key,value){var row=originalFind.apply(CF.Util,arguments);if(clean_(sheet)==='SERVICE_REQUESTS'&&durableManualReview_(row)){var id=requestId_(row);if(id)excluded[id]=true;return null;}return row;};
-      var result=base.apply(self,args);
-      var resultRequestId=clean_(result&&result.requestId),resultRow=resultRequestId?actualRequest_(resultRequestId):null;
-      if(durableManualReview_(resultRow)){
-        excluded[resultRequestId]=true;
-        var q2=parseQueue_().filter(function(id){return clean_(id)!==resultRequestId;});writeQueue_(q2);
-        var phaseHandler=clean_(result&&result.recommendedHandler);
-        if(phaseHandler&&phaseHandler!==WATCHDOG){try{ScriptApp.getProjectTriggers().forEach(function(t){try{if(t.getHandlerFunction&&clean_(t.getHandlerFunction())===phaseHandler)ScriptApp.deleteTrigger(t);}catch(ignoredTrigger){}});}catch(ignoredTriggers){}}
-        result={ok:true,version:VERSION,status:'RECOVERY_SKIPPED_MANUAL_REVIEW_DURABLE_SALES_ORDER',requestId:resultRequestId,originalRecoveryStatus:clean_(result&&result.status),manualReviewDurableRecoveryGuard:'ACTIVE',manualReviewDurableExcludedRequestIds:Object.keys(excluded),manualReviewDurableRemovedFromQueue:removedFromQueue,queuedRequestIds:q2,liveWriteExecuted:false};
-      }else if(result&&typeof result==='object'){result.manualReviewDurableRecoveryGuard='ACTIVE';result.manualReviewDurableExcludedRequestIds=Object.keys(excluded);result.manualReviewDurableRemovedFromQueue=removedFromQueue;}
-      log_(Object.keys(excluded).length?'EXCLUDED_MANUAL_REVIEW_DURABLE':'NO_EXCLUSIONS',{excludedRequestIds:Object.keys(excluded),removedFromQueue:removedFromQueue,resultStatus:clean_(result&&result.status)});
-      return result;
-    }finally{CF.Util.readRecords=originalRead;CF.Util.findRecord=originalFind;}
-  }
-  return{run:run};
-})();
-function AUTO_98_E2E_Recovery_Watchdog(){return CF_SERVICEOPS_V5115_MANUAL_REVIEW_DURABLE_GUARD_R1_.run(AUTO_98_E2E_Recovery_Watchdog_BASE_V5115_R1_,this,arguments);}
-
 /* CF_SERVICEOPS_V5_12_6_WORKFLOW_STABILITY_REPROCESS_RUNNER_R1 */
 function FIX_20260905_applyWorkflowStabilityAndResumeRecentIncomplete() {
   return CF.PublicRunners.run('FIX 20260905 - Workflow stability + resume recent incomplete', function () {
@@ -4096,25 +4071,3 @@ function TESTING_CURRENT_runReadOnlyStatusCheck() {
   this.FIX_20260908_associationIdentityRecoveryV5129=FIX_20260908_associationIdentityRecoveryV5129;
   this.TESTING_20260908_associationIdentityStatusV5129=TESTING_20260908_associationIdentityStatusV5129;
 }).call(this);
-
-
-/* CF_SERVICEOPS_V5_13_3_TRIGGER_MAINTENANCE_R1 */
-function MAINTENANCE_CF_V5133_TRIGGER_HYGIENE(){
-  var props=PropertiesService.getScriptProperties();function floor_(key,min){var n=Number(props.getProperty(key)||0),v=isFinite(n)&&n>min?n:min;props.setProperty(key,String(v));return v;}
-  var ttl={customer:floor_('CF_SERVICEOPS_TTL_CUSTOMER_MINUTES',120),location:floor_('CF_SERVICEOPS_TTL_LOCATION_MINUTES',120),operational:floor_('CF_SERVICEOPS_TTL_OPERATIONAL_MINUTES',60)};
-  var queueHandlers=["AUTO_CF_QUEUE_SYNC_AFTER_SERVICE_REQUEST_MUTATION"],triggers=ScriptApp.getProjectTriggers(),before=triggers.length,removed=[],kept={},clockByHandler={};
-  triggers.forEach(function(t){var isClock=false,h='';try{isClock=t.getEventType()===ScriptApp.EventType.CLOCK;h=t.getHandlerFunction();}catch(e){}if(!isClock||!h)return;clockByHandler[h]=(clockByHandler[h]||0)+1;var deleteAll=h==='AUTO_processCustomerStructure'||/^AUTO_\d+_E2E_/.test(h);var dedupe=queueHandlers.indexOf(h)!==-1;if(deleteAll||(dedupe&&kept[h])){try{ScriptApp.deleteTrigger(t);removed.push(h);}catch(e){}}else if(dedupe){kept[h]=true;}});
-  var afterTriggers=ScriptApp.getProjectTriggers(),afterByHandler={};afterTriggers.forEach(function(t){try{if(t.getEventType()===ScriptApp.EventType.CLOCK){var h=t.getHandlerFunction();afterByHandler[h]=(afterByHandler[h]||0)+1;}}catch(e){}});
-  var result={ok:true,version:'5.13.3',status:'TRIGGER_HYGIENE_COMPLETE',beforeTriggerCount:before,afterTriggerCount:afterTriggers.length,removedCount:removed.length,removedHandlers:removed,queueHandlers:queueHandlers,clockTriggersBefore:clockByHandler,clockTriggersAfter:afterByHandler,ttlMinimums:ttl,noStrivenApiCalls:true};
-  try{if(CF.Util&&CF.Util.logEvent)CF.Util.logEvent({module:'95_Public_Runners',action:'V5133_TRIGGER_HYGIENE',status:'COMPLETE',details:result,version:'5.13.3'});}catch(e){}return result;
-}
-function TESTING_CF_V5133_RELEASE_ACCEPTANCE(){
-  var props=PropertiesService.getScriptProperties(),triggers=ScriptApp.getProjectTriggers(),clock={},queueHandlers=["AUTO_CF_QUEUE_SYNC_AFTER_SERVICE_REQUEST_MUTATION"];triggers.forEach(function(t){try{if(t.getEventType()===ScriptApp.EventType.CLOCK){var h=t.getHandlerFunction();clock[h]=(clock[h]||0)+1;}}catch(e){}});
-  var ttl={customer:Number(props.getProperty('CF_SERVICEOPS_TTL_CUSTOMER_MINUTES')||120),location:Number(props.getProperty('CF_SERVICEOPS_TTL_LOCATION_MINUTES')||120),operational:Number(props.getProperty('CF_SERVICEOPS_TTL_OPERATIONAL_MINUTES')||60)};
-  var duplicateQueueHandlers=queueHandlers.filter(function(h){return Number(clock[h]||0)>1;}),oldAuto=Number(clock.AUTO_processCustomerStructure||0);
-  return{ok:ttl.customer>=120&&ttl.location>=120&&ttl.operational>=60&&duplicateQueueHandlers.length===0&&oldAuto===0,version:'5.13.3',status:'READ_ONLY_RELEASE_ACCEPTANCE',ttlMinimums:ttl,totalProjectTriggers:triggers.length,clockTriggersByHandler:clock,duplicateQueueHandlers:duplicateQueueHandlers,autoProcessCustomerStructureClockTriggers:oldAuto,noStrivenApiCalls:true};
-}
-function STRIVEN_forceRefreshAllData_V5133(){
-  if(!CF.StrivenData||typeof CF.StrivenData.refreshAllData!=='function')throw new Error('CF.StrivenData.refreshAllData is required.');
-  return CF.StrivenData.refreshAllData({forceApiRefresh:true,operatorConfirmed:true,reason:'MANUAL_V5133_FORCE_REFRESH'});
-}
