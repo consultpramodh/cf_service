@@ -651,7 +651,7 @@ function TESTING_16_previewLocationSelfHealingSelectedRow() {
   });
 }
 function CF_20260930_queueTodayEndToEndOnce_() {
-  var key='CF_20260930_END_TO_END_BATCH_QUEUED_V2';
+  var key='CF_20260930_END_TO_END_BATCH_QUEUED_V3';
   var props=PropertiesService.getScriptProperties();
   if(props.getProperty(key))return{status:'ALREADY_QUEUED',queued:false};
   var ids=[
@@ -661,8 +661,45 @@ function CF_20260930_queueTodayEndToEndOnce_() {
     'SR-20260930064224-4257'
   ];
   var results=[];
-  // kick() now moves each explicit request to the front. Reverse the desired
-  // oldest-first execution order so Sheila ends up at queue head.
+  // Recover only the exact false preflight park produced by the item.id/itemId
+  // validation defect. No Sales Order write occurred, so restoring the last
+  // verified customer/contact-info state is safe.
+  var sheilaId='SR-20260930064224-4257';
+  try {
+    var sheila=CF.Util.findRecord('SERVICE_REQUESTS','Request ID',sheilaId);
+    if (sheila &&
+        !String(sheila['Work Order ID']||'').trim() &&
+        String(sheila['Reconciliation Status']||'').toUpperCase()==='WORK_ORDER_PREFLIGHT_BLOCKED' &&
+        String(sheila['Manual Review Reason']||'').indexOf('STANDARD_SERVICE_ITEM_ID_NOT_CONFIGURED')!==-1) {
+      CF.Util.clearRowDataValidations('SERVICE_REQUESTS',sheila.__rowNumber);
+      CF.Util.patchRow('SERVICE_REQUESTS',sheila.__rowNumber,{
+        'Updated At':CF.Util.nowString(),
+        'Current Stage':'CUSTOMER STRUCTURE COMPLETE',
+        'Request Status':'OPEN',
+        'Manual Review?':'NO',
+        'Manual Review Reason':'',
+        'Blocking Issue':'',
+        'Next Action':'CONTINUE TO WORK ORDER',
+        'Striven Sync Status':'PARTIAL',
+        'Striven Sync Error':'',
+        'Reconciliation Status':'CUSTOMER + CONTACT INFO CONFIRMED'
+      });
+      SpreadsheetApp.flush();
+      CF.Util.logEvent({
+        module:'95_Public_Runners',
+        action:'TODAY_BATCH_FALSE_PREFLIGHT_RECOVERY',
+        status:'RESTORED',
+        requestId:sheilaId,
+        message:'Recovered deterministic item.id/itemId preflight defect; no Sales Order write had occurred.',
+        details:{workOrderWriteExecuted:false,restoredStage:'CUSTOMER STRUCTURE COMPLETE'},
+        version:'5.14.1'
+      });
+    }
+  } catch (recoverError) {
+    results.push({ok:false,status:'SHEILA_FALSE_PREFLIGHT_RECOVERY_FAILED',error:String(recoverError&&recoverError.message||recoverError)});
+  }
+  // kick() moves each explicit request to the front. Iteration order leaves
+  // Sheila (oldest request today) at the queue head.
   ids.forEach(function(id){
     if(CF.EventDrivenServiceAutomation&&typeof CF.EventDrivenServiceAutomation.kick==='function'){
       results.push(CF.EventDrivenServiceAutomation.kick(id));
