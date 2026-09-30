@@ -201,11 +201,19 @@ if (JSON.stringify(afterKeys) !== JSON.stringify(expectedAfterKeys)) {
   throw new Error('Live file inventory changed outside approved V2 cleanup; refusing push.');
 }
 const changed = expectedAfterKeys.filter(k => beforeInv.get(k).sha !== afterInv.get(k).sha).sort();
-const expected = [...PATCH_BASES].sort();
-if (JSON.stringify(changed) !== JSON.stringify(expected)) {
-  throw new Error('Unexpected patch scope. Changed=' + changed.join(', ') + ' Expected=' + expected.join(', '));
+const unexpectedChanged = changed.filter(k => !PATCH_BASES.includes(k));
+if (unexpectedChanged.length) {
+  throw new Error('Unexpected patch scope outside finalized modules: ' + unexpectedChanged.join(', '));
 }
-console.log('PATCH_SCOPE_PASS: ' + changed.join(', '));
+for (const base of PATCH_BASES) {
+  const expectedPath = resolve(root, 'src', base + '.gs');
+  const livePath = findTarget(base, live);
+  if (normalizedText(expectedPath) !== normalizedText(livePath)) {
+    throw new Error('CANONICAL_MODULE_PARITY_FAILED: ' + base);
+  }
+}
+console.log('PATCH_SCOPE_PASS: ' + (changed.length ? changed.join(', ') : 'none; live modules already canonical'));
+console.log('CANONICAL_MODULE_PARITY_PASS: ' + PATCH_BASES.join(', '));
 console.log('OBSOLETE_V2_REMOVAL_PASS: ' + (removedV2.length ? removedV2.join(', ') : 'none present'));
 
 console.log('\n=== 6/10 Syntax + single-model checks ===');
