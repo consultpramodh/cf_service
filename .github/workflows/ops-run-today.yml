@@ -11,7 +11,7 @@ jobs:
   run:
     runs-on: ubuntu-latest
     steps:
-      - name: Refresh Operator Queue Service checklist
+      - name: Refresh Operator Queue Service checklist R2
         shell: bash
         run: |
           set -euo pipefail
