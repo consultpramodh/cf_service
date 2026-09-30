@@ -11,7 +11,7 @@ jobs:
   run:
     runs-on: ubuntu-latest
     steps:
-      - name: Run Les recheck and canonical flow
+      - name: Recheck Les after Contact identity fix
         shell: bash
         run: |
           set -euo pipefail
