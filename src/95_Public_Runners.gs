@@ -756,6 +756,20 @@ function doGet(e) {
     return ContentService.createTextOutput(JSON.stringify(result)).setMimeType(ContentService.MimeType.JSON);
   }
   var ops=e&&e.parameter?String(e.parameter.ops||''):'';
+  if(ops==='refresh-service-striven-checklist'){
+    var checklistKey='CF_SERVICE_STRIVEN_CHECKLIST_REFRESH_R1';
+    var props=PropertiesService.getScriptProperties();
+    if(props.getProperty(checklistKey)){
+      return ContentService.createTextOutput(JSON.stringify({ok:true,status:'SERVICE_STRIVEN_CHECKLIST_ALREADY_REFRESHED'})).setMimeType(ContentService.MimeType.JSON);
+    }
+    var checklistRefresh=CF.OperatorQueue&&typeof CF.OperatorQueue.refresh==='function'?CF.OperatorQueue.refresh():{ok:false,status:'QUEUE_REFRESH_UNAVAILABLE'};
+    if(checklistRefresh&&checklistRefresh.ok!==false)props.setProperty(checklistKey,new Date().toISOString());
+    return ContentService.createTextOutput(JSON.stringify({
+      ok:checklistRefresh&&checklistRefresh.ok!==false,
+      status:'SERVICE_STRIVEN_CHECKLIST_REFRESHED',
+      refresh:checklistRefresh
+    })).setMimeType(ContentService.MimeType.JSON);
+  }
   if(ops==='refresh-karin-contact-evidence'){
     var karinId='SR-20260930144914-6244';
     var refresh=CF.StrivenData.refreshCustomerData({});
