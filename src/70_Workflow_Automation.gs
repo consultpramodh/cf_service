@@ -2970,3 +2970,239 @@ function TESTING_20260903_under10SloStatus() {
   CF.EventDrivenServiceAutomation.__workflowQueueCommitV5130R1=true;
 })();
 /* END CF_SERVICEOPS_V5_13_0_WORKFLOW_QUEUE_COMMIT_R1 */
+
+
+/* CF_SERVICEOPS_V5_14_0_CANONICAL_AUTOMATION_OVERWRITE_R1
+ * FINAL AUTOMATION CONTRACT
+ * - One request worker: AUTO_FINAL_ServiceOps.
+ * - One permanent liveness trigger: AUTO_98_E2E_Recovery_Watchdog.
+ * - Legacy phase handlers remain only as compatibility aliases.
+ * - Every worker/kick/watchdog boundary canonicalizes trigger topology.
+ * - Existing durable queue state is preserved.
+ * - No Striven mutation is performed by trigger migration itself.
+ */
+(function(){
+  'use strict';
+  if(!CF.EventDrivenServiceAutomation||typeof CF.EventDrivenServiceAutomation.worker!=='function')return;
+  var a=CF.EventDrivenServiceAutomation;
+  if(a.__canonicalAutomationV5140R1)return;
+
+  var VERSION='5.14.0';
+  var FINAL_HANDLER='AUTO_FINAL_ServiceOps';
+  var WATCHDOG_HANDLER='AUTO_98_E2E_Recovery_Watchdog';
+  var ENABLED_PROP='CF_EVENT_DRIVEN_SERVICE_AUTOMATION_ENABLED';
+  var QUEUE_PROP='CF_EVENT_DRIVEN_SERVICE_REQUEST_IDS';
+  var NEXT_TRIGGER_AT='CF_EVENT_DRIVEN_SERVICE_NEXT_TRIGGER_AT';
+  var LEGACY_HANDLERS=[
+    'AUTO_processCustomerStructure',
+    'AUTO_00_E2E_Route_Request',
+    'AUTO_01_E2E_Customer_Match_Create',
+    'AUTO_02_E2E_Location_Reconcile',
+    'AUTO_03_E2E_Contact_Create_Recover',
+    'AUTO_04_E2E_Customer_Contact_Info_Sync',
+    'AUTO_05_E2E_Sales_Order_Create_Verify',
+    'AUTO_99_E2E_Safe_Stop_Review'
+  ];
+
+  function clean_(v){return v===null||v===undefined?'':String(v).trim();}
+  function upper_(v){return clean_(v).toUpperCase();}
+  function props_(){return PropertiesService.getScriptProperties();}
+  function uid_(t){try{return clean_(t.getUniqueId());}catch(e){return'';}}
+  function handler_(t){try{return clean_(t.getHandlerFunction&&t.getHandlerFunction());}catch(e){return'';}}
+  function enabled_(){return upper_(props_().getProperty(ENABLED_PROP))==='TRUE';}
+  function queue_(){
+    try{
+      if(typeof a.queuedRequestIds==='function'){
+        var q=a.queuedRequestIds();
+        if(Array.isArray(q))return q.map(clean_).filter(Boolean);
+      }
+      var raw=props_().getProperty(QUEUE_PROP);
+      var x=raw?JSON.parse(raw):[];
+      return Array.isArray(x)?x.map(clean_).filter(Boolean):[];
+    }catch(e){return[];}
+  }
+  function log_(status,details,message){
+    try{
+      if(CF.Util&&typeof CF.Util.logEvent==='function')CF.Util.logEvent({
+        module:'70_Workflow_Automation',
+        action:'CANONICAL_AUTOMATION_TOPOLOGY',
+        status:status,
+        message:message||'',
+        details:details||{},
+        version:VERSION
+      });
+    }catch(e){}
+  }
+
+  function canonicalizeTriggers_(currentUid,ensureWorker){
+    currentUid=clean_(currentUid);
+    var lock=LockService.getScriptLock();
+    if(!lock.tryLock(30000))return{ok:false,status:'CANONICAL_TRIGGER_LOCK_BUSY',liveWriteExecuted:false};
+    try{
+      var triggers=ScriptApp.getProjectTriggers(),removedLegacy=0,removedDuplicateFinal=0,removedDuplicateWatchdog=0;
+      var keptFinal='',keptWatchdog='';
+      triggers.forEach(function(t){
+        var h=handler_(t),id=uid_(t);
+        if(LEGACY_HANDLERS.indexOf(h)!==-1){
+          try{ScriptApp.deleteTrigger(t);removedLegacy+=1;}catch(e){}
+          return;
+        }
+        if(h===FINAL_HANDLER){
+          if(currentUid&&id===currentUid){keptFinal=id;return;}
+          if(!keptFinal){keptFinal=id;return;}
+          try{ScriptApp.deleteTrigger(t);removedDuplicateFinal+=1;}catch(e){}
+          return;
+        }
+        if(h===WATCHDOG_HANDLER){
+          if(currentUid&&id===currentUid){keptWatchdog=id;return;}
+          if(!keptWatchdog){keptWatchdog=id;return;}
+          try{ScriptApp.deleteTrigger(t);removedDuplicateWatchdog+=1;}catch(e){}
+        }
+      });
+
+      var watchdogCreated=false,workerCreated=false,scheduledAt='';
+      if(enabled_()){
+        var after=ScriptApp.getProjectTriggers();
+        var watchdogs=after.filter(function(t){return handler_(t)===WATCHDOG_HANDLER;});
+        if(!watchdogs.length){
+          try{ScriptApp.newTrigger(WATCHDOG_HANDLER).timeBased().everyMinutes(5).create();watchdogCreated=true;}catch(e){}
+        }
+
+        var q=queue_();
+        if(ensureWorker===true&&q.length){
+          var finals=ScriptApp.getProjectTriggers().filter(function(t){
+            if(handler_(t)!==FINAL_HANDLER)return false;
+            var id=uid_(t);
+            return !currentUid||!id||id!==currentUid;
+          });
+          if(!finals.length){
+            try{
+              ScriptApp.newTrigger(FINAL_HANDLER).timeBased().after(10000).create();
+              scheduledAt=new Date(Date.now()+10000).toISOString();
+              props_().setProperty(NEXT_TRIGGER_AT,scheduledAt);
+              workerCreated=true;
+            }catch(e){}
+          }
+        }
+      }
+
+      var out={
+        ok:true,
+        version:VERSION,
+        status:'CANONICAL_TRIGGER_TOPOLOGY_APPLIED',
+        finalHandler:FINAL_HANDLER,
+        watchdogHandler:WATCHDOG_HANDLER,
+        removedLegacyTriggers:removedLegacy,
+        removedDuplicateFinalTriggers:removedDuplicateFinal,
+        removedDuplicateWatchdogTriggers:removedDuplicateWatchdog,
+        watchdogCreated:watchdogCreated,
+        workerCreated:workerCreated,
+        scheduledAt:scheduledAt,
+        queuedRequestIds:queue_(),
+        liveWriteExecuted:false
+      };
+      log_('APPLIED',out,'Legacy automation triggers were replaced by the canonical worker/watchdog topology.');
+      return out;
+    }finally{lock.releaseLock();}
+  }
+
+  var baseWorker=a.worker;
+  a.worker=function(e,invocation){
+    e=e||{};
+    var before=canonicalizeTriggers_(e.triggerUid,false);
+    var result=baseWorker(e,{executionFunction:FINAL_HANDLER,phase:'CANONICAL END TO END'});
+    var after=canonicalizeTriggers_(e.triggerUid,true);
+    if(result&&typeof result==='object'){
+      result.version=VERSION;
+      result.canonicalAutomation={
+        active:true,
+        version:VERSION,
+        finalHandler:FINAL_HANDLER,
+        watchdogHandler:WATCHDOG_HANDLER,
+        topologyBefore:before,
+        topologyAfter:after
+      };
+    }
+    return result;
+  };
+
+  var baseKick=typeof a.kick==='function'?a.kick:null;
+  if(baseKick)a.kick=function(requestId){
+    var result=baseKick.apply(a,arguments);
+    var topology=canonicalizeTriggers_('',true);
+    if(result&&typeof result==='object'){
+      result.version=VERSION;
+      result.handler=FINAL_HANDLER;
+      result.canonicalAutomation=topology;
+    }
+    return result;
+  };
+
+  var baseWatchdog=typeof a.recoveryWatchdog==='function'?a.recoveryWatchdog:null;
+  if(baseWatchdog)a.recoveryWatchdog=function(){
+    var before=canonicalizeTriggers_('',false);
+    var result=baseWatchdog.apply(a,arguments);
+    var after=canonicalizeTriggers_('',true);
+    if(result&&typeof result==='object'){
+      result.version=VERSION;
+      result.canonicalAutomation={active:true,version:VERSION,topologyBefore:before,topologyAfter:after};
+    }
+    return result;
+  };
+
+  var baseVerify=typeof a.verifySetup==='function'?a.verifySetup:null;
+  if(baseVerify)a.verifySetup=function(){
+    var existingQueue=queue_();
+    var result=baseVerify.apply(a,arguments);
+    // Some legacy verifySetup generations clear the queue. Restore only the durable
+    // queue IDs that existed before setup; no request state is invented here.
+    try{
+      if(existingQueue.length){
+        var nowQueue=queue_(),seen={};
+        var merged=nowQueue.concat(existingQueue).map(clean_).filter(function(id){if(!id||seen[id])return false;seen[id]=true;return true;});
+        props_().setProperty(QUEUE_PROP,JSON.stringify(merged));
+      }
+    }catch(e){}
+    var topology=canonicalizeTriggers_('',true);
+    if(result&&typeof result==='object'){
+      result.version=VERSION;
+      result.handler=FINAL_HANDLER;
+      result.canonicalAutomation=topology;
+      result.preservedQueuedRequestIds=queue_();
+    }
+    return result;
+  };
+
+  var baseDisable=typeof a.disable==='function'?a.disable:null;
+  if(baseDisable)a.disable=function(){
+    var result=baseDisable.apply(a,arguments);
+    var removed=0;
+    try{
+      ScriptApp.getProjectTriggers().forEach(function(t){
+        var h=handler_(t);
+        if(h===FINAL_HANDLER||h===WATCHDOG_HANDLER||LEGACY_HANDLERS.indexOf(h)!==-1){
+          try{ScriptApp.deleteTrigger(t);removed+=1;}catch(e){}
+        }
+      });
+    }catch(e){}
+    if(result&&typeof result==='object'){
+      result.version=VERSION;
+      result.canonicalTriggersRemoved=removed;
+    }
+    return result;
+  };
+
+  a.allHandlerNames=function(){return [FINAL_HANDLER,WATCHDOG_HANDLER].concat(LEGACY_HANDLERS);};
+  a.canonicalizeTriggers=function(options){options=options||{};return canonicalizeTriggers_(clean_(options.currentTriggerUid),options.ensureWorker!==false);};
+  a.activateCanonical=function(){
+    props_().setProperty(ENABLED_PROP,'true');
+    props_().setProperty('CF_EVENT_DRIVEN_AUTO_SALES_ORDER','true');
+    props_().setProperty('CF_SERVICEOPS_AUTOMATION_PREPARATION_ONLY','false');
+    var topology=canonicalizeTriggers_('',true);
+    var recovery=null;
+    try{if(typeof a.recoveryWatchdog==='function')recovery=a.recoveryWatchdog();}catch(e){recovery={ok:false,status:'CANONICAL_RECOVERY_START_FAILED',error:String(e&&e.message||e),liveWriteExecuted:false};}
+    return{ok:true,version:VERSION,status:'CANONICAL_SERVICEOPS_ACTIVE',finalHandler:FINAL_HANDLER,watchdogHandler:WATCHDOG_HANDLER,topology:topology,recovery:recovery,queuedRequestIds:queue_(),liveWriteExecuted:false};
+  };
+  a.canonicalVersion=VERSION;
+  a.__canonicalAutomationV5140R1=true;
+})();
