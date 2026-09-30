@@ -1,3 +1,4 @@
+/* CF_SERVICEOPS_V5_13_9_TARGETED_POST_CUSTOMER_LOCATION_RECONCILIATION_R1 */
 /* CF_SERVICEOPS_V5_13_8_SCOPED_CONTACT_CUSTOMER_ENRICHMENT_R1 */
 /* CF_SERVICEOPS_V5_13_7_PARTIAL_LOCATION_IDENTITY_R1 */
 /* CF_SERVICEOPS_V5_13_6_EXECUTABLE_LOCATION_STAGE_R1 */
@@ -2977,8 +2978,21 @@ CF.StrivenControlledCustomerCreate = (function () {
 
   function reconcileKnownCustomer_(record, journal, customerId) {
     var d = deps_();
-    var refresh = refreshLocationAfterPostIfNeeded_(journal || {});
-    var locations = exactLocationCandidates_(record, customerId);
+    var locations=[],targeted={ok:false,status:'TARGETED_LOCATION_MODULE_UNAVAILABLE',matches:[],liveWriteExecuted:false};
+    try{
+      if(CF.StandaloneLocationCreateV5128&&typeof CF.StandaloneLocationCreateV5128.findExisting==='function'){
+        var createdByThisRequest=clean_(journal&&journal.responseCustomerId)===clean_(customerId)&&
+          (upper_(journal&&journal.postOutcome)==='SUCCESS'||upper_(journal&&journal.status).indexOf('CREATED')!==-1||Number(journal&&journal.postAttempts||0)>0);
+        targeted=CF.StandaloneLocationCreateV5128.findExisting(record,customerId,{allowUniquePrimaryFallback:createdByThisRequest});
+        locations=targeted&&Array.isArray(targeted.matches)?targeted.matches:[];
+      }
+    }catch(targetedLocationError){
+      targeted={ok:false,status:'TARGETED_LOCATION_READ_FAILED',matches:[],error:String(targetedLocationError&&targetedLocationError.message||targetedLocationError),liveWriteExecuted:false};
+    }
+    // Cache is only a no-call fallback. Never refresh the full Location report for
+    // one request's post-create reconciliation.
+    if(!locations.length)locations=exactLocationCandidates_(record,customerId);
+    var refresh={refreshed:false,targeted:true,targetedStatus:clean_(targeted&&targeted.status),fullLocationRefreshExecuted:false};
 
     if (locations.length === 1) {
       var locationId = clean_(locations[0]['Location ID']);
@@ -3024,7 +3038,9 @@ CF.StrivenControlledCustomerCreate = (function () {
         matchedLocationId: locationId,
         locationMatchMethod: clean_(locations[0].__cfLocationMatchMethod) || 'CUSTOMER_ID + EXACT_NORMALIZED_ADDRESS',
         liveWriteExecuted: false,
-        locationRefreshExecuted: refresh.refreshed
+        targetedLocationReadExecuted: targeted&&targeted.status!=='TARGETED_LOCATION_MODULE_UNAVAILABLE',
+        targetedLocationStatus: clean_(targeted&&targeted.status),
+        locationRefreshExecuted: false
       };
     }
 
@@ -3066,7 +3082,9 @@ CF.StrivenControlledCustomerCreate = (function () {
       matchedLocationId: '',
       locationCandidates: locations.map(function (row) { return clean_(row['Location ID']); }),
       liveWriteExecuted: false,
-      locationRefreshExecuted: refresh.refreshed
+      targetedLocationReadExecuted: targeted&&targeted.status!=='TARGETED_LOCATION_MODULE_UNAVAILABLE',
+      targetedLocationStatus: clean_(targeted&&targeted.status),
+      locationRefreshExecuted: false
     };
   }
 
@@ -6143,7 +6161,8 @@ CF.StandaloneLocationCreateV5128=(function(){
   function postalIncompleteV5137_(v){var raw=upper_(v),compact=raw.replace(/[^A-Z0-9]/g,'');return !compact||/PLACEHOLDER|UNKNOWN|NOTPROVIDED|NOTAVAILABLE|TBD|N\/?A/.test(raw)||compact==='000000'||compact==='00000'||compact==='999999';}
   function exact_(r,x){return !!rowId_(x)&&norm_(r['Postal Code'])===norm_(rowPostal_(x))&&canonicalStreetV5129_(r['Street'])===canonicalStreetV5129_(rowStreet_(x));}
   function incompleteSamePremises_(r,x){return !!rowId_(x)&&canonicalStreetV5129_(r['Street'])===canonicalStreetV5129_(rowStreet_(x))&&norm_(r['City'])===norm_(rowCity_(x))&&postalIncompleteV5137_(rowPostal_(x));}
-  function search_(r,customerId){
+  function search_(r,customerId,options){
+    options=options||{};
     var ep=CF.Config.getEndpoint('CUSTOMER_LOCATION_SEARCH');
     var n=Number(customerId),ref=isNaN(n)?customerId:n;
     var response=CF.StrivenHttp.requestJson(ep,{method:'post',payload:{PageIndex:0,PageSize:100,Customer:{Id:ref}},attempts:1,idempotent:true});
@@ -6152,10 +6171,29 @@ CF.StandaloneLocationCreateV5128=(function(){
     if(exact.length)return exact;
     var partial=all.filter(function(x){return incompleteSamePremises_(r,x);});
     if(partial.length>1){
-      var primary=partial.filter(function(x){return upper_(rowName_(x))==='PRIMARY LOCATION';});
-      if(primary.length===1)return primary;
+      var primaryPartial=partial.filter(function(x){return upper_(rowName_(x))==='PRIMARY LOCATION';});
+      if(primaryPartial.length===1)return primaryPartial;
     }
-    return partial;
+    if(partial.length)return partial;
+    // Only the post-Customer-create reconciler may use this fallback. The request
+    // itself just created the Customer with PrimaryLocation in the same guarded POST,
+    // so a unique Primary Location under that new Customer is authoritative enough
+    // to recover its Location ID even if Striven has not finished formatting the
+    // returned address yet.
+    if(options.allowUniquePrimaryFallback===true){
+      var primary=all.filter(function(x){return !!rowId_(x)&&upper_(rowName_(x))==='PRIMARY LOCATION';});
+      if(primary.length===1)return primary;
+      if(all.length===1&&rowId_(all[0]))return all;
+    }
+    return[];
+  }
+  function findExisting_(requestId,customerId,options){
+    var r=typeof requestId==='object'&&requestId?requestId:request_(requestId);
+    if(!r)return{ok:false,status:'LOCATION_REQUEST_NOT_FOUND',requestId:clean_(requestId),customerId:clean_(customerId),matches:[],liveWriteExecuted:false};
+    var cid=clean_(customerId)||resolved_(r,'Matched Customer ID','Created Customer ID');
+    if(!cid)return{ok:false,status:'LOCATION_CUSTOMER_ID_REQUIRED',requestId:clean_(r['Request ID']),customerId:'',matches:[],liveWriteExecuted:false};
+    var matches=search_(r,cid,options||{});
+    return{ok:true,status:matches.length===1?'LOCATION_TARGETED_MATCHED':matches.length>1?'LOCATION_TARGETED_AMBIGUOUS':'LOCATION_TARGETED_NOT_FOUND',requestId:clean_(r['Request ID']),customerId:cid,matches:matches,matchIds:matches.map(rowId_),liveWriteExecuted:false};
   }
   function finalize_(r,location,created){
     var id=rowId_(location),contactId=resolved_(r,'Matched Contact ID','Created Contact ID'),complete=!!contactId;
@@ -6171,7 +6209,7 @@ CF.StandaloneLocationCreateV5128=(function(){
     if(upper_(r['Manual Review?'])==='YES'||(upper_(r['Duplicate Risk Status'])&&upper_(r['Duplicate Risk Status'])!=='NONE'))return{ok:false,status:'LOCATION_CREATE_REVIEW_OR_RISK_BLOCKED',requestId:clean_(requestId),liveWriteExecuted:false};
     if(!clean_(r['Street'])||!clean_(r['City'])||!clean_(r['Postal Code']))return{ok:false,status:'LOCATION_CREATE_ADDRESS_INCOMPLETE',requestId:clean_(requestId),liveWriteExecuted:false};
     var root=rootJournal_(r),j=root.standaloneLocationCreate||{},matches=[];
-    try{matches=search_(r,customerId);}catch(searchError){return{ok:false,status:'LOCATION_READ_RECONCILE_FAILED',requestId:clean_(requestId),error:String(searchError&&searchError.message||searchError),liveWriteExecuted:false,automaticPostRetry:false};}
+    try{matches=search_(r,customerId,{allowUniquePrimaryFallback:false});}catch(searchError){return{ok:false,status:'LOCATION_READ_RECONCILE_FAILED',requestId:clean_(requestId),error:String(searchError&&searchError.message||searchError),liveWriteExecuted:false,automaticPostRetry:false};}
     if(matches.length===1)return finalize_(r,matches[0],Number(j.postAttempts||0)>0);
     if(matches.length>1){var msg='Multiple exact Customer Locations match the submitted service address. Do not create another Location.';patch_(r,{'Updated At':CF.Util.nowString(),'Current Stage':'NEEDS REVIEW','Request Status':'BLOCKED','Manual Review?':'YES','Manual Review Reason':msg,'Blocking Issue':msg,'Next Action':'REVIEW LOCATION CANDIDATES','Striven Sync Status':'BLOCKED','Reconciliation Status':'LOCATION EXACT MATCH AMBIGUOUS'});return{ok:false,status:'LOCATION_EXACT_MATCH_AMBIGUOUS',requestId:clean_(requestId),candidateCount:matches.length,liveWriteExecuted:false};}
     if(Number(j.postAttempts||0)>0)return{ok:true,status:'LOCATION_POST_RECONCILE_PENDING',requestId:clean_(requestId),liveWriteExecuted:false,automaticPostRetry:false};
@@ -6189,7 +6227,7 @@ CF.StandaloneLocationCreateV5128=(function(){
       return{ok:false,version:VERSION,status:'LOCATION_POST_OUTCOME_UNCERTAIN_RECONCILE_REQUIRED',requestId:clean_(requestId),remoteWriteMayHaveSucceeded:true,automaticPostRetry:false,liveWriteExecuted:true};
     }
   }
-  return{version:VERSION,process:process};
+  return{version:VERSION,process:process,findExisting:findExisting_};
 })();
 
 /* BEGIN CF_SERVICEOPS_V5_13_0_SERVICE_ITEM_TAX_CONTRACT_R1 */
