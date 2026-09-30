@@ -740,6 +740,7 @@ function doGet(e) {
   if(ops==='today-step'||ops==='today-recheck-step'){
     var id=e&&e.parameter?String(e.parameter.id||''):'';
     var allowed={
+      'SR-20260930144914-6244':true,
       'SR-20260930140806-2445':true,
       'SR-20260930103833-2221':true,
       'SR-20260930103408-5757':true,
