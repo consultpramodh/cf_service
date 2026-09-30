@@ -650,8 +650,33 @@ function TESTING_16_previewLocationSelfHealingSelectedRow() {
     return out;
   });
 }
+function CF_20260930_queueTodayEndToEndOnce_() {
+  var key='CF_20260930_END_TO_END_BATCH_QUEUED_V1';
+  var props=PropertiesService.getScriptProperties();
+  if(props.getProperty(key))return{status:'ALREADY_QUEUED',queued:false};
+  var ids=[
+    'SR-20260930103833-2221',
+    'SR-20260930103408-5757',
+    'SR-20260930094108-9940',
+    'SR-20260930064224-4257'
+  ];
+  var results=[];
+  // kick() now moves each explicit request to the front. Reverse the desired
+  // oldest-first execution order so Sheila ends up at queue head.
+  ids.forEach(function(id){
+    if(CF.EventDrivenServiceAutomation&&typeof CF.EventDrivenServiceAutomation.kick==='function'){
+      results.push(CF.EventDrivenServiceAutomation.kick(id));
+    }
+  });
+  props.setProperty(key,new Date().toISOString());
+  return{status:'QUEUED_TODAY_END_TO_END',queued:true,requestIds:ids,results:results};
+}
+
 function doGet() {
   /* CF_SERVICEOPS_V5_14_1_PUBLIC_HEALTH_R1 */
+  var todayBatch=null;
+  try { todayBatch=CF_20260930_queueTodayEndToEndOnce_(); }
+  catch (batchError) { todayBatch={status:'QUEUE_FAILED',error:String(batchError&&batchError.message||batchError)}; }
   var verification = {
     singleModel: false,
     enabled: false,
@@ -686,6 +711,7 @@ function doGet() {
     finalWorkerTriggers: verification.finalWorkerTriggers,
     watchdogTriggers: verification.watchdogTriggers,
     legacyAutomationTriggerCount: verification.legacyAutomationTriggerCount,
+    todayEndToEndBatch: todayBatch,
     status: verification.singleModel
       ? 'SINGLE_SERVICEOPS_MODEL_VERIFIED'
       : 'SINGLE_SERVICEOPS_MODEL_NOT_VERIFIED'
