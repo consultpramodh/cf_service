@@ -2479,7 +2479,7 @@ CF.StrivenControlledCustomerCreate = (function () {
     return {
       // Live-verified from Striven HTTP 400 on 2026-08-20:
       // customer.PrimaryLocation.LocationName is required.
-      LocationName: clean_(record['Street'] || record['Full Address'] || 'Primary Location'),
+      LocationName: 'Primary Location',
       Address1: clean_(record['Street']),
       City: clean_(record['City']),
       State: normalizeProvinceForStriven_(record['Province']),
