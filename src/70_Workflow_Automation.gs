@@ -1,3 +1,4 @@
+/* CF_SERVICEOPS_V5_13_6_EXECUTABLE_LOCATION_STAGE_R1 */
 /* CF_SERVICEOPS_V5_13_3_WORKFLOW_API_BRAKE_R1 */
 /* CF_SERVICEOPS_V5_13_2_STABILIZATION_R1_WORKFLOW */
 /************************************************************
@@ -242,8 +243,9 @@ function nextCandidate_(rows) {
     var priorities = {
       'CREATING CUSTOMER STRUCTURE': 1,
       'READY FOR CUSTOMER CREATE': 2,
-      'READY FOR CONTACT CREATE': 3,
-      'CUSTOMER RESOLVED': 4
+      'READY FOR LOCATION CREATE': 3,
+      'READY FOR CONTACT CREATE': 4,
+      'CUSTOMER RESOLVED': 5
     };
     var candidates = rows.filter(function (row) {
       return (green_(row) || recoverableBlockedDuplicateContact_(row)) && priorities[upper_(row['Current Stage'])];
@@ -358,7 +360,12 @@ function nextCandidate_(rows) {
         return { ok:matching&&matching.ok!==false, version:VERSION, status:'MATCHING_PROCESSED', requestId:requestId, requestScoped:true, matching:matching, liveWriteExecuted:false, durationMs:Date.now()-started };
       }
       if (stage === 'CUSTOMER STRUCTURE COMPLETE') return { ok:true, version:VERSION, status:'CUSTOMER_STRUCTURE_ALREADY_COMPLETE', requestId:requestId, requestScoped:true, liveWriteExecuted:false, durationMs:Date.now()-started };
-      if (stage === 'READY FOR LOCATION CREATE') return { ok:true, version:VERSION, status:'WAITING_FOR_STANDALONE_LOCATION_CONTRACT', requestId:requestId, requestScoped:true, liveWriteExecuted:false, durationMs:Date.now()-started };
+      if (stage === 'READY FOR LOCATION CREATE') {
+        if(!CF.StandaloneLocationCreateV5128||typeof CF.StandaloneLocationCreateV5128.process!=='function')return{ok:false,version:VERSION,status:'STANDALONE_LOCATION_MODULE_MISSING',requestId:requestId,requestScoped:true,liveWriteExecuted:false,durationMs:Date.now()-started};
+        var locationStep=CF.StandaloneLocationCreateV5128.process(requestId,{autoMode:true});
+        refreshQueue_();
+        return{ok:locationStep&&locationStep.ok!==false,version:VERSION,status:'AUTO_STEP_COMPLETE',requestId:requestId,requestScoped:true,stageBefore:stage,stepResult:locationStep,liveWriteExecuted:!!(locationStep&&locationStep.liveWriteExecuted===true),durationMs:Date.now()-started,stopsBeforeSalesOrder:true};
+      }
       if (!green_(record)) return { ok:true, version:VERSION, status:'WAITING_FOR_OPERATOR_REVIEW', requestId:requestId, requestScoped:true, stage:clean_(record['Current Stage']), liveWriteExecuted:false, durationMs:Date.now()-started };
       var customerId=clean_(record['Matched Customer ID']||record['Created Customer ID']),contactId=clean_(record['Matched Contact ID']||record['Created Contact ID']),locationId=clean_(record['Matched Location ID']||record['Created Location ID']),associationStatus=upper_(record['Contact Association Status']),result;
       if(stage==='CUSTOMER RESOLVED') result=finalizeResolved_(record,'REQUEST-SCOPED CUSTOMER STRUCTURE RESOLVED FROM EXISTING STRIVEN DATA');
@@ -473,6 +480,10 @@ function nextCandidate_(rows) {
         result = finalizeResolved_(candidate, 'CUSTOMER STRUCTURE RESOLVED FROM EXISTING STRIVEN DATA');
       } else if (stage === 'READY FOR CUSTOMER CREATE') {
         result = d.customer.executeAutoCustomerCreate(requestId);
+      } else if (stage === 'READY FOR LOCATION CREATE') {
+        result = CF.StandaloneLocationCreateV5128&&typeof CF.StandaloneLocationCreateV5128.process==='function'
+          ? CF.StandaloneLocationCreateV5128.process(requestId,{autoMode:true})
+          : {ok:false,status:'STANDALONE_LOCATION_MODULE_MISSING',requestId:requestId,liveWriteExecuted:false};
       } else if (stage === 'READY FOR CONTACT CREATE') {
         result = d.contact.executeAutoContactCreate(requestId);
       } else if (stage === 'CREATING CUSTOMER STRUCTURE') {
@@ -1369,7 +1380,7 @@ CF.EventDrivenServiceAutomation = (function () {
     var removed=removeAllHandlerTriggers_(),p=props_();
     p.setProperty(ENABLED,'true');p.setProperty(AUTO_SALES_ORDER,'true');p.setProperty(PREPARATION_ONLY,'false');p.setProperty(STRUCTURE_CUTOFF,String(Date.now()));
     writeQueue_([]);
-    return{ok:true,version:VERSION,mode:'INCOMING_REQUEST_TO_GUARDED_SALES_ORDER',handler:HANDLER,cadence:'NO_PERMANENT_CADENCE',triggerCreatedOnIncomingRequest:true,oneShotChain:true,removedExistingHandlerTriggers:removed,activeHandlerTriggers:handlerTriggers_().length,preparationOnly:false,automaticCustomerContactWrites:true,automaticSalesOrderCreate:true,standaloneExistingCustomerLocationCreate:false,liveWriteExecuted:false,next:'SUBMIT ONE NEW WEBFORM REQUEST; SAFE REQUESTS WILL CONTINUE THROUGH RECONCILED QUOTED SALES ORDER'};
+    return{ok:true,version:VERSION,mode:'INCOMING_REQUEST_TO_GUARDED_SALES_ORDER',handler:HANDLER,cadence:'NO_PERMANENT_CADENCE',triggerCreatedOnIncomingRequest:true,oneShotChain:true,removedExistingHandlerTriggers:removed,activeHandlerTriggers:handlerTriggers_().length,preparationOnly:false,automaticCustomerContactWrites:true,automaticSalesOrderCreate:true,standaloneExistingCustomerLocationCreate:true,liveWriteExecuted:false,next:'SUBMIT ONE NEW WEBFORM REQUEST; SAFE REQUESTS WILL CONTINUE THROUGH RECONCILED QUOTED SALES ORDER'};
   }
   function disable() {
     return withEventLock_(function(){var removed=removeAllHandlerTriggers_(),p=props_();p.setProperty(ENABLED,'false');p.setProperty(AUTO_SALES_ORDER,'false');writeQueue_([]);return{ok:true,version:'5.10.12',status:'EVENT_DRIVEN_AUTOMATION_DISABLED',removedHandlerTriggers:removed,queueConcurrency:'SCRIPT_LOCK_SERIALIZED',liveWriteExecuted:false};});
@@ -1410,7 +1421,14 @@ CF.EventDrivenServiceAutomation = (function () {
     }
 
     var stage=upper_(row['Current Stage']),status=upper_(row['Request Status']);
-    if(stage==='READY FOR LOCATION CREATE')return safeStop_(requestId,'STANDALONE_LOCATION_CREATE_NOT_PROVEN','Existing-Customer standalone Location creation remains operator-reviewed until its live API contract is proven.',row);
+    if(stage==='READY FOR LOCATION CREATE'){
+      if(!CF.StandaloneLocationCreateV5128||typeof CF.StandaloneLocationCreateV5128.process!=='function')return safeStop_(requestId,'STANDALONE_LOCATION_MODULE_MISSING','Guarded standalone Location module is unavailable.',row);
+      var locationGateResult=CF.StandaloneLocationCreateV5128.process(requestId,{autoMode:true});
+      if(locationGateResult&&locationGateResult.liveWriteExecuted===true)return{ok:true,version:VERSION,status:'CUSTOMER_STRUCTURE_WRITE_COMPLETE',requestId:requestId,location:locationGateResult,automaticPostRetry:false,liveWriteExecuted:true};
+      if(!locationGateResult||locationGateResult.ok===false)return{ok:false,version:VERSION,status:clean_(locationGateResult&&locationGateResult.status)||'LOCATION_EXECUTION_FAILED',requestId:requestId,location:locationGateResult||{},automaticPostRetry:false,liveWriteExecuted:false};
+      row=request_(requestId);stage=upper_(row&&row['Current Stage']);status=upper_(row&&row['Request Status']);
+      if(stage!=='CUSTOMER STRUCTURE COMPLETE')return{ok:true,version:VERSION,status:'WAITING_FOR_CUSTOMER_STRUCTURE',requestId:requestId,stage:clean_(row&&row['Current Stage']),location:locationGateResult,automaticPostRetry:false,liveWriteExecuted:false};
+    }
     if(stage==='NEEDS REVIEW'||upper_(row['Manual Review?'])==='YES'||upper_(row['Duplicate Risk Status'])!=='NONE'||['BLOCKED','DUPLICATE','CANCELLED','CANCELED','ERROR'].indexOf(status)!==-1)return safeStop_(requestId,'REQUEST_REVIEW_OR_RISK','Request requires operator review or has unresolved duplicate/risk state.',row);
     if(stage!=='CUSTOMER STRUCTURE COMPLETE'||upper_(row['Customer Structure Status'])!=='COMPLETE')return{ok:true,version:VERSION,status:'WAITING_FOR_CUSTOMER_STRUCTURE',requestId:requestId,stage:clean_(row['Current Stage']),liveWriteExecuted:false};
     if(!CF.SalesOrderDraft||typeof CF.SalesOrderDraft.build!=='function')return safeStop_(requestId,'DRAFT_MODULE_MISSING','Sales Order draft module is unavailable.',row);
@@ -1769,7 +1787,7 @@ function worker(e,invocation) {
       var p=PropertiesService.getScriptProperties(),existing=triggers_();existing.forEach(function(t){ScriptApp.deleteTrigger(t);});
       p.setProperty(ENABLED,'true');p.setProperty(AUTO_SALES_ORDER,'true');p.setProperty(PREPARATION_ONLY,'false');if(!clean_(p.getProperty(STRUCTURE_CUTOFF)))p.setProperty(STRUCTURE_CUTOFF,String(Date.now()));
       var q=queue_(),stage=clean_(p.getProperty(INTAKE_STAGE_PROP)),scheduled=false;if(q.length||stage){ScriptApp.newTrigger(HANDLER).timeBased().after(10000).create();scheduled=true;}
-      return{ok:true,version:'5.10.12',mode:'ATOMIC_REQUEST_SCOPED_SMART_TTL_INLINE_INCOMING_TO_GUARDED_SALES_ORDER',handler:HANDLER,cadence:'NO_PERMANENT_CADENCE',triggerCreatedOnIncomingRequest:true,oneShotChain:true,resumePendingChain:true,preservedQueuedRequestIds:q,activeIntakeStage:stage,removedExistingHandlerTriggers:existing.length,activeHandlerTriggers:triggers_().length,resumeTriggerScheduled:scheduled,preparationOnly:false,automaticCustomerContactWrites:true,automaticSalesOrderCreate:true,standaloneExistingCustomerLocationCreate:false,smartFreshness:{customerMinutes:120,locationMinutes:120,operationalMinutes:30},inlineSoftBudgetSeconds:SOFT_BUDGET_MS/1000,queueConcurrency:'SCRIPT_LOCK_SERIALIZED',customerStructureScope:'QUEUED_REQUEST_ID_ONLY',liveWriteExecuted:false,next:q.length||stage?'PENDING CHAIN RESUMED; DO NOT RUN MANUAL STEPS':'SUBMIT ONE NEW WEBFORM REQUEST'};
+      return{ok:true,version:'5.10.12',mode:'ATOMIC_REQUEST_SCOPED_SMART_TTL_INLINE_INCOMING_TO_GUARDED_SALES_ORDER',handler:HANDLER,cadence:'NO_PERMANENT_CADENCE',triggerCreatedOnIncomingRequest:true,oneShotChain:true,resumePendingChain:true,preservedQueuedRequestIds:q,activeIntakeStage:stage,removedExistingHandlerTriggers:existing.length,activeHandlerTriggers:triggers_().length,resumeTriggerScheduled:scheduled,preparationOnly:false,automaticCustomerContactWrites:true,automaticSalesOrderCreate:true,standaloneExistingCustomerLocationCreate:true,smartFreshness:{customerMinutes:120,locationMinutes:120,operationalMinutes:30},inlineSoftBudgetSeconds:SOFT_BUDGET_MS/1000,queueConcurrency:'SCRIPT_LOCK_SERIALIZED',customerStructureScope:'QUEUED_REQUEST_ID_ONLY',liveWriteExecuted:false,next:q.length||stage?'PENDING CHAIN RESUMED; DO NOT RUN MANUAL STEPS':'SUBMIT ONE NEW WEBFORM REQUEST'};
     });
   };
   CF.EventDrivenServiceAutomation.__inlineV51010R2=true;
@@ -1853,7 +1871,7 @@ function AUTO_refreshQueueSnapshot(e) {
     if(knownOrderId(row))return true; // exact GET certification may clear a false review state
     if(upper(row['Manual Review?'])==='YES')return false;
     var status=upper(row['Request Status']);if(['BLOCKED','DUPLICATE','CANCELLED','CANCELED','ERROR'].indexOf(status)!==-1)return false;
-    return ['NEW INTAKE','CUSTOMER RESOLVED','READY FOR CUSTOMER CREATE','READY FOR CONTACT CREATE','CREATING CUSTOMER STRUCTURE','CUSTOMER STRUCTURE COMPLETE'].indexOf(upper(row['Current Stage']))!==-1;
+    return ['NEW INTAKE','CUSTOMER RESOLVED','READY FOR CUSTOMER CREATE','READY FOR LOCATION CREATE','READY FOR CONTACT CREATE','CREATING CUSTOMER STRUCTURE','CUSTOMER STRUCTURE COMPLETE'].indexOf(upper(row['Current Stage']))!==-1;
   }
   function queuedEligible(id,row){
     if(!row||terminal(row))return false;
