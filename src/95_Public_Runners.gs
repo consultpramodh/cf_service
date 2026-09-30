@@ -757,7 +757,7 @@ function doGet(e) {
   }
   var ops=e&&e.parameter?String(e.parameter.ops||''):'';
   if(ops==='refresh-service-striven-checklist'){
-    var checklistKey='CF_SERVICE_STRIVEN_CHECKLIST_REFRESH_R1';
+    var checklistKey='CF_SERVICE_STRIVEN_CHECKLIST_REFRESH_R2';
     var props=PropertiesService.getScriptProperties();
     if(props.getProperty(checklistKey)){
       return ContentService.createTextOutput(JSON.stringify({ok:true,status:'SERVICE_STRIVEN_CHECKLIST_ALREADY_REFRESHED'})).setMimeType(ContentService.MimeType.JSON);
