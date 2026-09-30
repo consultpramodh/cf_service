@@ -1,135 +1,160 @@
-# CF ServiceOps — Production v5.14.0
+# CF ServiceOps — Production v5.14.1
 
-This branch is the **canonical production source** for the Classic Fireplace & BBQ Store ServiceOps pipeline.
+This branch is the **only supported production ServiceOps model** for Classic Fireplace & BBQ Store.
 
-There is one supported automatic path:
+## One automatic path
 
 ```
 Gravity Forms / Webhook
         ↓
-Durable intake + normalized Service Request
+Durable intake + normalization
         ↓
 Customer identity resolution
         ↓
-Customer reuse / create
+Customer reuse / guarded create
         ↓
-Contact ownership / create / reconcile
+Customer-scoped Contact resolution / guarded create
         ↓
-Primary Location reuse / create / reconcile
+Primary Location reuse / guarded create / targeted reconciliation
         ↓
-Customer address/contact enrichment
+Customer + address enrichment
         ↓
-History + assets
+History + Assets
         ↓
-Authoritative existing Service Work Order check
+Existing Service Work Order reconciliation
         ↓
-Guarded Service Work Order create if absent
+Guarded Service Work Order create only if absent
         ↓
 Exact GET certification
         ↓
 Operator Queue projection
 ```
 
-Task creation is intentionally outside this ServiceOps boundary. Service Tasks are created by the downstream Task Mapping workflow after the Service Work Order moves to **In Progress**.
+ServiceOps ends at the certified Service Work Order. Service Task creation remains downstream and begins after the Work Order is moved to **In Progress**.
 
-## Canonical automation handlers
+## The only ServiceOps automation model
 
-Only two automation concepts are active in v5.14.0:
+The Apps Script source contains exactly one workflow controller:
 
-- `AUTO_FINAL_ServiceOps` — the single end-to-end request worker.
-- `AUTO_98_E2E_Recovery_Watchdog` — the permanent liveness/recovery watchdog.
+- `CF.EventDrivenServiceAutomation` in `70_Workflow_Automation.gs`
 
-Historical handlers such as `AUTO_processCustomerStructure`, `AUTO_00_E2E_Route_Request`, `AUTO_01_E2E_Customer_Match_Create`, through `AUTO_05_E2E_Sales_Order_Create_Verify`, and `AUTO_99_E2E_Safe_Stop_Review` are compatibility aliases only. They enter `AUTO_FINAL_ServiceOps`; they no longer own separate workflow behavior.
+It uses exactly two public automation handlers:
 
-The canonical worker automatically replaces legacy phase triggers with the canonical worker/watchdog topology.
+- `AUTO_FINAL_ServiceOps` — the request worker
+- `AUTO_98_E2E_Recovery_Watchdog` — liveness/recovery
 
-## Deterministic rules
+Customer/Contact/Location structure is handled by one internal request-scoped helper:
 
-### Customer
-- Exact deterministic identity evidence is evaluated first.
+- `CF.CustomerStructureEngine`
+
+The source contains **no** historical `AUTO_00`–`AUTO_05` phase handlers, no old `AUTO_processCustomerStructure`, no old `CF.AutoCustomerStructure`, and no runtime worker monkey-patching layer.
+
+## Intake
+
+`20_Intake_Processing.gs` owns durable webhook receipt and normalized Service Request creation.
+
+It does **not** run staged Customer/Location/Operational report refreshes. A successfully created request calls:
+
+`CF.EventDrivenServiceAutomation.kick(requestId)`
+
+and the final request worker takes over.
+
+## Customer
+
+- Exact deterministic identity evidence first.
 - Same surname alone never establishes identity.
-- Exact address + compatible household identity may reuse the household Customer under the approved identity policy.
-- New phone/email may require a new Contact rather than a new Customer.
-- Genuine identity conflicts route to review.
+- Approved exact-address household rules may reuse an existing Customer.
+- Genuine ambiguity stops safely.
+- Customer creation is guarded and idempotent.
 
-### Contact
-- Customer-scoped Contacts are resolved under the Customer.
-- A global duplicate Contact ID is evidence only; it does not prove Customer ownership.
-- Customer-scoped Contact references are never blindly treated as global `/v1/contacts/{id}` IDs.
-- Uncertain writes are never automatically repeated.
+## Contact
 
-### Primary Location
-- Primary service Location name is exactly `Primary Location`.
-- Street belongs in the Address fields, not the Location Name.
-- Same Customer + same canonical street/city + blank/placeholder postal means incomplete historical data, not automatically a different Location.
-- A unique existing `Primary Location` is preferred over creating another same-premises Location.
-- A real populated conflicting address/postal blocks unsafe reuse.
-- Per-request verification uses targeted Customer-Location reads; full Location reports are discovery caches only.
+- The canonical Contact is customer-scoped under the resolved Customer.
+- A global duplicate Contact is evidence only.
+- A customer-scoped Contact ID is never blindly treated as a global `/v1/contacts/{id}` ID.
+- Customer enrichment can still run when Contact write enrichment is deferred.
+- Uncertain writes are not automatically repeated.
 
-### Address enrichment
-- Structured webform Street, City, Province, Postal Code and Country are preserved.
-- An obviously incomplete same-premises Customer address may be enriched.
-- A genuinely different Customer address is preserved.
-- Geocoding is not required when the submitted structured address is already complete.
+## Primary Location
 
-### History / Assets
-- History and asset data are contextual evidence and must be associated with the resolved Customer/Location.
-- Cache absence does not prove that a Striven entity does not exist.
+- Primary Location name is exactly `Primary Location`.
+- Street belongs in Address fields.
+- Matching uses resolved Customer + canonical premises identity.
+- Same street/city with blank or placeholder historical postal is treated as incomplete data, not automatically as a different Location.
+- If same-premises duplicates exist and exactly one is `Primary Location`, that Location is preferred.
+- Genuine conflicting addresses remain blocked.
+- Per-request reconciliation uses targeted Customer-Location reads, not a full Location report refresh.
 
-### Service Work Order
-Before CREATE, the pipeline performs authoritative existing-record reconciliation.
+## Address enrichment
 
-Required structure:
-- durable Customer ID
-- durable customer-scoped Contact
-- durable Primary Location ID
-- service details / price
-- duplicate/open-work safety
-- idempotency/write journal
+The structured webform address is preserved.
 
-Default Service Work Order rules retained from the production project include:
+When Striven contains an obviously incomplete version of the same premises, Customer address fields may be enriched from the complete submitted Street, City, Province, Postal Code and Country.
+
+A genuinely different address is not overwritten.
+
+## History and Assets
+
+History and Assets remain part of Work Order preparation and are associated with the resolved Customer/Location.
+
+Shared Striven reports are candidate/discovery caches. **Cache absence never proves that a Striven entity does not exist.**
+
+## Service Work Order
+
+Before CREATE:
+
+1. durable Customer must exist;
+2. durable customer-scoped Contact must exist;
+3. durable Location must exist;
+4. existing/durable Work Order evidence is reconciled;
+5. service details, Assets, Internal Notes and required fields are built;
+6. duplicate/open-work safety must pass;
+7. write journal/idempotency safeguards must pass.
+
+Production defaults retained by the guarded writer include:
+
 - standard service item `41481`
 - Sales Order type `44938`
 - payment term `13`
 - initial status Quoted `19`
-- Internal Notes and approved custom-field mapping
-- resolved Location ID for Bill To and Ship To
+- Internal Notes `{NotesHtml, NotesText}`
+- resolved Location for Bill To and Ship To
 
-The writer performs at most one mutating POST for the create attempt, then certifies by read. If a write may have succeeded, the system reconciles by read and does not automatically POST again.
-
-### Queue
-`02 Service Requests` is the durable workflow ledger.
-`03 Operator Queue` is the operator-facing projection.
-Shared Striven reports are caches for discovery and display; absence from a report is never authoritative proof of non-existence.
+A create write is attempted once. The resulting Work Order is then certified by authoritative read. An uncertain write switches to read-only reconciliation; it does not automatically POST again.
 
 ## Request isolation
 
-v5.14.0 enforces Request-ID integrity at the orchestration boundary.
+Every operation is request-scoped.
 
-A result generated for a different Request ID cannot advance, park, or mutate the current request. Cross-request results are rejected and logged.
+A result that references a different Request ID is rejected and cannot advance or park the current request.
 
-The recovery watchdog has a narrow self-healing rule for the known false `PREFLIGHT_BLOCKED` technical-park pattern when:
-- there is no durable Customer/Contact/Location/Work Order ID,
-- no corresponding POST attempt occurred,
-- duplicate risk is NONE,
-- the row itself still requires CREATE actions.
+The watchdog contains a narrow recovery rule for the known false `PREFLIGHT_BLOCKED` state only when no durable IDs or remote write attempts exist.
 
-Genuine ambiguity/review states are not auto-cleared.
+## Recovery
 
-## API-call policy
+The permanent watchdog is:
 
-Use the least expensive authoritative evidence:
+`AUTO_98_E2E_Recovery_Watchdog`
 
-1. durable request/journal IDs
-2. current request-scoped targeted GET/search
-3. shared caches for candidate discovery
-4. full report refresh only for scheduled shared-cache maintenance, not per-request verification
+It can recover recent safe incomplete requests and schedule:
 
-Do not refresh an entire report merely to verify one Customer, Contact, Location, or Work Order.
+`AUTO_FINAL_ServiceOps`
+
+Genuine review/identity conflicts are not silently cleared.
+
+## Shared-cache maintenance
+
+`99_Production_Hardening.gs` contains no workflow wrappers.
+
+Its only automation role is the independent idle maintenance function:
+
+`CFH_refreshOperationalCacheIfIdle`
+
+It refreshes the shared Operational cache only while the live request queue is empty and the cache is stale.
 
 ## Production deployment
 
-Script ID:
+Apps Script Script ID:
 
 `1QZp4NAFeA8LmWBN31ylJYdK4XFepBX1h2lP_APaR-d1lTAC-d8LA9x3g`
 
@@ -137,33 +162,43 @@ Existing web-app deployment:
 
 `AKfycbwebnCvczGthe6Z_mvYmukLqFLB-9nk8hjNtNP3lR87CE1m_fEx2d9Bn_vpXMPCLUnPbA`
 
-Normal local release is one command:
+Authenticated production release:
 
 ```bash
 node scripts/release.mjs --execute
 ```
 
-The release script performs:
+The release script:
 
-1. authenticate with pinned clasp 3.3.0
-2. pull the current live bound project
-3. create a complete pre-change checkpoint
-4. replace only the five v5.14.0 modules
-5. verify file inventory and changed-file scope
-6. syntax/self-test the release
-7. push the complete project to the same Script ID
-8. pull the remote project back and verify content parity
-9. create an immutable Apps Script version
-10. redeploy the existing `/exec`
+1. authenticates with clasp 3.3.0;
+2. pulls the exact live bound project;
+3. creates a complete checkpoint;
+4. replaces only the seven finalized modules;
+5. verifies inventory and patch scope;
+6. rejects any legacy automation handler source;
+7. syntax-checks the release;
+8. pushes the complete project to the same Script ID;
+9. pulls it back and verifies exact source parity;
+10. rejects any legacy automation source in the remote project;
+11. versions and redeploys the existing web app.
 
-A manual GitHub Actions deployment is also available in `.github/workflows/deploy.yml`.
+The seven finalized modules are:
 
-## Finalized v5.14.0 modules
-
+- `src/20_Intake_Processing.gs`
 - `src/40_Matching_Profile.gs`
 - `src/50_Operator_Queue.gs`
 - `src/60_Striven_Write.gs`
 - `src/70_Workflow_Automation.gs`
 - `src/95_Public_Runners.gs`
+- `src/99_Production_Hardening.gs`
 
-Do not create a new Apps Script file for incremental ServiceOps stages. Extend/consolidate the existing modules unless a genuinely separate subsystem requires a new module.
+After deployment, the existing watchdog trigger retains the same public function name and will execute the v5.14.1 watchdog. Its first run removes obsolete automation triggers, recovers safe recent requests, and schedules `AUTO_FINAL_ServiceOps`.
+
+Run `FINALIZE_20260930_verifySingleServiceOpsModel()` to verify the trigger topology. A passing result is:
+
+- `singleModel = true`
+- `legacyAutomationTriggerCount = 0`
+- exactly one recovery watchdog
+- at most one one-shot `AUTO_FINAL_ServiceOps` worker
+
+Do not add phase-specific ServiceOps automation back into the project.
