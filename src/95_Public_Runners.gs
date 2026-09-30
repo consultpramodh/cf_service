@@ -737,6 +737,23 @@ function doGet(e) {
     })).setMimeType(ContentService.MimeType.JSON);
   }
   var ops=e&&e.parameter?String(e.parameter.ops||''):'';
+  if(ops==='refresh-karin-contact-evidence'){
+    var karinId='SR-20260930144914-6244';
+    var refresh=CF.StrivenData.refreshCustomerData({});
+    var matching=CF.Matching.recheckRequest(karinId,{persist:true});
+    var karinRow=CF.Util.findRecord('SERVICE_REQUESTS','Request ID',karinId)||{};
+    return ContentService.createTextOutput(JSON.stringify({
+      ok:refresh&&refresh.ok!==false,
+      status:'KARIN_CONTACT_EVIDENCE_REFRESHED',
+      refresh:refresh,
+      matchingStatus:matching&&matching.status||'',
+      customerId:String(karinRow['Matched Customer ID']||karinRow['Created Customer ID']||''),
+      contactId:String(karinRow['Matched Contact ID']||karinRow['Created Contact ID']||''),
+      contactAction:String(karinRow['Contact Action']||''),
+      currentStage:String(karinRow['Current Stage']||''),
+      nextAction:String(karinRow['Next Action']||'')
+    })).setMimeType(ContentService.MimeType.JSON);
+  }
   if(ops==='today-step'||ops==='today-recheck-step'){
     var id=e&&e.parameter?String(e.parameter.id||''):'';
     var allowed={
