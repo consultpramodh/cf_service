@@ -1,0 +1,32 @@
+name: Ops test Apps Script remote run
+
+on:
+  push:
+    branches:
+      - ops/run-todays-service-20260930
+    paths:
+      - .github/workflows/ops-run-today.yml
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Configure clasp auth
+        shell: bash
+        env:
+          CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
+        run: |
+          set -euo pipefail
+          test -n "$CLASPRC_JSON"
+          printf '%s' "$CLASPRC_JSON" > "$HOME/.clasprc.json"
+          printf '%s\n' '{"scriptId":"1QZp4NAFeA8LmWBN31ylJYdK4XFepBX1h2lP_APaR-d1lTAC-d8LA9x3g","rootDir":"src"}' > .clasp.json
+          npx -y @google/clasp@3.3.0 show-authorized-user
+      - name: Test remote Apps Script execution
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx -y @google/clasp@3.3.0 run FINALIZE_20260930_verifySingleServiceOpsModel --json
