@@ -19,6 +19,23 @@ const PATCH_BASES = [
   '95_Public_Runners',
   '99_Production_Hardening'
 ];
+const OBSOLETE_V2_BASES = [
+  'CF_ServiceOps_V2_Shadow_Resolver',
+  'CF_ServiceOps_V2_Core_Ensurers',
+  'CF_ServiceOps_V2_Orchestrator',
+  'CF_ServiceOps_V2_Migration',
+  'CF_ServiceOps_V2_Worker_Bridge',
+  'CF_ServiceOps_V2_Sheet_Runners',
+  'V2_Installer'
+];
+const FORBIDDEN_V2_SOURCE_MARKERS = [
+  'CF_SERVICEOPS_V2_',
+  'CF.V2',
+  'V2_addMenu',
+  'INSTALL_V2_SHADOW_AND_TEST',
+  'PATCH_V2_LIVE_FINDINGS_',
+  'PATCH_V2_SELECTED_CANARY_SAFETY_'
+];
 const FORBIDDEN_AUTOMATION_NAMES = [
   'CF.AutoCustomerStructure',
   'AUTO_processCustomerStructure',
@@ -100,6 +117,18 @@ function assertNoLegacyAutomation(dir) {
   if (findings.length) throw new Error('LEGACY_AUTOMATION_SOURCE_FOUND\n' + findings.join('\n'));
   console.log('LEGACY_AUTOMATION_SOURCE_ABSENT');
 }
+function assertNoV2GenerationSource(dir) {
+  const findings = [];
+  for (const name of files(dir)) {
+    if (!/\.(?:js|gs)$/.test(name)) continue;
+    const text = readFileSync(resolve(dir, name), 'utf8');
+    for (const marker of FORBIDDEN_V2_SOURCE_MARKERS) {
+      if (text.includes(marker)) findings.push(name + ': ' + marker);
+    }
+  }
+  if (findings.length) throw new Error('V2_GENERATION_SOURCE_FOUND\n' + findings.join('\n'));
+  console.log('V2_GENERATION_SOURCE_ABSENT');
+}
 
 console.log('======================================================================');
 console.log(' CF ServiceOps v5.14.1 — SINGLE AUTOMATION MODEL PRODUCTION RELEASE');
@@ -123,6 +152,7 @@ requireMarker(resolve(root, 'src', '70_Workflow_Automation.gs'), 'CF_SERVICEOPS_
 requireMarker(resolve(root, 'src', '95_Public_Runners.gs'), 'CF_SERVICEOPS_V5_14_1_SINGLE_PUBLIC_AUTOMATION_R1');
 requireMarker(resolve(root, 'src', '99_Production_Hardening.gs'), 'Version: 5.14.1');
 assertNoLegacyAutomation(resolve(root, 'src'));
+assertNoV2GenerationSource(resolve(root, 'src'));
 
 console.log('\n=== 1/10 Authenticate ===');
 clasp(['show-authorized-user', '--json']);
@@ -141,25 +171,42 @@ const beforeInv = inventory(before);
 writeFileSync(resolve(work, 'before.sha256.json'), JSON.stringify(Object.fromEntries(beforeInv), null, 2) + '\n');
 console.log('Checkpoint: ' + before);
 
-console.log('\n=== 4/10 Replace only finalized modules ===');
+console.log('\n=== 4/10 Replace finalized modules + remove obsolete V2 shadow generation ===');
 for (const base of PATCH_BASES) {
   const src = resolve(root, 'src', base + '.gs');
   const target = findTarget(base, live);
   cpSync(src, target);
   console.log(base + ' -> ' + basename(target));
 }
+const removedV2 = [];
+for (const base of OBSOLETE_V2_BASES) {
+  const entry = beforeInv.get(base);
+  if (!entry) continue;
+  rmSync(resolve(live, entry.name), { force: true });
+  removedV2.push(base);
+  console.log('REMOVE obsolete V2 -> ' + entry.name);
+}
+removedV2.sort();
 
-console.log('\n=== 5/10 Verify patch scope ===');
+console.log('\n=== 5/10 Verify patch scope + approved V2 cleanup ===');
 const afterInv = inventory(live);
 const beforeKeys = [...beforeInv.keys()].sort();
 const afterKeys = [...afterInv.keys()].sort();
-if (JSON.stringify(beforeKeys) !== JSON.stringify(afterKeys)) throw new Error('Live file inventory changed; refusing push.');
-const changed = beforeKeys.filter(k => beforeInv.get(k).sha !== afterInv.get(k).sha).sort();
+const expectedRemoved = beforeKeys.filter(k => OBSOLETE_V2_BASES.includes(k)).sort();
+if (JSON.stringify(removedV2) !== JSON.stringify(expectedRemoved)) {
+  throw new Error('Unexpected V2 removal scope. Removed=' + removedV2.join(', ') + ' Expected=' + expectedRemoved.join(', '));
+}
+const expectedAfterKeys = beforeKeys.filter(k => !OBSOLETE_V2_BASES.includes(k)).sort();
+if (JSON.stringify(afterKeys) !== JSON.stringify(expectedAfterKeys)) {
+  throw new Error('Live file inventory changed outside approved V2 cleanup; refusing push.');
+}
+const changed = expectedAfterKeys.filter(k => beforeInv.get(k).sha !== afterInv.get(k).sha).sort();
 const expected = [...PATCH_BASES].sort();
 if (JSON.stringify(changed) !== JSON.stringify(expected)) {
   throw new Error('Unexpected patch scope. Changed=' + changed.join(', ') + ' Expected=' + expected.join(', '));
 }
 console.log('PATCH_SCOPE_PASS: ' + changed.join(', '));
+console.log('OBSOLETE_V2_REMOVAL_PASS: ' + (removedV2.length ? removedV2.join(', ') : 'none present'));
 
 console.log('\n=== 6/10 Syntax + single-model checks ===');
 for (const base of PATCH_BASES) run(process.execPath, ['--check', findTarget(base, live)]);
@@ -168,6 +215,7 @@ requireMarker(findTarget('70_Workflow_Automation', live), 'CF_SERVICEOPS_V5_14_1
 requireMarker(findTarget('95_Public_Runners', live), 'CF_SERVICEOPS_V5_14_1_SINGLE_PUBLIC_AUTOMATION_R1');
 requireMarker(findTarget('99_Production_Hardening', live), 'Version: 5.14.1');
 assertNoLegacyAutomation(live);
+assertNoV2GenerationSource(live);
 console.log('SELF_TEST_PASS');
 
 console.log('\n=== 7/10 Push complete project to SAME Script ID ===');
@@ -183,7 +231,14 @@ for (const base of PATCH_BASES) {
   if (normalizedText(expectedPath) !== normalizedText(remotePath)) throw new Error('REMOTE_CONTENT_MISMATCH: ' + base);
   console.log('REMOTE_CONTENT_PASS: ' + base);
 }
+const remoteInv = inventory(verify);
+const remoteObsoleteV2 = OBSOLETE_V2_BASES.filter(base => remoteInv.has(base));
+if (remoteObsoleteV2.length) {
+  throw new Error('REMOTE_OBSOLETE_V2_SOURCE_FOUND: ' + remoteObsoleteV2.join(', '));
+}
+console.log('REMOTE_OBSOLETE_V2_SOURCE_ABSENT');
 assertNoLegacyAutomation(verify);
+assertNoV2GenerationSource(verify);
 
 console.log('\n=== 9/10 Version and redeploy existing /exec ===');
 const description = 'CF ServiceOps v5.14.1 single automation model';
@@ -203,6 +258,7 @@ console.log('Apps Script ver:  ' + versionNumber);
 console.log('Canonical worker: AUTO_FINAL_ServiceOps');
 console.log('Watchdog:         AUTO_98_E2E_Recovery_Watchdog');
 console.log('Legacy source:    ABSENT');
+console.log('Obsolete V2:      ABSENT');
 console.log('');
 console.log('The existing watchdog trigger uses the same public watchdog function name.');
 console.log('On its next run it will normalize the trigger topology, recover the recent queue,');
