@@ -709,8 +709,33 @@ function CF_20260930_queueTodayEndToEndOnce_() {
   return{status:'QUEUED_TODAY_END_TO_END',queued:true,requestIds:ids,results:results};
 }
 
+function CF_20260930_probeCustomerScopedContactRead_() {
+  var urls=[
+    'https://classicfireplace.striven.com/api/accounts/62701/contacts/57321',
+    'https://classicfireplace.striven.com/api/accounts/62701/contacts',
+    'https://classicfireplace.striven.com/api/contacts/57321',
+    '/v1/contacts/57321'
+  ];
+  return urls.map(function(url){
+    try{
+      var r=CF.StrivenHttp.requestJson(url,{method:'get'});
+      return {url:url,ok:true,status:r&&r.status||200,body:r&&r.json!==undefined?r.json:r};
+    }catch(err){
+      return {url:url,ok:false,error:String(err&&err.message||err)};
+    }
+  });
+}
+
 function doGet(e) {
   /* CF_SERVICEOPS_V5_14_1_TEMP_TODAY_STEP_RUNNER_R1 */
+  var probe=e&&e.parameter?String(e.parameter.ops||''):'';
+  if(probe==='probe-customer-contact'){
+    return ContentService.createTextOutput(JSON.stringify({
+      ok:true,
+      probe:'CUSTOMER_SCOPED_CONTACT_READ',
+      results:CF_20260930_probeCustomerScopedContactRead_()
+    })).setMimeType(ContentService.MimeType.JSON);
+  }
   var ops=e&&e.parameter?String(e.parameter.ops||''):'';
   if(ops==='today-step'||ops==='today-recheck-step'){
     var id=e&&e.parameter?String(e.parameter.id||''):'';
