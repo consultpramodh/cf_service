@@ -11,7 +11,7 @@ jobs:
   run:
     runs-on: ubuntu-latest
     steps:
-      - name: Run Karin canonical step
+      - name: Run Karin canonical step 2
         shell: bash
         run: |
           set -euo pipefail
