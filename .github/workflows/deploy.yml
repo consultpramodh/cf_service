@@ -1,18 +1,78 @@
-name: CF ServiceOps deployment — use v5.14.1 release script
+name: Deploy CF ServiceOps v5.14.1
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - production
+    paths:
+      - .github/workflows/deploy.yml
+      - scripts/release.mjs
+      - src/20_Intake_Processing.gs
+      - src/40_Matching_Profile.gs
+      - src/50_Operator_Queue.gs
+      - src/60_Striven_Write.gs
+      - src/70_Workflow_Automation.gs
+      - src/95_Public_Runners.gs
+      - src/99_Production_Hardening.gs
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cf-serviceops-production
+  cancel-in-progress: false
 
 jobs:
-  deployment-disabled:
+  deploy-production:
     runs-on: ubuntu-latest
+    env:
+      CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
+
     steps:
-      - name: Deployment moved to checkpointed v5.14.1 release script
+      - name: Checkout canonical production source
+        uses: actions/checkout@v4
+        with:
+          ref: production
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Require existing clasp authorization
         shell: bash
         run: |
-          echo 'This workflow is intentionally disabled to prevent partial/stale deployment.'
-          echo 'Canonical production source is the production branch.'
-          echo 'Run: node scripts/release.mjs --execute'
-          echo 'That release pulls live source, checkpoints it, replaces all seven finalized modules,'
-          echo 'rejects legacy automation source, pushes the same Script ID, verifies remote parity,'
-          echo 'and redeploys the existing web app.'
+          set -euo pipefail
+          test -n "${CLASPRC_JSON:-}" || { echo "CLASPRC_JSON repository secret is missing."; exit 2; }
+          printf '%s' "$CLASPRC_JSON" > "$HOME/.clasprc.json"
+          chmod 600 "$HOME/.clasprc.json"
+          npx -y @google/clasp@3.3.0 show-authorized-user --json
+
+      - name: Deploy checkpointed single-model release
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/release.mjs --execute
+
+      - name: Upload pre-change live checkpoint
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cf-serviceops-live-before-v5.14.1
+          path: |
+            .release-v5.14.1/before/**
+            .release-v5.14.1/before.sha256.json
+          retention-days: 30
+          if-no-files-found: warn
+
+      - name: Upload deployment verification
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cf-serviceops-v5.14.1-deploy-verification
+          path: |
+            .release-v5.14.1/verify/**
+            .release-v5.14.1/deployed-version.txt
+          retention-days: 30
+          if-no-files-found: warn
