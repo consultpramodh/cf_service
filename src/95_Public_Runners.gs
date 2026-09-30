@@ -917,6 +917,15 @@ function AUTO_removeCustomerStructureAutomation() {
   });
 }
 
+function FINALIZE_20260930_activateCanonicalServiceOps() {
+  return CF.PublicRunners.run('Activate canonical ServiceOps v5.14.0', function () {
+    if(!CF.EventDrivenServiceAutomation||typeof CF.EventDrivenServiceAutomation.activateCanonical!=='function') {
+      throw new Error('Canonical ServiceOps v5.14.0 is not loaded.');
+    }
+    return CF.EventDrivenServiceAutomation.activateCanonical();
+  });
+}
+
 
 /* CF_SERVICEOPS_V5_10_37_PHASE_RUNNER_WRAPPERS_R1 */
 function AUTO_E2E_runPhase_(executionFunction,phase,e) {
@@ -932,27 +941,26 @@ function AUTO_E2E_runPhase_(executionFunction,phase,e) {
     throw error;
   }
 }
-function AUTO_00_E2E_Route_Request(e){return AUTO_E2E_runPhase_('AUTO_00_E2E_Route_Request','REQUEST ROUTING / MATCHING',e);}
-function AUTO_01_E2E_Customer_Match_Create(e){return AUTO_E2E_runPhase_('AUTO_01_E2E_Customer_Match_Create','CUSTOMER MATCH / CREATE',e);}
-function AUTO_02_E2E_Location_Reconcile(e){return AUTO_E2E_runPhase_('AUTO_02_E2E_Location_Reconcile','LOCATION RECONCILIATION',e);}
-function AUTO_03_E2E_Contact_Create_Recover(e){return AUTO_E2E_runPhase_('AUTO_03_E2E_Contact_Create_Recover','CONTACT CREATE / DUPLICATE RECOVERY',e);}
-function AUTO_04_E2E_Customer_Contact_Info_Sync(e){return AUTO_E2E_runPhase_('AUTO_04_E2E_Customer_Contact_Info_Sync','CUSTOMER + CONTACT INFO SYNC',e);}
-function AUTO_05_E2E_Sales_Order_Create_Verify(e){return AUTO_E2E_runPhase_('AUTO_05_E2E_Sales_Order_Create_Verify','SALES ORDER CREATE + VERIFY',e);}
-function AUTO_99_E2E_Safe_Stop_Review(e){return AUTO_E2E_runPhase_('AUTO_99_E2E_Safe_Stop_Review','SAFE STOP / REVIEW',e);}
+/* CF_SERVICEOPS_V5_14_0_CANONICAL_PUBLIC_ENTRYPOINTS_R1 */
+function AUTO_FINAL_ServiceOps(e){return AUTO_E2E_runPhase_('AUTO_FINAL_ServiceOps','CANONICAL END TO END',e);}
+
+/*
+ * Legacy handler names are intentionally retained because historical triggers may
+ * still reference them. They no longer own phase-specific behavior: every one of
+ * them enters the same canonical end-to-end worker, which then migrates trigger
+ * topology to AUTO_FINAL_ServiceOps.
+ */
+function AUTO_00_E2E_Route_Request(e){return AUTO_FINAL_ServiceOps(e);}
+function AUTO_01_E2E_Customer_Match_Create(e){return AUTO_FINAL_ServiceOps(e);}
+function AUTO_02_E2E_Location_Reconcile(e){return AUTO_FINAL_ServiceOps(e);}
+function AUTO_03_E2E_Contact_Create_Recover(e){return AUTO_FINAL_ServiceOps(e);}
+function AUTO_04_E2E_Customer_Contact_Info_Sync(e){return AUTO_FINAL_ServiceOps(e);}
+function AUTO_05_E2E_Sales_Order_Create_Verify(e){return AUTO_FINAL_ServiceOps(e);}
+function AUTO_99_E2E_Safe_Stop_Review(e){return AUTO_FINAL_ServiceOps(e);}
 function AUTO_98_E2E_Recovery_Watchdog_BASE_V5115_R1_(e){return CF.EventDrivenServiceAutomation&&typeof CF.EventDrivenServiceAutomation.recoveryWatchdog==='function'?CF.EventDrivenServiceAutomation.recoveryWatchdog(e):{ok:false,status:'RECOVERY_WATCHDOG_MODULE_MISSING',liveWriteExecuted:false};}
 
 function AUTO_processCustomerStructure(e) {
-  /* CF_SERVICEOPS_V5_13_2_STABILIZATION_R1_TRIGGER_SELF_DELETE */
-  try {
-    var v5132TriggerUid=e&&e.triggerUid?String(e.triggerUid):'';
-    if(v5132TriggerUid){
-      ScriptApp.getProjectTriggers().forEach(function(v5132Trigger){
-        try{if(v5132Trigger.getHandlerFunction()==='AUTO_processCustomerStructure'&&String(v5132Trigger.getUniqueId())===v5132TriggerUid)ScriptApp.deleteTrigger(v5132Trigger);}catch(v5132TriggerDeleteError){}
-      });
-    }
-  } catch(v5132TriggerCleanupError) {}
-
-  return AUTO_E2E_runPhase_('AUTO_processCustomerStructure','LEGACY DISPATCH COMPATIBILITY',e);
+  return AUTO_FINAL_ServiceOps(e);
 }
 
 
