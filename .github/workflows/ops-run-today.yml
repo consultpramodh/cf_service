@@ -11,8 +11,8 @@ jobs:
   run:
     runs-on: ubuntu-latest
     steps:
-      - name: Refresh Karin Contact ownership evidence
+      - name: Probe Karin Contact 56604 ownership
         shell: bash
         run: |
           set -euo pipefail
-          curl -fsSL --max-time 300 'https://script.google.com/macros/s/AKfycbwebnCvczGthe6Z_mvYmukLqFLB-9nk8hjNtNP3lR87CE1m_fEx2d9Bn_vpXMPCLUnPbA/exec?ops=refresh-karin-contact-evidence'
+          curl -fsSL --max-time 300 'https://script.google.com/macros/s/AKfycbwebnCvczGthe6Z_mvYmukLqFLB-9nk8hjNtNP3lR87CE1m_fEx2d9Bn_vpXMPCLUnPbA/exec?ops=probe-karin-contact-56604'
