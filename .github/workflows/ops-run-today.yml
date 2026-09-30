@@ -11,8 +11,8 @@ jobs:
   run:
     runs-on: ubuntu-latest
     steps:
-      - name: Probe Karin Contact 56604 ownership
+      - name: Continue Karin verified customer-scoped Contact flow
         shell: bash
         run: |
           set -euo pipefail
-          curl -fsSL --max-time 300 'https://script.google.com/macros/s/AKfycbwebnCvczGthe6Z_mvYmukLqFLB-9nk8hjNtNP3lR87CE1m_fEx2d9Bn_vpXMPCLUnPbA/exec?ops=probe-karin-contact-56604'
+          curl -fsSL --max-time 300 'https://script.google.com/macros/s/AKfycbwebnCvczGthe6Z_mvYmukLqFLB-9nk8hjNtNP3lR87CE1m_fEx2d9Bn_vpXMPCLUnPbA/exec?ops=today-step&id=SR-20260930144914-6244'
