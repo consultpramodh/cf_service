@@ -3875,7 +3875,11 @@ CF.StrivenControlledContactCreate = (function () {
     var raw=Object.prototype.hasOwnProperty.call(remote,'CustomerAssociations')?remote.CustomerAssociations:(Object.prototype.hasOwnProperty.call(remote,'customerAssociations')?remote.customerAssociations:null);
     if(raw===null)return null;
     if(!Array.isArray(raw))raw=[raw];
-    return raw.map(function(x){x=x||{};return clean_(x.CustomerId||x.customerId||x.Id||x.id);}).filter(Boolean).filter(function(id,i,a){return a.indexOf(id)===i;});
+    return raw.map(function(x){
+      x=x||{};
+      var nested=x.Customer||x.customer||{};
+      return clean_(x.CustomerId||x.customerId||x.CustomerID||nested.Id||nested.id||nested.ID||x.Id||x.id);
+    }).filter(Boolean).filter(function(id,i,a){return a.indexOf(id)===i;});
   }
   function verifyContactIdByGetV5127_(contactId,record) {
     contactId=clean_(contactId);
@@ -4027,7 +4031,13 @@ function rootJournal_(record) {
       var out=[],seen={}; function add(v){v=clean_(v);if(v&&!seen[v]){seen[v]=true;out.push(v);}}
       add(prop_(c,['CustomerId','customerId','CustomerID']));
       var one=prop_(c,['Customer','customer']); if(one&&typeof one==='object')add(id_(one));
-      ['CustomerAssociations','customerAssociations','Customers','customers'].forEach(function(k){arr_(c&&c[k]).forEach(function(x){add(id_(x));});});
+      ['CustomerAssociations','customerAssociations','Customers','customers'].forEach(function(k){
+        arr_(c&&c[k]).forEach(function(x){
+          add(id_(x));
+          var nested=prop_(x,['Customer','customer']);
+          if(nested&&typeof nested==='object')add(id_(nested));
+        });
+      });
       return out;
     }
     /* CF_SERVICEOPS_V5_13_5_TECHNICAL_RECOVERY_R1
