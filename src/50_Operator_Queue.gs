@@ -159,12 +159,104 @@ CF.OperatorQueue = (function () {
     ]);
   }
 
-  function strivenText_(row) {
+  /* CF_SERVICEOPS_SERVICE_STRIVEN_CHECKLIST_R1
+   * Compact service checklist rendered inside the existing Striven column.
+   * Work Order is the service-facing name for the Sales Order record.
+   */
+  function checklistSymbol_(state) {
+    state = upper_(state);
+    if (state === 'DONE') return '✅';
+    if (state === 'REVIEW') return '⚠️';
+    return '⏳';
+  }
+
+  function customerChecklistState_(row, customerId) {
+    if (customerId) return 'DONE';
+    if (upper_(row['Customer Match Status']) === 'AMBIGUOUS' || upper_(row['Manual Review?']) === 'YES') return 'REVIEW';
+    return 'PENDING';
+  }
+
+  function contactChecklistState_(row, contactId) {
+    var association = upper_(row['Contact Association Status']);
+    var structure = upper_(row['Customer Structure Status']);
+    var reconciliation = upper_(row['Reconciliation Status']);
+    if (/CONFLICT|AMBIGUOUS|REVIEW|ERROR/.test(association)) return 'REVIEW';
+    if (contactId && (
+      /ASSOCIATED|CONFIRMED|CACHE_CONFIRMED/.test(association) ||
+      /CUSTOMER \+ CONTACT INFO CONFIRMED/.test(reconciliation) ||
+      /CUSTOMER STRUCTURE COMPLETE|COMPLETE/.test(structure)
+    )) return 'DONE';
+    if (contactId) return 'PENDING';
+    if (upper_(row['Contact Match Status']) === 'AMBIGUOUS' || upper_(row['Manual Review?']) === 'YES') return 'REVIEW';
+    return 'PENDING';
+  }
+
+  function locationChecklistState_(row, locationId) {
+    var status = upper_(row['Location Match Status']);
+    var structure = upper_(row['Customer Structure Status']);
+    if (status === 'AMBIGUOUS' || /LOCATION.*CONFLICT|LOCATION.*REVIEW|LOCATION.*ERROR/.test(upper_(row['Reconciliation Status']))) return 'REVIEW';
+    if (locationId && (status === 'MATCHED' || /PRIMARY LOCATION.*CONFIRMED|CUSTOMER STRUCTURE COMPLETE|COMPLETE/.test(structure))) return 'DONE';
+    if (locationId) return 'PENDING';
+    if (upper_(row['Manual Review?']) === 'YES') return 'REVIEW';
+    return 'PENDING';
+  }
+
+  function assetChecklist_(row, operationalIndex) {
+    var customerId = resolvedCustomerId_(row);
+    var assetIds = customerId && operationalIndex && operationalIndex.assetsByCustomer && operationalIndex.assetsByCustomer[customerId]
+      ? uniqueStrings_(operationalIndex.assetsByCustomer[customerId])
+      : [];
+    var statedCount = Number(row['Customer Asset Count'] || 0);
+    var count = Math.max(statedCount, assetIds.length);
+    var historyStatus = upper_(row['History Enrichment Status']);
+    var state = /ERROR|BLOCK|REVIEW|AMBIGUOUS/.test(historyStatus) ? 'REVIEW' : (historyStatus || assetIds.length || statedCount >= 0 ? 'DONE' : 'PENDING');
+    if (!historyStatus && !assetIds.length && clean_(row['Customer Asset Count']) === '') state = 'PENDING';
+
+    var display = '';
+    if (assetIds.length) {
+      display = assetIds.slice(0, 3).join(' / ');
+      if (assetIds.length > 3) display += ' +' + (assetIds.length - 3);
+    } else if (state === 'DONE') {
+      display = String(count);
+    }
+    return { state: state, ids: assetIds, display: display };
+  }
+
+  function workOrderChecklist_(row) {
+    var durable = durableSalesOrder_(row);
+    var id = clean_(durable.id || row['Work Order ID']);
+    var number = clean_(durable.number || row['Work Order Number'] || id);
+    var outcome = upper_(row['Final Outcome']);
+    var reconciliation = upper_(row['Reconciliation Status']);
+    var stage = upper_(row['Current Stage']);
+    var workOrderStatus = upper_(row['Work Order Status'] || durable.status);
+    var verified = !!(id || number) && (
+      /VERIFIED/.test(outcome) ||
+      /SALES ORDER VERIFIED|WORK ORDER VERIFIED/.test(reconciliation) ||
+      stage === 'COMPLETED'
+    );
+    var review = /BLOCK|ERROR|REVIEW|CONFLICT|AMBIGUOUS/.test(workOrderStatus) || upper_(row['Manual Review?']) === 'YES';
+    return {
+      state: verified ? 'DONE' : (review ? 'REVIEW' : 'PENDING'),
+      id: id,
+      number: number,
+      url: clean_(durable.url || row['Work Order Link']) || (id ? strivenUrl_('WORK_ORDER', { entityId: id }) : '')
+    };
+  }
+
+  function strivenText_(row, operationalIndex) {
+    var customerId = resolvedCustomerId_(row);
+    var contactId = clean_(row['Matched Contact ID'] || row['Created Contact ID']);
+    var locationId = clean_(row['Matched Location ID'] || row['Created Location ID']);
+    var assets = assetChecklist_(row, operationalIndex);
+    var workOrder = workOrderChecklist_(row);
+
     return line_([
-      entityMatchLine_(row, 'Customer', 'customer', 'Customer Match Status', 'Matched Customer ID', 'Customer Action'),
-      entityMatchLine_(row, 'Contact', 'contact', 'Contact Match Status', 'Matched Contact ID', 'Contact Action'),
-      entityMatchLine_(row, 'Location', 'location', 'Location Match Status', 'Matched Location ID', 'Location Action'),
-      clean_(row['Match Confidence']) ? 'Confidence: ' + row['Match Confidence'] + (clean_(row['Match Score']) ? ' (' + row['Match Score'] + ')' : '') : ''
+      'Customer: ' + (customerId || '') + (customerId ? ' ' : '') + checklistSymbol_(customerChecklistState_(row, customerId)),
+      'Contact: ' + (contactId || '') + (contactId ? ' ' : '') + checklistSymbol_(contactChecklistState_(row, contactId)),
+      'Location: ' + (locationId || '') + (locationId ? ' ' : '') + checklistSymbol_(locationChecklistState_(row, locationId)),
+      'Assets: ' + (assets.display || '') + (assets.display ? ' ' : '') + checklistSymbol_(assets.state),
+      'Work Order: ' + (workOrder.number || '') + (workOrder.number ? ' ' : '') + checklistSymbol_(workOrder.state)
     ]);
   }
 
@@ -349,7 +441,7 @@ CF.OperatorQueue = (function () {
     specs.push({ text: text, url: url, linePrefix: clean_(linePrefix), matchText: clean_(matchText) || text });
   }
 
-  function strivenLinkSpecs_(row) {
+  function strivenLinkSpecs_(row, operationalIndex) {
     var specs = [];
     var customerId = resolvedCustomerId_(row);
 
@@ -382,6 +474,16 @@ CF.OperatorQueue = (function () {
         var parentId = clean_(item['Customer ID'] || customerId);
         addLinkSpec_(specs, id, strivenUrl_('LOCATION', { customerId: parentId, entityId: id }), 'Location:');
       });
+    }
+
+    var assets = assetChecklist_(row, operationalIndex);
+    assets.ids.slice(0, 3).forEach(function (id) {
+      addLinkSpec_(specs, id, strivenUrl_('ASSET', { entityId: id }), 'Assets:');
+    });
+
+    var workOrder = workOrderChecklist_(row);
+    if (workOrder.number && workOrder.url) {
+      addLinkSpec_(specs, workOrder.number, workOrder.url, 'Work Order:');
     }
 
     return specs;
@@ -449,7 +551,7 @@ CF.OperatorQueue = (function () {
 
     (sourceRows || []).forEach(function (row, index) {
       var rowNumber = index + 2;
-      if (strivenCol) setRichLinks_(sheet.getRange(rowNumber, strivenCol), strivenLinkSpecs_(row));
+      if (strivenCol) setRichLinks_(sheet.getRange(rowNumber, strivenCol), strivenLinkSpecs_(row, operationalIndex));
       if (historyCol) setRichLinks_(sheet.getRange(rowNumber, historyCol), historyLinkSpecs_(row, operationalIndex));
     });
   }
@@ -724,7 +826,7 @@ function salesOrderText_(row,operationalIndex){
     record['Status'] = statusText_(row);
     record['Customer'] = customerText_(row);
     record['Service'] = serviceText_(row);
-    record['Striven'] = strivenText_(row);
+    record['Striven'] = strivenText_(row, operationalIndex);
     record['History'] = historyText_(row, operationalIndex);
     record['Next Step'] = row['Next Action'];
     record['Sales Order / Work Order'] = salesOrderText_(row, operationalIndex);
@@ -787,7 +889,7 @@ function salesOrderText_(row,operationalIndex){
     if (rowCount > 0) {
       var body = sheet.getRange(2, 1, rowCount, headers.length);
       body.setVerticalAlignment('top').setWrap(true).setFontSize(10).setBackground('#ffffff');
-      sheet.setRowHeights(2, rowCount, 96);
+      sheet.setRowHeights(2, rowCount, 108);
 
       var statusCol = headers.indexOf('Status') + 1;
       sourceRows.forEach(function (sourceRow, index) {
