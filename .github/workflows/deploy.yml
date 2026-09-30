@@ -55,6 +55,37 @@ jobs:
           set -euo pipefail
           node scripts/release.mjs --execute
 
+      - name: Verify live single-model runtime
+        shell: bash
+        env:
+          HEALTH_URL: https://script.google.com/macros/s/AKfycbwebnCvczGthe6Z_mvYmukLqFLB-9nk8hjNtNP3lR87CE1m_fEx2d9Bn_vpXMPCLUnPbA/exec
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 60); do
+            BODY="$(curl -fsSL --retry 2 --max-time 20 "$HEALTH_URL" || true)"
+            if [ -n "$BODY" ]; then
+              echo "LIVE_HEALTH_ATTEMPT=$attempt $BODY"
+              if node -e '
+                const x = JSON.parse(process.argv[1]);
+                const ok =
+                  x &&
+                  x.version === "5.14.1" &&
+                  x.singleModelVerified === true &&
+                  x.automationEnabled === true &&
+                  Number(x.legacyAutomationTriggerCount) === 0 &&
+                  Number(x.watchdogTriggers) === 1 &&
+                  Number(x.finalWorkerTriggers) <= 1;
+                process.exit(ok ? 0 : 1);
+              ' "$BODY"; then
+                echo "LIVE_SINGLE_MODEL_VERIFY_PASS"
+                exit 0
+              fi
+            fi
+            sleep 5
+          done
+          echo "LIVE_SINGLE_MODEL_VERIFY_FAILED"
+          exit 1
+
       - name: Upload pre-change live checkpoint
         if: always()
         uses: actions/upload-artifact@v4
