@@ -1,170 +1,18 @@
-name: Deploy CF ServiceOps v5.14.0
+name: CF ServiceOps deployment — use v5.14.1 release script
 
 on:
   workflow_dispatch:
 
-permissions:
-  contents: read
-
 jobs:
-  deploy-production:
+  deployment-disabled:
     runs-on: ubuntu-latest
-    env:
-      SCRIPT_ID: 1QZp4NAFeA8LmWBN31ylJYdK4XFepBX1h2lP_APaR-d1lTAC-d8LA9x3g
-      DEPLOYMENT_ID: AKfycbwebnCvczGthe6Z_mvYmukLqFLB-9nk8hjNtNP3lR87CE1m_fEx2d9Bn_vpXMPCLUnPbA
-      CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
-
     steps:
-      - name: Checkout canonical production source
-        uses: actions/checkout@v4
-        with:
-          ref: production
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-
-      - name: Authenticate clasp
+      - name: Deployment moved to checkpointed v5.14.1 release script
         shell: bash
         run: |
-          set -euo pipefail
-          test -n "${CLASPRC_JSON:-}" || { echo "CLASPRC_JSON secret is missing"; exit 2; }
-          printf '%s' "$CLASPRC_JSON" > "$HOME/.clasprc.json"
-          chmod 600 "$HOME/.clasprc.json"
-          npx -y @google/clasp@3.3.0 show-authorized-user --json
-
-      - name: Pull exact live bound Apps Script
-        shell: bash
-        run: |
-          set -euo pipefail
-          rm -rf .release
-          mkdir -p .release/live .release/before .release/verify
-          cd .release/live
-          printf '{"scriptId":"%s","rootDir":"."}\n' "$SCRIPT_ID" > .clasp.json
-          npx -y @google/clasp@3.3.0 pull
-          test -f appsscript.json
-          cd ../..
-          cp -a .release/live/. .release/before/
-          find .release/before -maxdepth 1 -type f ! -name '.clasp.json' -print0 | sort -z | xargs -0 sha256sum > .release/before.sha256
-
-      - name: Upload live pre-change checkpoint
-        uses: actions/upload-artifact@v4
-        with:
-          name: cf-serviceops-live-before-v5.14.0
-          path: |
-            .release/before/**
-            .release/before.sha256
-          retention-days: 30
-          if-no-files-found: error
-
-      - name: Patch only finalized modules
-        shell: bash
-        run: |
-          set -euo pipefail
-          : > .release/patched-files.txt
-          for base in 40_Matching_Profile 50_Operator_Queue 60_Striven_Write 70_Workflow_Automation 95_Public_Runners
-          do
-            src="src/$base.gs"
-            test -f "$src"
-            mapfile -t targets < <(find .release/live -maxdepth 1 -type f \( -name "$base.js" -o -name "$base.gs" \) -print)
-            test "${#targets[@]}" -eq 1 || { echo "Expected one live target for $base; found ${#targets[@]}"; exit 3; }
-            cp "$src" "${targets[0]}"
-            printf '%s -> %s\n' "$src" "${targets[0]}" | tee -a .release/patched-files.txt
-          done
-
-      - name: Verify scope and syntax before push
-        shell: bash
-        run: |
-          set -euo pipefail
-          python - <<'PY'
-          from pathlib import Path
-          import hashlib, sys
-          allowed={"40_Matching_Profile","50_Operator_Queue","60_Striven_Write","70_Workflow_Automation","95_Public_Runners"}
-
-          def inventory(root):
-              out={}
-              for p in Path(root).iterdir():
-                  if not p.is_file() or p.name==".clasp.json":
-                      continue
-                  key=p.stem if p.suffix in {".js",".gs"} else p.name
-                  out[key]=hashlib.sha256(p.read_bytes()).hexdigest()
-              return out
-
-          before=inventory(".release/before")
-          after=inventory(".release/live")
-          if set(before)!=set(after):
-              print("FILE_INVENTORY_CHANGED", sorted(set(before)^set(after)))
-              sys.exit(4)
-          changed={k for k in before if before[k]!=after[k]}
-          if changed != allowed:
-              print("UNEXPECTED_PATCH_SCOPE", sorted(changed), "expected", sorted(allowed))
-              sys.exit(5)
-          print("PATCH_SCOPE_PASS", sorted(changed))
-          PY
-
-          for f in             .release/live/40_Matching_Profile.*             .release/live/50_Operator_Queue.*             .release/live/60_Striven_Write.*             .release/live/70_Workflow_Automation.*             .release/live/95_Public_Runners.*
-          do
-            [ -f "$f" ] && node --check "$f"
-          done
-
-          grep -q "CF_SERVICEOPS_V5_14_0_CANONICAL_AUTOMATION_OVERWRITE_R1" .release/live/70_Workflow_Automation.*
-          grep -q "CF_SERVICEOPS_V5_14_0_CANONICAL_PUBLIC_ENTRYPOINTS_R1" .release/live/95_Public_Runners.*
-          grep -q "CF_SERVICEOPS_V5_13_9_TARGETED_POST_CUSTOMER_LOCATION_RECONCILIATION_R1" .release/live/60_Striven_Write.*
-
-      - name: Push complete live project
-        shell: bash
-        run: |
-          set -euo pipefail
-          cd .release/live
-          npx -y @google/clasp@3.3.0 status
-          npx -y @google/clasp@3.3.0 push --force
-
-      - name: Create Apps Script version and redeploy existing web app
-        shell: bash
-        run: |
-          set -euo pipefail
-          cd .release/live
-          out="$(npx -y @google/clasp@3.3.0 version "CF ServiceOps v5.14.0 canonical end-to-end automation")"
-          printf '%s\n' "$out"
-          version="$(printf '%s\n' "$out" | sed -nE 's/.*version[[:space:]]+([0-9]+).*/\1/ip' | tail -1)"
-          test -n "$version" || { echo "Could not parse Apps Script version"; exit 6; }
-          printf 'APPS_SCRIPT_VERSION=%s\n' "$version" | tee ../version.txt
-          npx -y @google/clasp@3.3.0 redeploy "$DEPLOYMENT_ID" "$version" "CF ServiceOps v5.14.0 canonical end-to-end automation"
-          npx -y @google/clasp@3.3.0 deployments
-
-      - name: Pull back and verify remote source
-        shell: bash
-        run: |
-          set -euo pipefail
-          cd .release/verify
-          printf '{"scriptId":"%s","rootDir":"."}\n' "$SCRIPT_ID" > .clasp.json
-          npx -y @google/clasp@3.3.0 pull
-          cd ../..
-          python - <<'PY'
-          from pathlib import Path
-          import sys
-          bases=["40_Matching_Profile","50_Operator_Queue","60_Striven_Write","70_Workflow_Automation","95_Public_Runners"]
-          for base in bases:
-              expected=Path("src")/(base+".gs")
-              found=list(Path(".release/verify").glob(base+".js"))+list(Path(".release/verify").glob(base+".gs"))
-              if len(found)!=1:
-                  print("REMOTE_FILE_COUNT_FAIL",base,len(found)); sys.exit(7)
-              def norm(p): return p.read_text(encoding="utf-8").replace("\r\n","\n").rstrip()+"\n"
-              if norm(expected)!=norm(found[0]):
-                  print("REMOTE_CONTENT_MISMATCH",base); sys.exit(8)
-              print("REMOTE_CONTENT_PASS",base)
-          PY
-          find .release/verify -maxdepth 1 -type f ! -name '.clasp.json' -print0 | sort -z | xargs -0 sha256sum > .release/verify.sha256
-
-      - name: Upload deployment verification
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: cf-serviceops-v5.14.0-deploy-verification
-          path: |
-            .release/patched-files.txt
-            .release/version.txt
-            .release/verify.sha256
-          retention-days: 30
-          if-no-files-found: warn
+          echo 'This workflow is intentionally disabled to prevent partial/stale deployment.'
+          echo 'Canonical production source is the production branch.'
+          echo 'Run: node scripts/release.mjs --execute'
+          echo 'That release pulls live source, checkpoints it, replaces all seven finalized modules,'
+          echo 'rejects legacy automation source, pushes the same Script ID, verifies remote parity,'
+          echo 'and redeploys the existing web app.'
