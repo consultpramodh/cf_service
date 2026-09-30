@@ -2097,6 +2097,7 @@ var CF_SERVICEOPS_LEAN_QUEUE_V51015_R1_ = (function () {
     if(type==='LOCATION')return parent?'https://classicfireplace.striven.com/next/crm#/accounts/'+encodeURIComponent(parent)+'/locations/'+encodeURIComponent(id):'';
     if(type==='SALES_ORDER')return'https://classicfireplace.striven.com/next/crm#/sales-orders/'+encodeURIComponent(id);
     if(type==='TASK')return'https://classicfireplace.striven.com/Tasks/TaskInfo.aspx?nav=1&TaskID='+encodeURIComponent(id);
+    if(type==='ASSET')return'https://classicfireplace.striven.com/AssetManagement/CustomerAssetsBasicInfo.aspx?AssetID='+encodeURIComponent(id);
     return'';
   }
   function statusText_(r){
@@ -2140,12 +2141,66 @@ var CF_SERVICEOPS_LEAN_QUEUE_V51015_R1_ = (function () {
     if(upper_(r[actionField])==='CREATE')return label+': NEW';
     return label+': '+clean_(r[statusField]||'—');
   }
-  function strivenText_(r){
+  /* CF_SERVICEOPS_SERVICE_STRIVEN_CHECKLIST_R2_ACTIVE_LEAN
+   * Active Operator Queue projection. Work Order is the Service name for
+   * the same Striven Sales Order entity.
+   */
+  function checklistSymbol_(state){
+    state=upper_(state);
+    if(state==='DONE')return'✅';
+    if(state==='REVIEW')return'⚠️';
+    return'⏳';
+  }
+  function customerChecklistState_(r,id){
+    if(id)return'DONE';
+    if(upper_(r['Customer Match Status'])==='AMBIGUOUS'||upper_(r['Manual Review?'])==='YES')return'REVIEW';
+    return'PENDING';
+  }
+  function contactChecklistState_(r,id){
+    var assoc=upper_(r['Contact Association Status']),structure=upper_(r['Customer Structure Status']),recon=upper_(r['Reconciliation Status']);
+    if(/CONFLICT|AMBIGUOUS|REVIEW|ERROR/.test(assoc))return'REVIEW';
+    if(id&&(/ASSOCIATED|CONFIRMED|CACHE_CONFIRMED/.test(assoc)||/CUSTOMER \+ CONTACT INFO CONFIRMED/.test(recon)||/CUSTOMER STRUCTURE COMPLETE|COMPLETE/.test(structure)))return'DONE';
+    if(id)return'PENDING';
+    if(upper_(r['Contact Match Status'])==='AMBIGUOUS'||upper_(r['Manual Review?'])==='YES')return'REVIEW';
+    return'PENDING';
+  }
+  function locationChecklistState_(r,id){
+    var status=upper_(r['Location Match Status']),structure=upper_(r['Customer Structure Status']),recon=upper_(r['Reconciliation Status']);
+    if(status==='AMBIGUOUS'||/LOCATION.*CONFLICT|LOCATION.*REVIEW|LOCATION.*ERROR/.test(recon))return'REVIEW';
+    if(id&&(status==='MATCHED'||/PRIMARY LOCATION.*CONFIRMED|CUSTOMER STRUCTURE COMPLETE|COMPLETE/.test(structure)))return'DONE';
+    if(id)return'PENDING';
+    if(upper_(r['Manual Review?'])==='YES')return'REVIEW';
+    return'PENDING';
+  }
+  function assetChecklist_(r,index){
+    var cid=customerId_(r),ids=cid&&index.assetsByCustomer[cid]?index.assetsByCustomer[cid].slice():[];
+    ids=ids.filter(function(id,i,a){return id&&a.indexOf(id)===i;});
+    var rawCount=clean_(r['Customer Asset Count']),count=Math.max(Number(rawCount||0),ids.length);
+    var hs=upper_(r['History Enrichment Status']),state='PENDING';
+    if(/ERROR|BLOCK|REVIEW|AMBIGUOUS/.test(hs))state='REVIEW';
+    else if(hs||ids.length||rawCount!=='')state='DONE';
+    var display=ids.length?ids.slice(0,3).join(' / ')+(ids.length>3?' +'+(ids.length-3):''):(state==='DONE'?String(count):'');
+    return{state:state,ids:ids,display:display};
+  }
+  function workOrderChecklist_(r,order){
+    order=order||{text:'—',url:'',status:'',number:'',workOrderNumber:''};
+    var durable=durableOrder_(r);
+    var id=clean_(durable.id||r['Work Order ID']);
+    var number=clean_(order.number||order.workOrderNumber||durable.number||r['Work Order Number']||id);
+    var url=clean_(order.url||durable.url||r['Work Order Link'])||(id?strivenUrl_('SALES_ORDER',id):'');
+    var outcome=upper_(r['Final Outcome']),recon=upper_(r['Reconciliation Status']),stage=upper_(r['Current Stage']),status=upper_(r['Work Order Status']||order.status||durable.status);
+    var verified=!!(id||number)&&(/VERIFIED/.test(outcome)||/SALES ORDER VERIFIED|WORK ORDER VERIFIED/.test(recon)||stage==='COMPLETED');
+    var review=/BLOCK|ERROR|REVIEW|CONFLICT|AMBIGUOUS/.test(status)||upper_(r['Manual Review?'])==='YES';
+    return{state:verified?'DONE':(review?'REVIEW':'PENDING'),id:id,number:number,url:url};
+  }
+  function strivenText_(r,index,order){
+    var cid=customerId_(r),contact=contactId_(r),location=locationId_(r),assets=assetChecklist_(r,index),wo=workOrderChecklist_(r,order);
     return line_([
-      entityLine_(r,'Customer','customer','Customer Match Status','Matched Customer ID','Customer Action'),
-      entityLine_(r,'Contact','contact','Contact Match Status','Matched Contact ID','Contact Action'),
-      entityLine_(r,'Location','location','Location Match Status','Matched Location ID','Location Action'),
-      clean_(r['Match Confidence'])?'Confidence: '+r['Match Confidence']+(clean_(r['Match Score'])?' ('+r['Match Score']+')':''):''
+      'Customer: '+(cid||'')+(cid?' ':'')+checklistSymbol_(customerChecklistState_(r,cid)),
+      'Contact: '+(contact||'')+(contact?' ':'')+checklistSymbol_(contactChecklistState_(r,contact)),
+      'Location: '+(location||'')+(location?' ':'')+checklistSymbol_(locationChecklistState_(r,location)),
+      'Assets: '+(assets.display||'')+(assets.display?' ':'')+checklistSymbol_(assets.state),
+      'Work Order: '+(wo.number||'')+(wo.number?' ':'')+checklistSymbol_(wo.state)
     ]);
   }
   function historyText_(r,index){
@@ -2288,17 +2343,25 @@ var CF_SERVICEOPS_LEAN_QUEUE_V51015_R1_ = (function () {
     }
     return b.build();
   }
-  function richStriven_(r,text){
+  function richStriven_(r,text,index,order){
     var cid=customerId_(r),contact=contactId_(r),location=locationId_(r);
+    var assets=assetChecklist_(r,index),wo=workOrderChecklist_(r,order);
     var b=SpreadsheetApp.newRichTextValue().setText(text),specs=[
       {prefix:'Customer: ',id:cid,url:strivenUrl_('CUSTOMER',cid)},
       {prefix:'Contact: ',id:contact,url:strivenUrl_('CONTACT',contact,cid)},
       {prefix:'Location: ',id:location,url:strivenUrl_('LOCATION',location,cid)}
     ];
-    specs.forEach(function(s){
-      if(!s.id||!s.url)return;
-      var needle=s.prefix+s.id,pos=text.indexOf(needle);
-      if(pos>=0)b.setLinkUrl(pos+s.prefix.length,pos+s.prefix.length+s.id.length,s.url);
+    assets.ids.slice(0,3).forEach(function(id){
+      specs.push({prefix:'Assets: ',id:id,url:strivenUrl_('ASSET',id)});
+    });
+    if(wo.number&&wo.url)specs.push({prefix:'Work Order: ',id:wo.number,url:wo.url});
+    specs.forEach(function(spec){
+      if(!spec.id||!spec.url)return;
+      var lineStart=text.indexOf(spec.prefix);
+      if(lineStart<0)return;
+      var lineEnd=text.indexOf('\n',lineStart);if(lineEnd<0)lineEnd=text.length;
+      var pos=text.indexOf(spec.id,lineStart);
+      if(pos>=lineStart&&pos<lineEnd)b.setLinkUrl(pos,pos+spec.id.length,spec.url);
     });
     return b.build();
   }
@@ -2342,11 +2405,11 @@ var CF_SERVICEOPS_LEAN_QUEUE_V51015_R1_ = (function () {
     var values=[],strivenRich=[],orderRich=[],taskRich=[],statusBg=[],actionValidations=[];
     requests.forEach(function(r){
       var order=orderProjection_(r,index),task=taskProjection_(order,index);
-      var st=statusText_(r),cust=customerText_(r),svc=serviceText_(r),str=strivenText_(r),hist=historyText_(r,index);
+      var st=statusText_(r),cust=customerText_(r),svc=serviceText_(r),str=strivenText_(r,index,order),hist=historyText_(r,index);
       var candidateChoices=candidateChoices_(r);
       values.push([r['Request ID'],st,cust,svc,str,hist,r['Next Action'],order.text,task.text,'']);
       actionValidations.push([candidateChoices.length?SpreadsheetApp.newDataValidation().requireValueInList(candidateChoices,true).setAllowInvalid(false).build():null]);
-      strivenRich.push([richStriven_(r,str)]);
+      strivenRich.push([richStriven_(r,str,index,order)]);
       orderRich.push([richFirstLine_(order.text,order.url,order.status)]);
       taskRich.push([richFirstLine_(task.text,task.url,task.status)]);
       statusBg.push([stageBg_(r['Current Stage'])]);
@@ -2365,6 +2428,7 @@ var CF_SERVICEOPS_LEAN_QUEUE_V51015_R1_ = (function () {
 
     if(n){
       sheet.getRange(2,2,n,1).setBackgrounds(statusBg).setFontWeight('bold');
+      sheet.setRowHeights(2,n,108);
     }
     var tStatus=Date.now();
 
