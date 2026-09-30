@@ -2994,7 +2994,7 @@ CF.StrivenControlledCustomerCreate = (function () {
     if(!locations.length)locations=exactLocationCandidates_(record,customerId);
     var refresh={refreshed:false,targeted:true,targetedStatus:clean_(targeted&&targeted.status),fullLocationRefreshExecuted:false};
 
-    if (locations.length === 1) {
+    if (locations.length === 1 && clean_(locations[0]['Location ID'])) {
       var locationId = clean_(locations[0]['Location ID']);
       var updatedJournal = clone_(journal || {});
       updatedJournal.status = 'CUSTOMER_AND_PRIMARY_LOCATION_RECONCILED';
@@ -6240,8 +6240,19 @@ CF.StandaloneLocationCreateV5128=(function(){
     if(!r)return{ok:false,status:'LOCATION_REQUEST_NOT_FOUND',requestId:clean_(requestId),customerId:clean_(customerId),matches:[],liveWriteExecuted:false};
     var cid=clean_(customerId)||resolved_(r,'Matched Customer ID','Created Customer ID');
     if(!cid)return{ok:false,status:'LOCATION_CUSTOMER_ID_REQUIRED',requestId:clean_(r['Request ID']),customerId:'',matches:[],liveWriteExecuted:false};
-    var matches=search_(r,cid,options||{});
-    return{ok:true,status:matches.length===1?'LOCATION_TARGETED_MATCHED':matches.length>1?'LOCATION_TARGETED_AMBIGUOUS':'LOCATION_TARGETED_NOT_FOUND',requestId:clean_(r['Request ID']),customerId:cid,matches:matches,matchIds:matches.map(rowId_),liveWriteExecuted:false};
+    var rawMatches=search_(r,cid,options||{});
+    var matches=rawMatches.map(function(x){
+      var fullAddress=clean_(x.FullAddress||x.fullAddress||x.FormattedAddress||x.formattedAddress);
+      if(!fullAddress)fullAddress=[rowStreet_(x),rowCity_(x),rowPostal_(x)].filter(Boolean).join(', ');
+      return{
+        'Location ID':rowId_(x),
+        'Customer ID':cid,
+        'Location Name':rowName_(x),
+        'Full Address':fullAddress,
+        '__cfLocationMatchMethod':'CUSTOMER_SCOPED_LOCATION_SEARCH'
+      };
+    }).filter(function(x){return !!clean_(x['Location ID']);});
+    return{ok:true,status:matches.length===1?'LOCATION_TARGETED_MATCHED':matches.length>1?'LOCATION_TARGETED_AMBIGUOUS':'LOCATION_TARGETED_NOT_FOUND',requestId:clean_(r['Request ID']),customerId:cid,matches:matches,matchIds:matches.map(function(x){return clean_(x['Location ID']);}),liveWriteExecuted:false};
   }
   function finalize_(r,location,created){
     var id=rowId_(location),contactId=resolved_(r,'Matched Contact ID','Created Contact ID'),complete=!!contactId;
