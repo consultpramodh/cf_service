@@ -4038,7 +4038,7 @@ function rootJournal_(record) {
      */
     function cachedCustomerIdsForContact_(contactId){
       var rows=[],out=[],seen={};
-      try{rows=exactFinderRows_('STRIVEN_CUSTOMER_DATA','Contact ID',clean_(contactId))||[];}catch(ignoredCache){rows=[];}
+      try{rows=exactFinderRows_('Contact ID',clean_(contactId))||[];}catch(ignoredCache){rows=[];}
       rows.forEach(function(row){
         if(upper_(row['Entity Type'])!=='CONTACT')return;
         var id=clean_(row['Customer ID']);
