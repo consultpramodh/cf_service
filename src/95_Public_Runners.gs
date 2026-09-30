@@ -709,7 +709,38 @@ function CF_20260930_queueTodayEndToEndOnce_() {
   return{status:'QUEUED_TODAY_END_TO_END',queued:true,requestIds:ids,results:results};
 }
 
-function doGet() {
+function doGet(e) {
+  /* CF_SERVICEOPS_V5_14_1_TEMP_TODAY_STEP_RUNNER_R1 */
+  var ops=e&&e.parameter?String(e.parameter.ops||''):'';
+  if(ops==='today-step'){
+    var id=e&&e.parameter?String(e.parameter.id||''):'';
+    var allowed={
+      'SR-20260930103833-2221':true,
+      'SR-20260930103408-5757':true,
+      'SR-20260930094108-9940':true,
+      'SR-20260930064224-4257':true
+    };
+    if(!allowed[id]){
+      return ContentService.createTextOutput(JSON.stringify({ok:false,status:'TODAY_STEP_REQUEST_NOT_ALLOWED'})).setMimeType(ContentService.MimeType.JSON);
+    }
+    var kick=CF.EventDrivenServiceAutomation.kick(id);
+    var run=CF.EventDrivenServiceAutomation.worker({});
+    var row=CF.Util.findRecord('SERVICE_REQUESTS','Request ID',id)||{};
+    return ContentService.createTextOutput(JSON.stringify({
+      ok:run&&run.ok!==false,
+      status:'TODAY_STEP_EXECUTED',
+      requestId:id,
+      kickStatus:kick&&kick.status||'',
+      workerStatus:run&&run.status||'',
+      liveWriteExecuted:!!(run&&run.liveWriteExecuted===true),
+      currentStage:String(row['Current Stage']||''),
+      requestStatus:String(row['Request Status']||''),
+      nextAction:String(row['Next Action']||''),
+      workOrderId:String(row['Work Order ID']||''),
+      workOrderNumber:String(row['Work Order Number']||''),
+      finalOutcome:String(row['Final Outcome']||'')
+    })).setMimeType(ContentService.MimeType.JSON);
+  }
   /* CF_SERVICEOPS_V5_14_1_PUBLIC_HEALTH_R1 */
   var todayBatch=null;
   try { todayBatch=CF_20260930_queueTodayEndToEndOnce_(); }
