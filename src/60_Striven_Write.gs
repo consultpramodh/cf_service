@@ -5264,7 +5264,10 @@ function executeApproved(requestId,options){options=options||{};if(options.execu
       type:typeId===EXPECTED.typeId,
       paymentTerm:paymentTermId===EXPECTED.paymentTermId,
       status:statusId===EXPECTED.statusId||upper_(statusName)==='QUOTED',
-      lineItem:itemId===ITEM_ID,
+      lineItem:itemId===Number(
+        expectedPayload&&expectedPayload.LineItems&&expectedPayload.LineItems[0]&&
+        expectedPayload.LineItems[0].Item&&expectedPayload.LineItems[0].Item.Id||0
+      ),
       customFields:customFieldsConfirmed,
       internalNotes:notesConfirmed
     };
