@@ -736,6 +736,25 @@ function doGet(e) {
       results:CF_20260930_probeCustomerScopedContactRead_()
     })).setMimeType(ContentService.MimeType.JSON);
   }
+  if(probe==='probe-karin-contact-56604'){
+    var result={ok:false,contactId:'56604'};
+    try{
+      var response=CF.StrivenHttp.requestJson('/v1/contacts/56604',{method:'get',attempts:1,idempotent:true});
+      var body=response&&response.json?response.json:{};
+      result={
+        ok:true,
+        contactId:String(body.Id||body.id||body.ID||''),
+        firstName:String(body.FirstName||body.firstName||''),
+        lastName:String(body.LastName||body.lastName||''),
+        customerId:String(body.CustomerId||body.customerId||body.CustomerID||''),
+        customer:body.Customer||body.customer||null,
+        customerAssociations:body.CustomerAssociations||body.customerAssociations||null,
+        customers:body.Customers||body.customers||null,
+        keys:Object.keys(body).sort()
+      };
+    }catch(err){result={ok:false,contactId:'56604',error:String(err&&err.message||err)};}
+    return ContentService.createTextOutput(JSON.stringify(result)).setMimeType(ContentService.MimeType.JSON);
+  }
   var ops=e&&e.parameter?String(e.parameter.ops||''):'';
   if(ops==='refresh-karin-contact-evidence'){
     var karinId='SR-20260930144914-6244';
