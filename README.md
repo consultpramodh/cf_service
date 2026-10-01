@@ -160,35 +160,46 @@ It refreshes the shared Operational cache only while the live request queue is e
 
 ## Production deployment
 
-Apps Script Script ID:
+Production releases now use the permanent, config-driven release toolkit.
 
-`1QZp4NAFeA8LmWBN31ylJYdK4XFepBX1h2lP_APaR-d1lTAC-d8LA9x3g`
-
-Existing web-app deployment:
-
-`AKfycbwebnCvczGthe6Z_mvYmukLqFLB-9nk8hjNtNP3lR87CE1m_fEx2d9Bn_vpXMPCLUnPbA`
-
-Authenticated production release:
+One-time setup:
 
 ```bash
-node scripts/release.mjs --execute
+npm install
 ```
 
-The release script:
+Read-only local verification:
 
-1. authenticates with clasp 3.3.0;
-2. pulls the exact live bound project;
-3. creates a complete checkpoint;
-4. replaces only the seven finalized modules;
-5. verifies inventory and patch scope;
-6. rejects any legacy automation handler source;
-7. syntax-checks the release;
-8. pushes the complete project to the same Script ID;
-9. pulls it back and verifies exact source parity;
-10. rejects any legacy automation source in the remote project;
-11. versions and redeploys the existing web app.
+```bash
+npm run release:self-test
+```
 
-The seven finalized modules are:
+Normal authenticated production release:
+
+```bash
+node scripts/release.mjs --execute --description "<requested change>"
+```
+
+The release toolkit reads `release.config.json` and automatically:
+
+1. verifies local configuration, allowlisted modules, required markers, forbidden legacy source, and JavaScript syntax;
+2. authenticates with pinned `@google/clasp@3.3.0`;
+3. pulls the exact live bound Apps Script project;
+4. writes a durable pre-change checkpoint under `.release-checkpoints/`;
+5. overlays only approved canonical modules into the complete live project;
+6. verifies file inventory, manifest preservation, and exact patch scope;
+7. pushes the complete project to the same Script ID;
+8. pulls the remote source once and verifies whole-project SHA-256 parity;
+9. creates an immutable Apps Script version;
+10. updates the existing production deployment rather than creating a new deployment;
+11. calls the explicit read-only `?ops=health` endpoint;
+12. calls the explicit read-only `?ops=release-verify` acceptance endpoint;
+13. writes a release report and before/after hashes;
+14. automatically restores the pre-release checkpoint and redeploys it if a failure occurs after the remote push.
+
+The normal release is intentionally a **complete-project push with a targeted patch**. Do not construct a partial Apps Script project for deployment.
+
+The canonical release modules remain:
 
 - `src/20_Intake_Processing.gs`
 - `src/40_Matching_Profile.gs`
@@ -198,13 +209,13 @@ The seven finalized modules are:
 - `src/95_Public_Runners.gs`
 - `src/99_Production_Hardening.gs`
 
-After deployment, the existing watchdog trigger retains the same public function name and will execute the v5.14.2 watchdog. Its first run removes obsolete automation triggers, recovers safe recent requests, and schedules `AUTO_FINAL_ServiceOps`.
+The public web app exposes two release-only read paths:
 
-Run `FINALIZE_20260930_verifySingleServiceOpsModel()` to verify the trigger topology. A passing result is:
+- `?ops=health` — verifies the single ServiceOps automation model is enabled and trigger topology is valid.
+- `?ops=release-verify` — runs the read-only health check plus the production-hardening self-test.
 
-- `singleModel = true`
-- `legacyAutomationTriggerCount = 0`
-- exactly one recovery watchdog
-- at most one one-shot `AUTO_FINAL_ServiceOps` worker
+These routes do not queue requests, create or delete triggers, refresh operational reports, or write to Striven.
+
+For the full engineering contract, see `PROJECT_OPERATING_RULES.md`.
 
 Do not add phase-specific ServiceOps automation back into the project.
