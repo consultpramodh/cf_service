@@ -1,0 +1,14 @@
+{
+  "name": "cf-serviceops-release-toolkit",
+  "private": true,
+  "version": "5.14.2",
+  "description": "Permanent one-command release toolkit for the CF ServiceOps bound Apps Script project.",
+  "scripts": {
+    "release": "node scripts/release.mjs",
+    "release:self-test": "node scripts/release.mjs --self-test",
+    "release:execute": "node scripts/release.mjs --execute"
+  },
+  "devDependencies": {
+    "@google/clasp": "3.3.0"
+  }
+}
