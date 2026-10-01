@@ -1,294 +1,506 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process';
 import {
-  cpSync, existsSync, mkdirSync, readFileSync, readdirSync,
-  rmSync, statSync, writeFileSync
+  cpSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  writeFileSync
 } from 'node:fs';
 import { basename, resolve } from 'node:path';
 import { createHash } from 'node:crypto';
+import { fileURLToPath } from 'node:url';
 
-const RELEASE = '5.14.2';
-const SCRIPT_ID = '1QZp4NAFeA8LmWBN31ylJYdK4XFepBX1h2lP_APaR-d1lTAC-d8LA9x3g';
-const DEPLOYMENT_ID = 'AKfycbwebnCvczGthe6Z_mvYmukLqFLB-9nk8hjNtNP3lR87CE1m_fEx2d9Bn_vpXMPCLUnPbA';
-const PATCH_BASES = [
-  '20_Intake_Processing',
-  '40_Matching_Profile',
-  '50_Operator_Queue',
-  '60_Striven_Write',
-  '70_Workflow_Automation',
-  '95_Public_Runners',
-  '99_Production_Hardening'
-];
-const OBSOLETE_V2_BASES = [
-  'CF_ServiceOps_V2_Shadow_Resolver',
-  'CF_ServiceOps_V2_Core_Ensurers',
-  'CF_ServiceOps_V2_Orchestrator',
-  'CF_ServiceOps_V2_Migration',
-  'CF_ServiceOps_V2_Worker_Bridge',
-  'CF_ServiceOps_V2_Sheet_Runners',
-  'V2_Installer'
-];
-const FORBIDDEN_V2_SOURCE_MARKERS = [
-  'CF_SERVICEOPS_V2_',
-  'CF.V2',
-  'V2_addMenu',
-  'INSTALL_V2_SHADOW_AND_TEST',
-  'PATCH_V2_LIVE_FINDINGS_',
-  'PATCH_V2_SELECTED_CANARY_SAFETY_'
-];
-const FORBIDDEN_AUTOMATION_NAMES = [
-  'CF.AutoCustomerStructure',
-  'AUTO_processCustomerStructure',
-  'AUTO_00_E2E_Route_Request',
-  'AUTO_01_E2E_Customer_Match_Create',
-  'AUTO_02_E2E_Location_Reconcile',
-  'AUTO_03_E2E_Contact_Create_Recover',
-  'AUTO_04_E2E_Customer_Contact_Info_Sync',
-  'AUTO_05_E2E_Sales_Order_Create_Verify',
-  'AUTO_99_E2E_Safe_Stop_Review',
-  'AUTO_E2E_runPhase_',
-  'AUTO_98_E2E_Recovery_Watchdog_BASE_V5115_R1_',
-  '__CFH_BASE_WORKER',
-  'CFH_patchEventDrivenWorker_'
-];
+const root = resolve(fileURLToPath(new URL('..', import.meta.url)));
+const configPath = resolve(root, 'release.config.json');
+if (!existsSync(configPath)) throw new Error('Missing release.config.json.');
+const CONFIG = JSON.parse(readFileSync(configPath, 'utf8'));
 
 const args = process.argv.slice(2);
 const execute = args.includes('--execute');
-const root = resolve(new URL('..', import.meta.url).pathname);
-const work = resolve(root, '.release-v5.14.2');
-const live = resolve(work, 'live');
-const before = resolve(work, 'before');
-const verify = resolve(work, 'verify');
+const selfTestOnly = args.includes('--self-test');
+const description = readArgValue('--description') || `${CONFIG.projectName} v${CONFIG.releaseVersion}`;
+const requestedModules = readRepeatedArg('--module');
+const patchModules = requestedModules.length
+  ? requestedModules
+  : [...CONFIG.defaultPatchModules];
+
+const sourceDir = resolve(root, CONFIG.sourceDir || 'src');
+const workRoot = resolve(root, '.release-work');
+const live = resolve(workRoot, 'live');
+const verify = resolve(workRoot, 'verify');
+const rollbackVerify = resolve(workRoot, 'rollback-verify');
+const checkpointRoot = resolve(root, '.release-checkpoints');
+const checkpointId = `${timestampForPath()}-v${CONFIG.releaseVersion}`;
+const checkpoint = resolve(checkpointRoot, checkpointId);
+const before = resolve(checkpoint, 'before');
+const reportPath = resolve(checkpoint, 'release-report.json');
+const localClasp = resolve(
+  root,
+  'node_modules',
+  '.bin',
+  process.platform === 'win32' ? 'clasp.cmd' : 'clasp'
+);
 const npx = process.platform === 'win32' ? 'npx.cmd' : 'npx';
+const report = {
+  project: CONFIG.projectName,
+  releaseVersion: CONFIG.releaseVersion,
+  description,
+  checkpointId,
+  startedAt: new Date().toISOString(),
+  scriptId: CONFIG.scriptId,
+  deploymentId: CONFIG.deploymentId,
+  patchModules,
+  status: 'STARTED',
+  steps: []
+};
+let pushedRemoteHead = false;
+let deploymentUpdated = false;
+
+function readArgValue(name) {
+  const index = args.indexOf(name);
+  if (index < 0) return '';
+  if (index + 1 >= args.length || String(args[index + 1]).startsWith('--')) {
+    throw new Error(`${name} requires a value.`);
+  }
+  return String(args[index + 1]);
+}
+
+function readRepeatedArg(name) {
+  const values = [];
+  for (let i = 0; i < args.length; i += 1) {
+    if (args[i] !== name) continue;
+    if (i + 1 >= args.length || String(args[i + 1]).startsWith('--')) {
+      throw new Error(`${name} requires a value.`);
+    }
+    values.push(String(args[i + 1]));
+  }
+  return [...new Set(values)];
+}
+
+function timestampForPath() {
+  return new Date().toISOString().replace(/[:.]/g, '-');
+}
+
+function step(name, data = {}) {
+  report.steps.push({ name, at: new Date().toISOString(), ...data });
+}
+
+function saveReport(extra = {}) {
+  Object.assign(report, extra);
+  mkdirSync(checkpoint, { recursive: true });
+  writeFileSync(reportPath, JSON.stringify(report, null, 2) + '\n');
+}
 
 function run(command, commandArgs, options = {}) {
   const cwd = options.cwd || root;
   console.log('> ' + command + ' ' + commandArgs.join(' '));
+  const useInput = Object.prototype.hasOwnProperty.call(options, 'input');
   const r = spawnSync(command, commandArgs, {
     cwd,
     encoding: 'utf8',
     shell: false,
-    stdio: options.capture ? ['inherit', 'pipe', 'pipe'] : 'inherit'
+    input: useInput ? options.input : undefined,
+    stdio: useInput
+      ? ['pipe', options.capture ? 'pipe' : 'inherit', options.capture ? 'pipe' : 'inherit']
+      : (options.capture ? ['inherit', 'pipe', 'pipe'] : 'inherit')
   });
   if (options.capture) {
     if (r.stdout) process.stdout.write(r.stdout);
     if (r.stderr) process.stderr.write(r.stderr);
   }
   if (r.error) throw r.error;
-  if (r.status !== 0) process.exit(r.status || 1);
+  if (r.status !== 0) throw new Error(`Command failed (${r.status || 1}): ${command} ${commandArgs.join(' ')}`);
   return r;
 }
-function clasp(args, options = {}) {
-  return run(npx, ['-y', '@google/clasp@3.3.0', ...args], options);
+
+function clasp(commandArgs, options = {}) {
+  if (existsSync(localClasp)) return run(localClasp, commandArgs, options);
+  console.warn('CLASP_LOCAL_DEPENDENCY_MISSING — using pinned npx fallback @google/clasp@3.3.0.');
+  return run(npx, ['-y', '@google/clasp@3.3.0', ...commandArgs], options);
 }
-function sha(path) { return createHash('sha256').update(readFileSync(path)).digest('hex'); }
+
+function sha(path) {
+  return createHash('sha256').update(readFileSync(path)).digest('hex');
+}
+
 function files(dir) {
   return readdirSync(dir)
     .filter(name => name !== '.clasp.json')
     .filter(name => statSync(resolve(dir, name)).isFile())
     .sort();
 }
-function logicalName(name) { return /\.(?:js|gs)$/.test(name) ? name.replace(/\.(?:js|gs)$/, '') : name; }
+
+function logicalName(name) {
+  return /\.(?:js|gs)$/.test(name) ? name.replace(/\.(?:js|gs)$/, '') : name;
+}
+
 function inventory(dir) {
   const out = new Map();
-  for (const name of files(dir)) out.set(logicalName(name), { name, sha: sha(resolve(dir, name)) });
+  for (const name of files(dir)) {
+    out.set(logicalName(name), { name, sha: sha(resolve(dir, name)) });
+  }
   return out;
 }
+
+function inventoryObject(inv) {
+  return Object.fromEntries([...inv.entries()].sort(([a], [b]) => a.localeCompare(b)));
+}
+
 function findTarget(base, dir) {
-  const matches = readdirSync(dir).filter(name => name === base + '.js' || name === base + '.gs');
-  if (matches.length !== 1) throw new Error('Expected exactly one target for ' + base + '; found ' + matches.length);
+  const matches = readdirSync(dir).filter(name => name === `${base}.js` || name === `${base}.gs`);
+  if (matches.length !== 1) {
+    throw new Error(`Expected exactly one target for ${base}; found ${matches.length}`);
+  }
   return resolve(dir, matches[0]);
 }
+
+function canonicalSource(base) {
+  const gs = resolve(sourceDir, `${base}.gs`);
+  const js = resolve(sourceDir, `${base}.js`);
+  const matches = [gs, js].filter(existsSync);
+  if (matches.length !== 1) {
+    throw new Error(`Expected exactly one canonical source for ${base}; found ${matches.length}`);
+  }
+  return matches[0];
+}
+
 function normalizedText(path) {
   return readFileSync(path, 'utf8').replace(/\r\n/g, '\n').trimEnd() + '\n';
 }
+
 function requireMarker(path, marker) {
-  if (!readFileSync(path, 'utf8').includes(marker)) throw new Error('Missing marker ' + marker + ' in ' + basename(path));
+  if (!readFileSync(path, 'utf8').includes(marker)) {
+    throw new Error(`Missing marker ${marker} in ${basename(path)}`);
+  }
 }
-function assertNoLegacyAutomation(dir) {
+
+function assertAllowedModules() {
+  const allowed = new Set(CONFIG.allowedPatchModules || []);
+  const unexpected = patchModules.filter(name => !allowed.has(name));
+  if (unexpected.length) {
+    throw new Error(`Patch module is not allowlisted: ${unexpected.join(', ')}`);
+  }
+  for (const name of patchModules) canonicalSource(name);
+}
+
+function assertNoForbiddenSource(dir) {
   const findings = [];
   for (const name of files(dir)) {
     if (!/\.(?:js|gs)$/.test(name)) continue;
     const text = readFileSync(resolve(dir, name), 'utf8');
-    for (const legacy of FORBIDDEN_AUTOMATION_NAMES) {
-      if (text.includes(legacy)) findings.push(name + ': ' + legacy);
+    for (const legacy of CONFIG.forbiddenAutomationNames || []) {
+      if (text.includes(legacy)) findings.push(`${name}: ${legacy}`);
+    }
+    for (const marker of CONFIG.forbiddenSourceMarkers || []) {
+      if (text.includes(marker)) findings.push(`${name}: ${marker}`);
     }
   }
-  if (findings.length) throw new Error('LEGACY_AUTOMATION_SOURCE_FOUND\n' + findings.join('\n'));
-  console.log('LEGACY_AUTOMATION_SOURCE_ABSENT');
+  if (findings.length) {
+    throw new Error('FORBIDDEN_SOURCE_FOUND\n' + findings.join('\n'));
+  }
 }
-function assertNoV2GenerationSource(dir) {
-  const findings = [];
-  for (const name of files(dir)) {
-    if (!/\.(?:js|gs)$/.test(name)) continue;
-    const text = readFileSync(resolve(dir, name), 'utf8');
-    for (const marker of FORBIDDEN_V2_SOURCE_MARKERS) {
-      if (text.includes(marker)) findings.push(name + ': ' + marker);
+
+function syntaxCheck(path) {
+  const source = readFileSync(path, 'utf8');
+  run(process.execPath, ['--check'], { input: source, capture: true });
+}
+
+function assertConfig() {
+  const required = ['projectName', 'releaseVersion', 'scriptId', 'deploymentId', 'sourceDir'];
+  const missing = required.filter(key => !String(CONFIG[key] || '').trim());
+  if (missing.length) throw new Error(`release.config.json missing: ${missing.join(', ')}`);
+  if (!Array.isArray(CONFIG.defaultPatchModules) || !CONFIG.defaultPatchModules.length) {
+    throw new Error('release.config.json defaultPatchModules must be non-empty.');
+  }
+  assertAllowedModules();
+  for (const rule of CONFIG.requiredMarkers || []) {
+    requireMarker(canonicalSource(rule.module), rule.marker);
+  }
+  assertNoForbiddenSource(sourceDir);
+}
+
+function assertManifestUnchanged(beforeInv, afterInv) {
+  const key = 'appsscript.json';
+  const beforeManifest = beforeInv.get(key);
+  const afterManifest = afterInv.get(key);
+  if (!beforeManifest || !afterManifest) throw new Error('appsscript.json missing from inventory.');
+  if (beforeManifest.sha !== afterManifest.sha) {
+    throw new Error('appsscript.json changed unexpectedly; refusing push.');
+  }
+}
+
+function compareInventories(expected, actual, label) {
+  const expectedKeys = [...expected.keys()].sort();
+  const actualKeys = [...actual.keys()].sort();
+  if (JSON.stringify(expectedKeys) !== JSON.stringify(actualKeys)) {
+    throw new Error(`${label}_INVENTORY_MISMATCH`);
+  }
+  const mismatches = expectedKeys.filter(key => expected.get(key).sha !== actual.get(key).sha);
+  if (mismatches.length) throw new Error(`${label}_HASH_MISMATCH: ${mismatches.join(', ')}`);
+}
+
+function webAppUrl(ops) {
+  return `https://script.google.com/macros/s/${encodeURIComponent(CONFIG.deploymentId)}/exec?ops=${encodeURIComponent(ops)}`;
+}
+
+async function fetchJson(url) {
+  const response = await fetch(url, { method: 'GET', redirect: 'follow' });
+  const text = await response.text();
+  let json;
+  try { json = JSON.parse(text); }
+  catch { throw new Error(`Expected JSON from ${url}; received HTTP ${response.status}.`); }
+  if (!response.ok) throw new Error(`HTTP ${response.status} from ${url}: ${text.slice(0, 500)}`);
+  return json;
+}
+
+async function verifyHealth() {
+  const h = CONFIG.health || {};
+  const body = await fetchJson(webAppUrl(h.ops || 'health'));
+  const failures = [];
+  if (body.ok !== true) failures.push('ok !== true');
+  if (h.expectedService && body.service !== h.expectedService) failures.push(`service=${body.service}`);
+  if (h.expectedVersion && body.version !== h.expectedVersion) failures.push(`version=${body.version}`);
+  if (h.expectedStatus && body.status !== h.expectedStatus) failures.push(`status=${body.status}`);
+  if (body.singleModelVerified !== true) failures.push('singleModelVerified !== true');
+  if (body.automationEnabled !== true) failures.push('automationEnabled !== true');
+  if (failures.length) throw new Error(`POST_DEPLOY_HEALTH_FAILED: ${failures.join(' | ')}`);
+  return body;
+}
+
+async function verifyAcceptance() {
+  const a = CONFIG.acceptance || {};
+  const body = await fetchJson(webAppUrl(a.ops || 'release-verify'));
+  const failures = [];
+  if (body.ok !== true) failures.push('ok !== true');
+  if (a.expectedVersion && body.version !== a.expectedVersion) failures.push(`version=${body.version}`);
+  if (a.expectedStatus && body.status !== a.expectedStatus) failures.push(`status=${body.status}`);
+  if (failures.length) throw new Error(`POST_DEPLOY_ACCEPTANCE_FAILED: ${failures.join(' | ')}`);
+  return body;
+}
+
+function parseVersionNumber(result) {
+  const text = `${String(result.stdout || '')}\n${String(result.stderr || '')}`;
+  const match = text.match(/version\s+(\d+)/i);
+  if (!match) throw new Error('Could not parse Apps Script version.');
+  return match[1];
+}
+
+function versionAndRedeploy(cwd, label) {
+  const versionResult = clasp(['version', label], { cwd, capture: true });
+  const versionNumber = parseVersionNumber(versionResult);
+  const redeployResult = clasp([
+    'redeploy',
+    CONFIG.deploymentId,
+    '--versionNumber',
+    versionNumber,
+    '--description',
+    label,
+    '--json'
+  ], { cwd, capture: true });
+  const redeployText = String(redeployResult.stdout || '').trim();
+  let redeployJson = null;
+  try { redeployJson = JSON.parse(redeployText); } catch {}
+  if (!redeployJson ||
+      String(redeployJson.deploymentId || '') !== String(CONFIG.deploymentId) ||
+      String(redeployJson.versionNumber || '') !== String(versionNumber)) {
+    throw new Error(`REDEPLOY_VERIFY_FAILED: ${redeployText}`);
+  }
+  const deploymentsResult = clasp(['deployments'], { cwd, capture: true });
+  const deploymentsText = `${String(deploymentsResult.stdout || '')}\n${String(deploymentsResult.stderr || '')}`;
+  if (!deploymentsText.includes(`${CONFIG.deploymentId} @${versionNumber}`)) {
+    throw new Error(`DEPLOYMENT_PIN_VERIFY_FAILED: expected ${CONFIG.deploymentId} @${versionNumber}`);
+  }
+  return versionNumber;
+}
+
+function rollback() {
+  if (!pushedRemoteHead || !existsSync(before)) return { attempted: false, reason: 'NO_REMOTE_PUSH_TO_ROLL_BACK' };
+  console.error('\n=== ROLLBACK — restore exact pre-release live source ===');
+  clasp(['push', '--force'], { cwd: before });
+  rmSync(rollbackVerify, { recursive: true, force: true });
+  mkdirSync(rollbackVerify, { recursive: true });
+  writeFileSync(resolve(rollbackVerify, '.clasp.json'), JSON.stringify({ scriptId: CONFIG.scriptId, rootDir: '.' }, null, 2) + '\n');
+  clasp(['pull'], { cwd: rollbackVerify });
+  compareInventories(inventory(before), inventory(rollbackVerify), 'ROLLBACK_REMOTE_PARITY');
+  const rollbackVersion = versionAndRedeploy(
+    before,
+    `ROLLBACK ${CONFIG.projectName} after failed v${CONFIG.releaseVersion} release`
+  );
+  return { attempted: true, ok: true, rollbackVersion };
+}
+
+function localSelfTest() {
+  assertConfig();
+  for (const module of patchModules) syntaxCheck(canonicalSource(module));
+  step('LOCAL_SELF_TEST_PASS', { patchModules });
+  return true;
+}
+
+async function main() {
+  console.log('======================================================================');
+  console.log(` ${CONFIG.projectName} — PERMANENT ONE-COMMAND RELEASE`);
+  console.log('======================================================================');
+  console.log('Release version: ' + CONFIG.releaseVersion);
+  console.log('Script ID:       ' + CONFIG.scriptId);
+  console.log('Deployment ID:   ' + CONFIG.deploymentId);
+  console.log('Patch modules:   ' + patchModules.join(', '));
+  console.log('Description:     ' + description);
+
+  console.log('\n=== 0/12 Local config + syntax self-test ===');
+  localSelfTest();
+  if (selfTestOnly || !execute) {
+    console.log('\nDRY RUN PASS — no Apps Script write occurred.');
+    console.log('Execute with: node scripts/release.mjs --execute --description "<change>"');
+    saveReport({ status: 'DRY_RUN_PASS', completedAt: new Date().toISOString() });
+    return;
+  }
+
+  console.log('\n=== 1/12 Authenticate ===');
+  clasp(['show-authorized-user', '--json']);
+  step('AUTHENTICATION_PASS');
+
+  console.log('\n=== 2/12 Pull exact live project ===');
+  rmSync(workRoot, { recursive: true, force: true });
+  mkdirSync(live, { recursive: true });
+  mkdirSync(verify, { recursive: true });
+  mkdirSync(checkpointRoot, { recursive: true });
+  writeFileSync(resolve(live, '.clasp.json'), JSON.stringify({ scriptId: CONFIG.scriptId, rootDir: '.' }, null, 2) + '\n');
+  clasp(['pull'], { cwd: live });
+  if (!existsSync(resolve(live, 'appsscript.json'))) throw new Error('Live pull did not contain appsscript.json.');
+  step('LIVE_PULL_PASS', { fileCount: files(live).length });
+
+  console.log('\n=== 3/12 Create durable checkpoint ===');
+  mkdirSync(checkpoint, { recursive: true });
+  cpSync(live, before, { recursive: true });
+  const beforeInv = inventory(before);
+  writeFileSync(resolve(checkpoint, 'before.sha256.json'), JSON.stringify(inventoryObject(beforeInv), null, 2) + '\n');
+  step('CHECKPOINT_CREATED', { checkpoint, fileCount: beforeInv.size });
+  saveReport();
+
+  console.log('\n=== 4/12 Apply targeted patch ===');
+  for (const module of patchModules) {
+    const src = canonicalSource(module);
+    const target = findTarget(module, live);
+    cpSync(src, target);
+    console.log(`${module} -> ${basename(target)}`);
+  }
+  const removed = [];
+  for (const module of CONFIG.obsoleteModules || []) {
+    const entry = beforeInv.get(module);
+    if (!entry) continue;
+    rmSync(resolve(live, entry.name), { force: true });
+    removed.push(module);
+    console.log('REMOVE obsolete -> ' + entry.name);
+  }
+  step('TARGETED_PATCH_APPLIED', { removedObsoleteModules: removed });
+
+  console.log('\n=== 5/12 Safety diff + inventory guard ===');
+  const afterInv = inventory(live);
+  const beforeKeys = [...beforeInv.keys()].sort();
+  const expectedRemoved = beforeKeys.filter(k => (CONFIG.obsoleteModules || []).includes(k)).sort();
+  if (JSON.stringify([...removed].sort()) !== JSON.stringify(expectedRemoved)) {
+    throw new Error(`Unexpected obsolete removal scope. Removed=${removed.join(', ')} Expected=${expectedRemoved.join(', ')}`);
+  }
+  const expectedAfterKeys = beforeKeys.filter(k => !(CONFIG.obsoleteModules || []).includes(k)).sort();
+  const afterKeys = [...afterInv.keys()].sort();
+  if (JSON.stringify(afterKeys) !== JSON.stringify(expectedAfterKeys)) {
+    throw new Error('Live file inventory changed outside approved removals; refusing push.');
+  }
+  assertManifestUnchanged(beforeInv, afterInv);
+  const changed = expectedAfterKeys.filter(k => beforeInv.get(k).sha !== afterInv.get(k).sha).sort();
+  const unexpectedChanged = changed.filter(k => !patchModules.includes(k));
+  if (unexpectedChanged.length) {
+    throw new Error('Unexpected patch scope: ' + unexpectedChanged.join(', '));
+  }
+  for (const module of patchModules) {
+    if (normalizedText(canonicalSource(module)) !== normalizedText(findTarget(module, live))) {
+      throw new Error(`CANONICAL_MODULE_PARITY_FAILED: ${module}`);
     }
   }
-  if (findings.length) throw new Error('V2_GENERATION_SOURCE_FOUND\n' + findings.join('\n'));
-  console.log('V2_GENERATION_SOURCE_ABSENT');
+  step('SAFETY_DIFF_PASS', { changedModules: changed, removedModules: removed });
+
+  console.log('\n=== 6/12 Changed-file syntax + source guardrails ===');
+  for (const module of patchModules) syntaxCheck(findTarget(module, live));
+  for (const rule of CONFIG.requiredMarkers || []) requireMarker(findTarget(rule.module, live), rule.marker);
+  assertNoForbiddenSource(live);
+  step('SYNTAX_AND_GUARDRAILS_PASS');
+
+  console.log('\n=== 7/12 Push COMPLETE project to SAME Script ID ===');
+  clasp(['status'], { cwd: live });
+  clasp(['push', '--force'], { cwd: live });
+  pushedRemoteHead = true;
+  step('REMOTE_PUSH_COMPLETE');
+
+  console.log('\n=== 8/12 Pull remote and verify whole-project parity ===');
+  writeFileSync(resolve(verify, '.clasp.json'), JSON.stringify({ scriptId: CONFIG.scriptId, rootDir: '.' }, null, 2) + '\n');
+  clasp(['pull'], { cwd: verify });
+  const liveInv = inventory(live);
+  const remoteInv = inventory(verify);
+  compareInventories(liveInv, remoteInv, 'REMOTE_PARITY');
+  assertNoForbiddenSource(verify);
+  step('REMOTE_PARITY_PASS', { fileCount: remoteInv.size });
+
+  console.log('\n=== 9/12 Create immutable version + update EXISTING deployment ===');
+  const versionNumber = versionAndRedeploy(live, description);
+  deploymentUpdated = true;
+  writeFileSync(resolve(checkpoint, 'deployed-version.txt'), versionNumber + '\n');
+  step('DEPLOYMENT_UPDATED', { versionNumber });
+
+  console.log('\n=== 10/12 Read-only production health check ===');
+  const health = await verifyHealth();
+  writeFileSync(resolve(checkpoint, 'health.json'), JSON.stringify(health, null, 2) + '\n');
+  step('PRODUCTION_HEALTH_PASS', { status: health.status, version: health.version });
+
+  console.log('\n=== 11/12 Targeted release acceptance ===');
+  const acceptance = await verifyAcceptance();
+  writeFileSync(resolve(checkpoint, 'acceptance.json'), JSON.stringify(acceptance, null, 2) + '\n');
+  step('RELEASE_ACCEPTANCE_PASS', { status: acceptance.status, version: acceptance.version });
+
+  console.log('\n=== 12/12 Release checkpoint + report ===');
+  writeFileSync(resolve(checkpoint, 'after.sha256.json'), JSON.stringify(inventoryObject(remoteInv), null, 2) + '\n');
+  saveReport({
+    status: 'VERIFIED',
+    completedAt: new Date().toISOString(),
+    deployedVersion: versionNumber,
+    deploymentUpdated,
+    healthStatus: health.status,
+    acceptanceStatus: acceptance.status
+  });
+  console.log('VERIFIED');
+  console.log('Checkpoint:      ' + checkpoint);
+  console.log('Apps Script ver: ' + versionNumber);
+  console.log('Health:          ' + health.status);
+  console.log('Acceptance:      ' + acceptance.status);
 }
 
-console.log('======================================================================');
-console.log(' CF ServiceOps v5.14.2 — SINGLE AUTOMATION MODEL PRODUCTION RELEASE');
-console.log('======================================================================');
-console.log('Script ID:      ' + SCRIPT_ID);
-console.log('Deployment ID:  ' + DEPLOYMENT_ID);
-console.log('Patch modules:  ' + PATCH_BASES.join(', '));
-
-if (!execute) {
-  console.log('\nDRY RUN ONLY — no Apps Script write will occur.');
-  console.log('Run: node scripts/release.mjs --execute');
-  process.exit(0);
-}
-
-for (const base of PATCH_BASES) {
-  const src = resolve(root, 'src', base + '.gs');
-  if (!existsSync(src)) throw new Error('Missing canonical source: ' + src);
-}
-requireMarker(resolve(root, 'src', '20_Intake_Processing.gs'), 'CF_SERVICEOPS_V5_14_1_CANONICAL_INTAKE_R1');
-requireMarker(resolve(root, 'src', '70_Workflow_Automation.gs'), 'CF_SERVICEOPS_V5_14_1_SINGLE_AUTOMATION_MODEL_R1');
-requireMarker(resolve(root, 'src', '95_Public_Runners.gs'), 'CF_SERVICEOPS_V5_14_1_SINGLE_PUBLIC_AUTOMATION_R1');
-requireMarker(resolve(root, 'src', '99_Production_Hardening.gs'), 'Version: 5.14.2');
-assertNoLegacyAutomation(resolve(root, 'src'));
-assertNoV2GenerationSource(resolve(root, 'src'));
-
-console.log('\n=== 1/10 Authenticate ===');
-clasp(['show-authorized-user', '--json']);
-
-console.log('\n=== 2/10 Pull exact live project ===');
-rmSync(work, { recursive: true, force: true });
-mkdirSync(live, { recursive: true });
-mkdirSync(verify, { recursive: true });
-writeFileSync(resolve(live, '.clasp.json'), JSON.stringify({scriptId: SCRIPT_ID, rootDir: '.'}, null, 2) + '\n');
-clasp(['pull'], {cwd: live});
-if (!existsSync(resolve(live, 'appsscript.json'))) throw new Error('Live pull did not contain appsscript.json.');
-
-console.log('\n=== 3/10 Checkpoint complete live project ===');
-cpSync(live, before, {recursive: true});
-const beforeInv = inventory(before);
-writeFileSync(resolve(work, 'before.sha256.json'), JSON.stringify(Object.fromEntries(beforeInv), null, 2) + '\n');
-console.log('Checkpoint: ' + before);
-
-console.log('\n=== 4/10 Replace finalized modules + remove obsolete V2 shadow generation ===');
-for (const base of PATCH_BASES) {
-  const src = resolve(root, 'src', base + '.gs');
-  const target = findTarget(base, live);
-  cpSync(src, target);
-  console.log(base + ' -> ' + basename(target));
-}
-const removedV2 = [];
-for (const base of OBSOLETE_V2_BASES) {
-  const entry = beforeInv.get(base);
-  if (!entry) continue;
-  rmSync(resolve(live, entry.name), { force: true });
-  removedV2.push(base);
-  console.log('REMOVE obsolete V2 -> ' + entry.name);
-}
-removedV2.sort();
-
-console.log('\n=== 5/10 Verify patch scope + approved V2 cleanup ===');
-const afterInv = inventory(live);
-const beforeKeys = [...beforeInv.keys()].sort();
-const afterKeys = [...afterInv.keys()].sort();
-const expectedRemoved = beforeKeys.filter(k => OBSOLETE_V2_BASES.includes(k)).sort();
-if (JSON.stringify(removedV2) !== JSON.stringify(expectedRemoved)) {
-  throw new Error('Unexpected V2 removal scope. Removed=' + removedV2.join(', ') + ' Expected=' + expectedRemoved.join(', '));
-}
-const expectedAfterKeys = beforeKeys.filter(k => !OBSOLETE_V2_BASES.includes(k)).sort();
-if (JSON.stringify(afterKeys) !== JSON.stringify(expectedAfterKeys)) {
-  throw new Error('Live file inventory changed outside approved V2 cleanup; refusing push.');
-}
-const changed = expectedAfterKeys.filter(k => beforeInv.get(k).sha !== afterInv.get(k).sha).sort();
-const unexpectedChanged = changed.filter(k => !PATCH_BASES.includes(k));
-if (unexpectedChanged.length) {
-  throw new Error('Unexpected patch scope outside finalized modules: ' + unexpectedChanged.join(', '));
-}
-for (const base of PATCH_BASES) {
-  const expectedPath = resolve(root, 'src', base + '.gs');
-  const livePath = findTarget(base, live);
-  if (normalizedText(expectedPath) !== normalizedText(livePath)) {
-    throw new Error('CANONICAL_MODULE_PARITY_FAILED: ' + base);
+try {
+  await main();
+} catch (error) {
+  const failure = String(error && error.stack ? error.stack : error);
+  console.error('\nRELEASE_FAILED\n' + failure);
+  let rollbackResult = { attempted: false };
+  try {
+    rollbackResult = rollback();
+    if (rollbackResult.attempted) console.error('ROLLBACK_VERIFIED: ' + JSON.stringify(rollbackResult));
+  } catch (rollbackError) {
+    rollbackResult = {
+      attempted: true,
+      ok: false,
+      error: String(rollbackError && rollbackError.stack ? rollbackError.stack : rollbackError)
+    };
+    console.error('ROLLBACK_FAILED\n' + rollbackResult.error);
   }
+  saveReport({
+    status: rollbackResult.attempted && rollbackResult.ok ? 'FAILED_ROLLED_BACK' : 'FAILED',
+    failedAt: new Date().toISOString(),
+    failure,
+    pushedRemoteHead,
+    deploymentUpdated,
+    rollback: rollbackResult
+  });
+  process.exitCode = 1;
 }
-console.log('PATCH_SCOPE_PASS: ' + (changed.length ? changed.join(', ') : 'none; live modules already canonical'));
-console.log('CANONICAL_MODULE_PARITY_PASS: ' + PATCH_BASES.join(', '));
-console.log('OBSOLETE_V2_REMOVAL_PASS: ' + (removedV2.length ? removedV2.join(', ') : 'none present'));
-
-console.log('\n=== 6/10 Syntax + single-model checks ===');
-for (const base of PATCH_BASES) run(process.execPath, ['--check', findTarget(base, live)]);
-requireMarker(findTarget('20_Intake_Processing', live), 'CF_SERVICEOPS_V5_14_1_CANONICAL_INTAKE_R1');
-requireMarker(findTarget('70_Workflow_Automation', live), 'CF_SERVICEOPS_V5_14_1_SINGLE_AUTOMATION_MODEL_R1');
-requireMarker(findTarget('95_Public_Runners', live), 'CF_SERVICEOPS_V5_14_1_SINGLE_PUBLIC_AUTOMATION_R1');
-requireMarker(findTarget('99_Production_Hardening', live), 'Version: 5.14.2');
-assertNoLegacyAutomation(live);
-assertNoV2GenerationSource(live);
-console.log('SELF_TEST_PASS');
-
-console.log('\n=== 7/10 Push complete project to SAME Script ID ===');
-clasp(['status'], {cwd: live});
-clasp(['push', '--force'], {cwd: live});
-
-console.log('\n=== 8/10 Pull remote source and verify exact parity ===');
-writeFileSync(resolve(verify, '.clasp.json'), JSON.stringify({scriptId: SCRIPT_ID, rootDir: '.'}, null, 2) + '\n');
-clasp(['pull'], {cwd: verify});
-for (const base of PATCH_BASES) {
-  const expectedPath = resolve(root, 'src', base + '.gs');
-  const remotePath = findTarget(base, verify);
-  if (normalizedText(expectedPath) !== normalizedText(remotePath)) throw new Error('REMOTE_CONTENT_MISMATCH: ' + base);
-  console.log('REMOTE_CONTENT_PASS: ' + base);
-}
-const remoteInv = inventory(verify);
-const remoteObsoleteV2 = OBSOLETE_V2_BASES.filter(base => remoteInv.has(base));
-if (remoteObsoleteV2.length) {
-  throw new Error('REMOTE_OBSOLETE_V2_SOURCE_FOUND: ' + remoteObsoleteV2.join(', '));
-}
-console.log('REMOTE_OBSOLETE_V2_SOURCE_ABSENT');
-assertNoLegacyAutomation(verify);
-assertNoV2GenerationSource(verify);
-
-console.log('\n=== 9/10 Version and redeploy existing /exec ===');
-const description = 'CF ServiceOps v5.14.2 single automation model';
-const versionResult = clasp(['version', description], {cwd: live, capture: true});
-const versionText = String(versionResult.stdout || '') + '\n' + String(versionResult.stderr || '');
-const match = versionText.match(/version\s+(\d+)/i);
-if (!match) throw new Error('Could not parse Apps Script version.');
-const versionNumber = match[1];
-const redeployResult = clasp([
-  'redeploy',
-  DEPLOYMENT_ID,
-  '--versionNumber',
-  versionNumber,
-  '--description',
-  description,
-  '--json'
-], {cwd: live, capture: true});
-const redeployText = String(redeployResult.stdout || '').trim();
-let redeployJson = null;
-try { redeployJson = JSON.parse(redeployText); } catch (ignoredRedeployJson) {}
-if (!redeployJson ||
-    String(redeployJson.deploymentId || '') !== DEPLOYMENT_ID ||
-    String(redeployJson.versionNumber || '') !== String(versionNumber)) {
-  throw new Error('REDEPLOY_VERIFY_FAILED: ' + redeployText);
-}
-const deploymentsResult = clasp(['deployments'], {cwd: live, capture: true});
-const deploymentsText = String(deploymentsResult.stdout || '') + '\n' + String(deploymentsResult.stderr || '');
-if (!deploymentsText.includes(DEPLOYMENT_ID + ' @' + versionNumber)) {
-  throw new Error('DEPLOYMENT_PIN_VERIFY_FAILED: expected ' + DEPLOYMENT_ID + ' @' + versionNumber);
-}
-console.log('DEPLOYMENT_PIN_PASS: ' + DEPLOYMENT_ID + ' @' + versionNumber);
-writeFileSync(resolve(work, 'deployed-version.txt'), versionNumber + '\n');
-
-console.log('\n=== 10/10 Final source report ===');
-console.log('DEPLOY_SOURCE_VERIFY_PASS');
-console.log('Release:          v' + RELEASE);
-console.log('Apps Script ver:  ' + versionNumber);
-console.log('Canonical worker: AUTO_FINAL_ServiceOps');
-console.log('Watchdog:         AUTO_98_E2E_Recovery_Watchdog');
-console.log('Legacy source:    ABSENT');
-console.log('Obsolete V2:      ABSENT');
-console.log('');
-console.log('The existing watchdog trigger uses the same public watchdog function name.');
-console.log('On its next run it will normalize the trigger topology, recover the recent queue,');
-console.log('and schedule AUTO_FINAL_ServiceOps. Verify with FINALIZE_20260930_verifySingleServiceOpsModel().');
