@@ -71,6 +71,10 @@
       "marker": "CF_SERVICEOPS_V5_14_3_REQUEST_SCOPED_OPERATIONAL_RECONCILIATION_R1"
     },
     {
+      "module": "50_Operator_Queue",
+      "marker": "CF_SERVICEOPS_V5_14_3_QUEUE_SYNC_COALESCE_WITH_WORKER_R1"
+    },
+    {
       "module": "60_Striven_Write",
       "marker": "CF_SERVICEOPS_V5_14_3_UNIFIED_WRITE_CONTINUATION_R1"
     },
