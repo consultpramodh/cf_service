@@ -1,3 +1,4 @@
+/* CF_SERVICEOPS_V5_14_3_RELEASE_HEALTH_R1 */
 /* CF_SERVICEOPS_V5_10_10_RUNNER_R2 */
 /* CF_SERVICEOPS_V5_10_9_RUNNER_R2 */
 /* CF_SERVICEOPS_V5_10_8_RUNNER_R1 */
@@ -692,7 +693,7 @@ function CF_20260930_queueTodayEndToEndOnce_() {
         requestId:sheilaId,
         message:'Recovered deterministic item.id/itemId preflight defect; no Sales Order write had occurred.',
         details:{workOrderWriteExecuted:false,restoredStage:'CUSTOMER STRUCTURE COMPLETE'},
-        version:'5.14.2'
+        version:'5.14.3'
       });
     }
   } catch (recoverError) {
@@ -760,7 +761,7 @@ function CF_20261001_readOnlyReleaseHealth_() {
   return {
     ok: verification.singleModel === true && verification.enabled === true,
     service: 'CF ServiceOps',
-    version: '5.14.2',
+    version: '5.14.3',
     automationModel: 'SINGLE',
     singleModelVerified: verification.singleModel,
     automationEnabled: verification.enabled,
@@ -797,7 +798,7 @@ function CF_20261001_readOnlyReleaseAcceptance_() {
   return {
     ok: ok,
     service: 'CF ServiceOps',
-    version: '5.14.2',
+    version: '5.14.3',
     status: ok ? 'RELEASE_ACCEPTANCE_VERIFIED' : 'RELEASE_ACCEPTANCE_FAILED',
     health: health,
     productionHardening: hardening,
@@ -978,7 +979,7 @@ function doGet(e) {
   return ContentService.createTextOutput(JSON.stringify({
     ok: true,
     service: 'CF ServiceOps',
-    version: '5.14.2',
+    version: '5.14.3',
     automationModel: 'SINGLE',
     singleModelVerified: verification.singleModel,
     automationEnabled: verification.enabled,
@@ -1215,7 +1216,7 @@ function PHASE5D_executeTestContactCreate() {
 function AUTO_previewCustomerStructure() {
   return CF.PublicRunners.run('Final ServiceOps status', function () {
     if(!CF.EventDrivenServiceAutomation||typeof CF.EventDrivenServiceAutomation.inspect!=='function') {
-      throw new Error('Final ServiceOps v5.14.2 is not loaded.');
+      throw new Error('Final ServiceOps v5.14.3 is not loaded.');
     }
     return CF.EventDrivenServiceAutomation.inspect();
   });
@@ -1232,9 +1233,9 @@ function AUTO_removeCustomerStructureAutomation() {
 }
 
 function FINALIZE_20260930_activateCanonicalServiceOps() {
-  return CF.PublicRunners.run('Activate final ServiceOps v5.14.2', function () {
+  return CF.PublicRunners.run('Activate final ServiceOps v5.14.3', function () {
     if(!CF.EventDrivenServiceAutomation||typeof CF.EventDrivenServiceAutomation.activate!=='function') {
-      throw new Error('Final ServiceOps v5.14.2 is not loaded.');
+      throw new Error('Final ServiceOps v5.14.3 is not loaded.');
     }
     return CF.EventDrivenServiceAutomation.activate();
   });
@@ -1243,7 +1244,7 @@ function FINALIZE_20260930_activateCanonicalServiceOps() {
 function FINALIZE_20260930_verifySingleServiceOpsModel() {
   return CF.PublicRunners.run('Verify single ServiceOps model', function () {
     if(!CF.EventDrivenServiceAutomation||typeof CF.EventDrivenServiceAutomation.inspect!=='function') {
-      throw new Error('Final ServiceOps v5.14.2 is not loaded.');
+      throw new Error('Final ServiceOps v5.14.3 is not loaded.');
     }
     var state=CF.EventDrivenServiceAutomation.inspect();
     var automationHandlers=[];
@@ -1263,7 +1264,7 @@ function FINALIZE_20260930_verifySingleServiceOpsModel() {
       Number(counts.AUTO_FINAL_ServiceOps||0)<=1;
     return{
       ok:ok,
-      version:'5.14.2',
+      version:'5.14.3',
       status:ok?'SINGLE_SERVICEOPS_MODEL_VERIFIED':'SINGLE_SERVICEOPS_MODEL_NOT_VERIFIED',
       state:state,
       activeAutomationHandlers:automationHandlers,
@@ -1294,7 +1295,7 @@ function AUTO_FINAL_ServiceOps(e) {
 
 function AUTO_98_E2E_Recovery_Watchdog(e) {
   if(!CF.EventDrivenServiceAutomation||typeof CF.EventDrivenServiceAutomation.recoveryWatchdog!=='function') {
-    return {ok:false,version:'5.14.2',status:'RECOVERY_WATCHDOG_MODULE_MISSING',liveWriteExecuted:false};
+    return {ok:false,version:'5.14.3',status:'RECOVERY_WATCHDOG_MODULE_MISSING',liveWriteExecuted:false};
   }
   return CF.EventDrivenServiceAutomation.recoveryWatchdog(e||{});
 }
