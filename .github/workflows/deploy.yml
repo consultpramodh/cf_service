@@ -1,4 +1,4 @@
-name: Deploy CF ServiceOps v5.14.2
+name: Deploy CF ServiceOps v5.14.3
 
 on:
   workflow_dispatch:
@@ -7,8 +7,11 @@ on:
       - production
     paths:
       - .github/workflows/deploy.yml
+      - package.json
+      - release.config.json
       - scripts/release.mjs
       - src/20_Intake_Processing.gs
+      - src/30_Striven_Data.gs
       - src/40_Matching_Profile.gs
       - src/50_Operator_Queue.gs
       - src/60_Striven_Write.gs
@@ -49,16 +52,16 @@ jobs:
           chmod 600 "$HOME/.clasprc.json"
           npx -y @google/clasp@3.3.0 show-authorized-user --json
 
-      - name: Deploy checkpointed single-model release
+      - name: Deploy checkpointed unified-pipeline release
         shell: bash
         run: |
           set -euo pipefail
-          node scripts/release.mjs --execute
+          node scripts/release.mjs --execute --description "v5.14.3 unified end-to-end ServiceOps pipeline"
 
-      - name: Verify live single-model runtime
+      - name: Verify live read-only unified runtime
         shell: bash
         env:
-          HEALTH_URL: https://script.google.com/macros/s/AKfycbwebnCvczGthe6Z_mvYmukLqFLB-9nk8hjNtNP3lR87CE1m_fEx2d9Bn_vpXMPCLUnPbA/exec
+          HEALTH_URL: https://script.google.com/macros/s/AKfycbwebnCvczGthe6Z_mvYmukLqFLB-9nk8hjNtNP3lR87CE1m_fEx2d9Bn_vpXMPCLUnPbA/exec?ops=health
         run: |
           set -euo pipefail
           for attempt in $(seq 1 60); do
@@ -69,7 +72,9 @@ jobs:
                 const x = JSON.parse(process.argv[1]);
                 const ok =
                   x &&
-                  x.version === "5.14.2" &&
+                  x.version === "5.14.3" &&
+                  x.readOnly === true &&
+                  x.liveWriteExecuted === false &&
                   x.singleModelVerified === true &&
                   x.automationEnabled === true &&
                   Number(x.legacyAutomationTriggerCount) === 0 &&
@@ -77,23 +82,22 @@ jobs:
                   Number(x.finalWorkerTriggers) <= 1;
                 process.exit(ok ? 0 : 1);
               ' "$BODY"; then
-                echo "LIVE_SINGLE_MODEL_VERIFY_PASS"
+                echo "LIVE_UNIFIED_PIPELINE_VERIFY_PASS"
                 exit 0
               fi
             fi
             sleep 5
           done
-          echo "LIVE_SINGLE_MODEL_VERIFY_FAILED"
+          echo "LIVE_UNIFIED_PIPELINE_VERIFY_FAILED"
           exit 1
 
-      - name: Upload pre-change live checkpoint
+      - name: Upload pre-change live checkpoints
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: cf-serviceops-live-before-v5.14.2
+          name: cf-serviceops-live-before-v5.14.3
           path: |
-            .release-v5.14.2/before/**
-            .release-v5.14.2/before.sha256.json
+            .release-checkpoints/**
           retention-days: 30
           if-no-files-found: warn
 
@@ -101,9 +105,8 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: cf-serviceops-v5.14.2-deploy-verification
+          name: cf-serviceops-v5.14.3-deploy-verification
           path: |
-            .release-v5.14.2/verify/**
-            .release-v5.14.2/deployed-version.txt
+            .release-work/current/**
           retention-days: 30
           if-no-files-found: warn
