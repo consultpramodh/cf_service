@@ -6288,7 +6288,7 @@ CF.ManualWorkOrderInternalNotes = (function () {
     return !!ms&&(Date.now()-ms)<6*60*60*1000;
   }
 
-  function reconcileRequest(requestId,options){
+  function reconcileRequestCore_(requestId,options){
     options=options||{};
     var r=request_(requestId);
     if(!r)return{ok:false,status:'SERVICE_REQUEST_NOT_FOUND',requestId:clean_(requestId),writeAttempted:false,liveWriteExecuted:false};
@@ -6327,6 +6327,15 @@ CF.ManualWorkOrderInternalNotes = (function () {
     save_(r,result);
     try{if(CF.Util&&typeof CF.Util.logEvent==='function')CF.Util.logEvent({module:'60_Striven_Write',action:'MANUAL_WORK_ORDER_INTERNAL_NOTES',status:result.status,requestId:clean_(requestId),details:{salesOrderId:id,orderNumber:workOrderNumber_(r),writeAttempted:!!result.writeAttempted,semanticContentMatches:!!result.semanticContentMatches},version:VERSION});}catch(ignored){}
     return result;
+  }
+
+  function reconcileRequest(requestId,options){
+    var lock=LockService.getScriptLock();
+    if(!lock.tryLock(30000)){
+      return{ok:false,status:'MANUAL_WORK_ORDER_INTERNAL_NOTES_WRITE_LOCK_BUSY',requestId:clean_(requestId),writeAttempted:false,liveWriteExecuted:false,automaticPostRetry:false};
+    }
+    try{return reconcileRequestCore_(requestId,options||{});}
+    finally{lock.releaseLock();}
   }
 
   function backlogStep(options){
