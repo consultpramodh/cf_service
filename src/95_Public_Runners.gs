@@ -692,7 +692,7 @@ function CF_20260930_queueTodayEndToEndOnce_() {
         requestId:sheilaId,
         message:'Recovered deterministic item.id/itemId preflight defect; no Sales Order write had occurred.',
         details:{workOrderWriteExecuted:false,restoredStage:'CUSTOMER STRUCTURE COMPLETE'},
-        version:'5.14.1'
+        version:'5.14.2'
       });
     }
   } catch (recoverError) {
@@ -887,7 +887,7 @@ function doGet(e) {
   return ContentService.createTextOutput(JSON.stringify({
     ok: true,
     service: 'CF ServiceOps',
-    version: '5.14.1',
+    version: '5.14.2',
     automationModel: 'SINGLE',
     singleModelVerified: verification.singleModel,
     automationEnabled: verification.enabled,
@@ -1124,7 +1124,7 @@ function PHASE5D_executeTestContactCreate() {
 function AUTO_previewCustomerStructure() {
   return CF.PublicRunners.run('Final ServiceOps status', function () {
     if(!CF.EventDrivenServiceAutomation||typeof CF.EventDrivenServiceAutomation.inspect!=='function') {
-      throw new Error('Final ServiceOps v5.14.1 is not loaded.');
+      throw new Error('Final ServiceOps v5.14.2 is not loaded.');
     }
     return CF.EventDrivenServiceAutomation.inspect();
   });
@@ -1141,9 +1141,9 @@ function AUTO_removeCustomerStructureAutomation() {
 }
 
 function FINALIZE_20260930_activateCanonicalServiceOps() {
-  return CF.PublicRunners.run('Activate final ServiceOps v5.14.1', function () {
+  return CF.PublicRunners.run('Activate final ServiceOps v5.14.2', function () {
     if(!CF.EventDrivenServiceAutomation||typeof CF.EventDrivenServiceAutomation.activate!=='function') {
-      throw new Error('Final ServiceOps v5.14.1 is not loaded.');
+      throw new Error('Final ServiceOps v5.14.2 is not loaded.');
     }
     return CF.EventDrivenServiceAutomation.activate();
   });
@@ -1152,7 +1152,7 @@ function FINALIZE_20260930_activateCanonicalServiceOps() {
 function FINALIZE_20260930_verifySingleServiceOpsModel() {
   return CF.PublicRunners.run('Verify single ServiceOps model', function () {
     if(!CF.EventDrivenServiceAutomation||typeof CF.EventDrivenServiceAutomation.inspect!=='function') {
-      throw new Error('Final ServiceOps v5.14.1 is not loaded.');
+      throw new Error('Final ServiceOps v5.14.2 is not loaded.');
     }
     var state=CF.EventDrivenServiceAutomation.inspect();
     var automationHandlers=[];
@@ -1172,7 +1172,7 @@ function FINALIZE_20260930_verifySingleServiceOpsModel() {
       Number(counts.AUTO_FINAL_ServiceOps||0)<=1;
     return{
       ok:ok,
-      version:'5.14.1',
+      version:'5.14.2',
       status:ok?'SINGLE_SERVICEOPS_MODEL_VERIFIED':'SINGLE_SERVICEOPS_MODEL_NOT_VERIFIED',
       state:state,
       activeAutomationHandlers:automationHandlers,
@@ -1203,7 +1203,7 @@ function AUTO_FINAL_ServiceOps(e) {
 
 function AUTO_98_E2E_Recovery_Watchdog(e) {
   if(!CF.EventDrivenServiceAutomation||typeof CF.EventDrivenServiceAutomation.recoveryWatchdog!=='function') {
-    return {ok:false,version:'5.14.1',status:'RECOVERY_WATCHDOG_MODULE_MISSING',liveWriteExecuted:false};
+    return {ok:false,version:'5.14.2',status:'RECOVERY_WATCHDOG_MODULE_MISSING',liveWriteExecuted:false};
   }
   return CF.EventDrivenServiceAutomation.recoveryWatchdog(e||{});
 }
@@ -4294,3 +4294,25 @@ function TESTING_CURRENT_runReadOnlyStatusCheck() {
 }).call(this);
 
 /* CF_SERVICEOPS_V5_14_3_DEPLOY_KICK_R1 */
+
+
+/* CF_SERVICEOPS_V5_14_2_SCOPED_CONTACT_AND_MANUAL_NOTES_ADMIN_R1
+ * Admin/test entry points only. Production automation uses the existing
+ * AUTO_FINAL_ServiceOps + AUTO_98_E2E_Recovery_Watchdog model.
+ */
+function FIX_20261001_refreshCustomerScopedContactIdsAndQueue() {
+  if (!CF.CustomerScopedContactIdentity || typeof CF.CustomerScopedContactIdentity.maintenance !== 'function') {
+    throw new Error('CF.CustomerScopedContactIdentity.maintenance is unavailable.');
+  }
+  var result=CF.CustomerScopedContactIdentity.maintenance({forceRefresh:true,refreshQueue:true,maxRequests:500});
+  result.liveWriteExecuted=false;
+  result.strivenMutationExecuted=false;
+  return result;
+}
+
+function TESTING_20261001_manualWorkOrderInternalNotesBacklogStep() {
+  if (!CF.ManualWorkOrderInternalNotes || typeof CF.ManualWorkOrderInternalNotes.backlogStep !== 'function') {
+    throw new Error('CF.ManualWorkOrderInternalNotes.backlogStep is unavailable.');
+  }
+  return CF.ManualWorkOrderInternalNotes.backlogStep({maxChecks:12});
+}
