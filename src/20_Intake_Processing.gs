@@ -2687,6 +2687,26 @@ function buildRecords_(
         }
       }
 
+      /* CF_SERVICEOPS_V5_14_3_FAST_INTAKE_QUEUE_PROJECTION_R1
+       * New durable requests must be visible in 03 Operator Queue even when
+       * their automation continuation later stalls. Queue projection remains
+       * deferred (~5s); the webhook does not run a full Queue refresh inline.
+       */
+      if (result && result.ok === true && result.duplicate !== true &&
+          CF.OperatorQueue && typeof CF.OperatorQueue.queueRequestRefresh === 'function') {
+        try {
+          result.queueProjection = CF.OperatorQueue.queueRequestRefresh(result.requestId);
+        } catch (queueProjectionError) {
+          result.queueProjection = {
+            ok:false,
+            status:'QUEUE_REFRESH_SCHEDULE_FAILED',
+            error:queueProjectionError && queueProjectionError.message ? queueProjectionError.message : String(queueProjectionError),
+            liveWriteExecuted:false
+          };
+          try { console.error('CF ServiceOps intake Queue projection scheduling failed: ' + result.queueProjection.error); } catch (ignoredQueueConsole) {}
+        }
+      }
+
       return ContentService
         .createTextOutput(
           d.util.safeJson(
