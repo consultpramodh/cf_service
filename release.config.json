@@ -1,12 +1,13 @@
 {
   "schemaVersion": 1,
   "projectName": "CF ServiceOps",
-  "releaseVersion": "5.14.2",
+  "releaseVersion": "5.14.3",
   "scriptId": "1QZp4NAFeA8LmWBN31ylJYdK4XFepBX1h2lP_APaR-d1lTAC-d8LA9x3g",
   "deploymentId": "AKfycbwebnCvczGthe6Z_mvYmukLqFLB-9nk8hjNtNP3lR87CE1m_fEx2d9Bn_vpXMPCLUnPbA",
   "sourceDir": "src",
   "defaultPatchModules": [
     "20_Intake_Processing",
+    "30_Striven_Data",
     "40_Matching_Profile",
     "50_Operator_Queue",
     "60_Striven_Write",
@@ -16,6 +17,7 @@
   ],
   "allowedPatchModules": [
     "20_Intake_Processing",
+    "30_Striven_Data",
     "40_Matching_Profile",
     "50_Operator_Queue",
     "60_Striven_Write",
@@ -61,12 +63,24 @@
       "marker": "CF_SERVICEOPS_V5_14_1_CANONICAL_INTAKE_R1"
     },
     {
+      "module": "30_Striven_Data",
+      "marker": "CF_SERVICEOPS_V5_14_3_BACKGROUND_CACHE_PREWARM_R1"
+    },
+    {
+      "module": "50_Operator_Queue",
+      "marker": "CF_SERVICEOPS_V5_14_3_REQUEST_SCOPED_OPERATIONAL_RECONCILIATION_R1"
+    },
+    {
+      "module": "60_Striven_Write",
+      "marker": "CF_SERVICEOPS_V5_14_3_UNIFIED_WRITE_CONTINUATION_R1"
+    },
+    {
       "module": "70_Workflow_Automation",
-      "marker": "CF_SERVICEOPS_V5_14_1_SINGLE_AUTOMATION_MODEL_R1"
+      "marker": "CF_SERVICEOPS_V5_14_3_UNIFIED_PIPELINE_ORCHESTRATION_R1"
     },
     {
       "module": "95_Public_Runners",
-      "marker": "CF_SERVICEOPS_V5_14_1_SINGLE_PUBLIC_AUTOMATION_R1"
+      "marker": "CF_SERVICEOPS_V5_14_3_RELEASE_HEALTH_R1"
     },
     {
       "module": "99_Production_Hardening",
@@ -76,12 +90,12 @@
   "health": {
     "ops": "health",
     "expectedService": "CF ServiceOps",
-    "expectedVersion": "5.14.2",
+    "expectedVersion": "5.14.3",
     "expectedStatus": "SINGLE_SERVICEOPS_MODEL_VERIFIED"
   },
   "acceptance": {
     "ops": "release-verify",
-    "expectedVersion": "5.14.2",
+    "expectedVersion": "5.14.3",
     "expectedStatus": "RELEASE_ACCEPTANCE_VERIFIED"
   }
 }
