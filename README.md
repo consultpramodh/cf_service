@@ -72,6 +72,10 @@ and the final request worker takes over.
 - The canonical Contact is customer-scoped under the resolved Customer.
 - A global duplicate Contact is evidence only.
 - A customer-scoped Contact ID is never blindly treated as a global `/v1/contacts/{id}` ID.
+- v5.14.2 persists the verified Customer-scoped Contact ID separately in the request write journal as `contactIdentity.customerScopedContactId`.
+- The Operator Queue uses the Customer-scoped ID for `/next/crm#/accounts/{customerId}/contacts/{customerScopedContactId}`.
+- When only a global Contact ID is known, the Queue uses the legacy `/CRM/ContactInfo.aspx?ContactID={globalContactId}` route instead of constructing an invalid Customer-scoped URL.
+- The existing recovery watchdog refreshes Contact report evidence and backfills Customer-scoped Contact IDs while the live request queue is idle.
 - Customer enrichment can still run when Contact write enrichment is deferred.
 - Uncertain writes are not automatically repeated.
 
@@ -121,6 +125,8 @@ Production defaults retained by the guarded writer include:
 - resolved Location for Bill To and Ship To
 
 A create write is attempted once. The resulting Work Order is then certified by authoritative read. An uncertain write switches to read-only reconciliation; it does not automatically POST again.
+
+For an existing Service Work Order that was created manually rather than by ServiceOps, v5.14.2 runs the proven official-API Internal Notes reconciliation before certification. It builds the canonical `WEBFORM SERVICE REQUEST` notes from the normalized request, performs GET → one guarded POST → GET verification, preserves Custom Fields, and never automatically retries an uncertain write. The idle watchdog also works through existing manual Work Orders in bounded steps.
 
 ## Request isolation
 
