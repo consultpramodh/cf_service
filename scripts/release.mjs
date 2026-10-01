@@ -216,6 +216,9 @@ function assertConfig() {
   if (!Array.isArray(CONFIG.defaultPatchModules) || !CONFIG.defaultPatchModules.length) {
     throw new Error('release.config.json defaultPatchModules must be non-empty.');
   }
+  if (typeof fetch !== 'function') {
+    throw new Error('Node.js 18+ is required because release verification uses the built-in fetch API.');
+  }
   assertAllowedModules();
   for (const rule of CONFIG.requiredMarkers || []) {
     requireMarker(canonicalSource(rule.module), rule.marker);
