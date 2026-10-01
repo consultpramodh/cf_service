@@ -4134,8 +4134,8 @@ function rootJournal_(record) {
       cj.associationStatus='READ_ONLY_RECONCILE_REQUIRED';
       cj.status='DUPLICATE_CONTACT_OWNERSHIP_GET_ONLY';
       state.root.contactCreate=cj;
-      patchRequest_(record,{'Updated At':d.util.nowString(),'Current Stage':'NEEDS REVIEW','Request Status':'BLOCKED','Manual Review?':'NO','Blocking Issue':'Striven reported Contact '+contactId+' as a global duplicate, but GET/cache did not prove it belongs to Customer '+customerId+'. Do not associate or create a Contact.','Next Action':'GET-ONLY VERIFY CUSTOMER CONTACT — DO NOT POST','Contact Association Status':'RECONCILE','Customer Structure Status':'CONTACT OWNERSHIP UNVERIFIED','Write Journal JSON':safeJson_(state.root),'Striven Sync Status':'RECONCILE REQUIRED','Reconciliation Status':'GLOBAL DUPLICATE CONTACT OWNERSHIP UNVERIFIED'});
-      return{ok:false,status:'DUPLICATE_CONTACT_OWNERSHIP_GET_ONLY',requestId:clean_(record['Request ID']),candidateContactId:contactId,matchedCustomerId:customerId,directRead:true,automaticPostRetry:false,liveWriteExecuted:false};
+      patchRequest_(record,{'Updated At':d.util.nowString(),'Current Stage':'CREATING CUSTOMER STRUCTURE','Request Status':'IN PROGRESS','Manual Review?':'NO','Blocking Issue':'Striven reported Contact '+contactId+' as a global duplicate, but GET/cache has not yet proved it belongs to Customer '+customerId+'. Keep this request in automatic GET-only recovery; do not associate or create another Contact.','Next Action':'GET-ONLY VERIFY CUSTOMER CONTACT — DO NOT POST','Contact Association Status':'RECONCILE','Customer Structure Status':'CONTACT OWNERSHIP UNVERIFIED','Write Journal JSON':safeJson_(state.root),'Striven Sync Status':'PARTIAL','Reconciliation Status':'GLOBAL DUPLICATE CONTACT OWNERSHIP GET-ONLY'});
+      return{ok:true,status:'DUPLICATE_CONTACT_OWNERSHIP_GET_ONLY',requestId:clean_(record['Request ID']),candidateContactId:contactId,matchedCustomerId:customerId,directRead:true,readOnlyRecoveryRequired:true,automaticPostRetry:false,liveWriteExecuted:false};
     }
     cj.reconciliation=cj.reconciliation||{};cj.reconciliation.lastAttemptAt=d.util.nowString();cj.reconciliation.contactId=contactId;cj.reconciliation.customerId=customerId;cj.reconciliation.reason='DIRECT CONTACT GET IDENTITY CONFIRMED — ASSOCIATION REQUIRED';cj.reconciliation.directRead=true;
     state.root.contactCreate=cj;
@@ -4339,20 +4339,20 @@ function executeControlledContactCreate(requestIdOrRow, options) {
           state.root.contactCreate = cj;
           patchRequest_(record, {
             'Updated At': d.util.nowString(),
-            'Current Stage': 'NEEDS REVIEW',
-            'Request Status': 'BLOCKED',
+            'Current Stage': 'CREATING CUSTOMER STRUCTURE',
+            'Request Status': 'IN PROGRESS',
             'Manual Review?': 'NO',
             'Manual Review Reason': '',
-            'Blocking Issue': 'This Contact association write already crossed the write boundary. Direct GET/cache did not yet expose the Customer relationship. GET-only verification is required; do not repeat the POST.',
+            'Blocking Issue': 'This Contact association write already crossed the write boundary. Direct GET/cache does not yet expose the Customer relationship. Automatic GET-only verification will continue; the POST will not be repeated.',
             'Next Action': 'GET-ONLY VERIFY CONTACT '+contactId+' → CUSTOMER '+customerId+' — DO NOT POST',
             'Contact Association Status': 'RECONCILE',
             'Customer Structure Status': 'CONTACT RECONCILED — ASSOCIATION UNVERIFIED',
             'Write Journal JSON': safeJson_(state.root),
-            'Striven Sync Status': 'RECONCILE REQUIRED',
+            'Striven Sync Status': 'PARTIAL',
             'Striven Sync Error': '',
             'Reconciliation Status': 'TECHNICAL RECOVERY — GET-ONLY ASSOCIATION VERIFICATION REQUIRED'
           });
-          return { ok: false, status: 'CONTACT_ASSOCIATION_GET_ONLY_RECONCILE_REQUIRED', requestId: clean_(record['Request ID']), matchedContactId: contactId, matchedCustomerId: customerId, readOnlyRecoveryRequired: true, liveWriteExecuted: false, automaticPostRetry: false };
+          return { ok: true, status: 'CONTACT_ASSOCIATION_GET_ONLY_RECONCILE_REQUIRED', requestId: clean_(record['Request ID']), matchedContactId: contactId, matchedCustomerId: customerId, readOnlyRecoveryRequired: true, liveWriteExecuted: false, automaticPostRetry: false };
         }
         cj.lastAssociationFingerprint = cj.associationFingerprint;
         cj.associationStartedAt = d.util.nowString();
@@ -4632,20 +4632,20 @@ function executeControlledContactCreate(requestIdOrRow, options) {
         state.root.contactCreate=cj;
         patchRequest_(fresh,{
           'Updated At':deps_().util.nowString(),
-          'Current Stage':'NEEDS REVIEW',
-          'Request Status':'BLOCKED',
+          'Current Stage':'CREATING CUSTOMER STRUCTURE',
+          'Request Status':'IN PROGRESS',
           'Manual Review?':'NO',
           'Manual Review Reason':'',
-          'Blocking Issue':'A prior Contact association write crossed the boundary, but current GET/cache still does not expose the Customer relationship. Continue GET-only verification; do not POST again.',
+          'Blocking Issue':'A prior Contact association write crossed the boundary, but current GET/cache still does not expose the Customer relationship. Automatic GET-only verification will continue; do not POST again.',
           'Next Action':'GET-ONLY VERIFY CONTACT '+contactId+' → CUSTOMER '+customerId+' — DO NOT POST',
           'Contact Association Status':'RECONCILE',
           'Customer Structure Status':'CONTACT RECONCILED — ASSOCIATION UNVERIFIED',
           'Write Journal JSON':safeJson_(state.root),
-          'Striven Sync Status':'RECONCILE REQUIRED',
+          'Striven Sync Status':'PARTIAL',
           'Striven Sync Error':'',
           'Reconciliation Status':'TECHNICAL RECOVERY — GET-ONLY ASSOCIATION VERIFICATION REQUIRED'
         });
-        result={ok:false,status:'CONTACT_ASSOCIATION_GET_ONLY_RECONCILE_REQUIRED',requestId:clean_(fresh['Request ID']),matchedContactId:contactId,matchedCustomerId:customerId,readOnlyRecoveryRequired:true,liveWriteExecuted:false,automaticPostRetry:false};
+        result={ok:true,status:'CONTACT_ASSOCIATION_GET_ONLY_RECONCILE_REQUIRED',requestId:clean_(fresh['Request ID']),matchedContactId:contactId,matchedCustomerId:customerId,readOnlyRecoveryRequired:true,liveWriteExecuted:false,automaticPostRetry:false};
       }
       result=result||{ok:false,status:'CONTACT_ASSOCIATION_READ_ONLY_RECONCILE_EMPTY_RESULT',requestId:clean_(record['Request ID']),liveWriteExecuted:false};
       if(result.ok===true&&String(result.status||'').indexOf('CONTACT_ASSOCIATED_RECONCILED')===0){
