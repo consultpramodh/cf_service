@@ -6335,11 +6335,7 @@ CF.ManualWorkOrderInternalNotes = (function () {
       results.push(x);
       if(x&&x.writeAttempted===true){writeBoundaryCrossed=true;break;}
     }
-    var refresh=null;
-    if(results.length&&CF.OperatorQueue&&typeof CF.OperatorQueue.refresh==='function'){
-      try{refresh=CF.OperatorQueue.refresh();}catch(e){refresh={ok:false,status:'QUEUE_REFRESH_FAILED',error:String(e&&e.message||e)};}
-    }
-    return{ok:results.every(function(x){return !x||x.ok!==false||x.writeAttempted!==true;}),version:VERSION,status:writeBoundaryCrossed?'MANUAL_WORK_ORDER_INTERNAL_NOTES_WRITE_BOUNDARY_REACHED':'MANUAL_WORK_ORDER_INTERNAL_NOTES_BACKLOG_STEP_COMPLETE',checked:checked,results:results,queueRefresh:refresh,liveWriteExecuted:results.some(function(x){return !!(x&&x.liveWriteExecuted===true);}),writeBoundaryCrossed:writeBoundaryCrossed,automaticPostRetry:false};
+    return{ok:results.every(function(x){return !x||x.ok!==false||x.writeAttempted!==true;}),version:VERSION,status:writeBoundaryCrossed?'MANUAL_WORK_ORDER_INTERNAL_NOTES_WRITE_BOUNDARY_REACHED':'MANUAL_WORK_ORDER_INTERNAL_NOTES_BACKLOG_STEP_COMPLETE',checked:checked,results:results,queueRefresh:null,liveWriteExecuted:results.some(function(x){return !!(x&&x.liveWriteExecuted===true);}),writeBoundaryCrossed:writeBoundaryCrossed,automaticPostRetry:false};
   }
 
   return{version:VERSION,reconcileRequest:reconcileRequest,backlogStep:backlogStep,isAutomationCreated:function(requestId){var r=request_(requestId);return !!(r&&automationCreated_(r,workOrderId_(r)));}};
