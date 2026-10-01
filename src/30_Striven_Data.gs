@@ -1,3 +1,4 @@
+/* CF_SERVICEOPS_V5_14_3_BACKGROUND_CACHE_PREWARM_R1 */
 /* CF_SERVICEOPS_V5_13_4_OPERATIONAL_CACHE_GRID_HYGIENE_R1 */
 /* CF_SERVICEOPS_V5_13_3_API_BRAKE_R1 */
 /************************************************************
@@ -127,7 +128,7 @@ CF.StrivenData = (function () {
   'use strict';
 
   var MODULE_NAME = '30_Striven_Data';
-  var VERSION = '5.7.1';
+  var VERSION = '5.14.3';
 
   function deps_() {
     if (!CF.Config || !CF.Util || !CF.StrivenHttp) throw new Error('CF.Config, CF.Util and CF.StrivenHttp are required.');
@@ -386,33 +387,41 @@ CF.StrivenData = (function () {
   }
   function CF_V5133_logBrake_(action,details){try{deps_().util.logEvent({module:'30_Striven_Data',action:action,status:'SKIPPED',details:details,version:VERSION});}catch(e){}}
   function CF_V5133_refreshGate_(group,sheetKey,ttlProperty,floorMinutes,options){
-    options=options||{};var now=Date.now(),ttl=CF_V5133_floorTtl_(ttlProperty,floorMinutes),stamp=CF_V5133_cacheStampMs_(sheetKey),ageMs=stamp?now-stamp:null;
+    options=options||{};
+    var now=Date.now(),configuredTtl=CF_V5133_floorTtl_(ttlProperty,floorMinutes),stamp=CF_V5133_cacheStampMs_(sheetKey),ageMs=stamp?now-stamp:null;
     var forced=options.forceApiRefresh===true&&options.operatorConfirmed===true;
+    var background=options.backgroundMaintenance===true;
+    var backgroundMin=Number(options.backgroundMinAgeMinutes||configuredTtl);
+    if(!isFinite(backgroundMin)||backgroundMin<5)backgroundMin=configuredTtl;
+    var effectiveTtl=background?backgroundMin:configuredTtl;
     var props=PropertiesService.getScriptProperties(),attemptKey='CF_SERVICEOPS_API_BRAKE_LAST_ATTEMPT_'+group+'_MS',last=Number(props.getProperty(attemptKey)||0);
     if(!isFinite(last)||last<0||last>now+300000)last=0;
-    if(!forced&&stamp&&ageMs>=0&&ageMs<=ttl*60000){var fresh={ok:true,allow:false,status:'BULK_REFRESH_SKIPPED_FRESH_CACHE',group:group,ttlMinutes:ttl,cacheAgeMinutes:Math.round(ageMs/6000)/10,apiCallsSuppressed:true,liveWriteExecuted:false};CF_V5133_logBrake_(fresh.status,fresh);return fresh;}
-    if(!forced&&last&&now-last<=ttl*60000){var cool={ok:true,allow:false,status:'BULK_REFRESH_SKIPPED_COOLDOWN',group:group,ttlMinutes:ttl,minutesSinceLastAttempt:Math.round((now-last)/6000)/10,apiCallsSuppressed:true,liveWriteExecuted:false};CF_V5133_logBrake_(cool.status,cool);return cool;}
-    props.setProperty(attemptKey,String(now));return{ok:true,allow:true,status:forced?'BULK_REFRESH_FORCED_MANUAL':'BULK_REFRESH_ALLOWED_STALE',group:group,ttlMinutes:ttl,forced:forced,cacheAgeMinutes:ageMs===null?null:Math.round(ageMs/6000)/10,apiCallsSuppressed:false};
+    if(!forced&&stamp&&ageMs>=0&&ageMs<=effectiveTtl*60000){var fresh={ok:true,allow:false,status:background?'BACKGROUND_REFRESH_SKIPPED_FRESH_CACHE':'BULK_REFRESH_SKIPPED_FRESH_CACHE',group:group,ttlMinutes:effectiveTtl,configuredTtlMinutes:configuredTtl,cacheAgeMinutes:Math.round(ageMs/6000)/10,apiCallsSuppressed:true,backgroundMaintenance:background,liveWriteExecuted:false};CF_V5133_logBrake_(fresh.status,fresh);return fresh;}
+    if(!forced&&last&&now-last<=Math.min(configuredTtl,effectiveTtl)*60000){var cool={ok:true,allow:false,status:background?'BACKGROUND_REFRESH_SKIPPED_COOLDOWN':'BULK_REFRESH_SKIPPED_COOLDOWN',group:group,ttlMinutes:effectiveTtl,configuredTtlMinutes:configuredTtl,minutesSinceLastAttempt:Math.round((now-last)/6000)/10,apiCallsSuppressed:true,backgroundMaintenance:background,liveWriteExecuted:false};CF_V5133_logBrake_(cool.status,cool);return cool;}
+    props.setProperty(attemptKey,String(now));
+    return{ok:true,allow:true,status:forced?'BULK_REFRESH_FORCED_MANUAL':(background?'BACKGROUND_REFRESH_ALLOWED_STALE':'BULK_REFRESH_ALLOWED_STALE'),group:group,ttlMinutes:effectiveTtl,configuredTtlMinutes:configuredTtl,forced:forced,backgroundMaintenance:background,cacheAgeMinutes:ageMs===null?null:Math.round(ageMs/6000)/10,apiCallsSuppressed:false};
   }
   function CF_V5133_skipResult_(gate){return{ok:true,version:VERSION,group:gate.group,status:gate.status,ttlMinutes:gate.ttlMinutes,cacheAgeMinutes:gate.cacheAgeMinutes,minutesSinceLastAttempt:gate.minutesSinceLastAttempt,apiCallsSuppressed:true,liveWriteExecuted:false,reports:{}};}
 function CF_V5133_refreshCustomerDataBase_(options) {
     options = options || {};
     var d = deps_();
-    return d.util.withScriptLock(function () {
-      var started = Date.now();
-      var cacheAt = d.util.nowString();
-      var fetched = fetchReports_(['CUSTOMERS','CONTACTS']);
-      var rows = [];
-      ['CUSTOMERS','CONTACTS'].forEach(function (key) {
-        var entity = key === 'CUSTOMERS' ? 'CUSTOMER' : 'CONTACT';
-        (fetched[key].rows || []).forEach(function (source, index) { rows.push(customerRecord_(source, entity, key, index + 2, cacheAt)); });
-      });
-      var consolidated = mergeRowsByKey_(rows, function (row) { return row['Entity Type'] + '|' + row['Entity ID']; });
-      var write = d.util.replaceSheetData('STRIVEN_CUSTOMER_DATA', consolidated.rows);
-      var result = { ok: true, version: VERSION, group: 'CUSTOMER', rowsPrepared: consolidated.rows.length, rowsInput: rows.filter(Boolean).length, collapsedRows: consolidated.collapsedRows, conflictCount: consolidated.conflictCount, write: write, reports: summarizeFetched_(fetched), durationMs: Date.now() - started };
-      d.util.logEvent({ module: MODULE_NAME, action: 'REFRESH_CUSTOMER', status: 'COMPLETE', details: result, durationMs: result.durationMs, version: VERSION });
-      return result;
+    var started = Date.now();
+    var fetched = fetchReports_(['CUSTOMERS','CONTACTS']);
+    var cacheAt = d.util.nowString();
+    var rows = [];
+    ['CUSTOMERS','CONTACTS'].forEach(function (key) {
+      var entity = key === 'CUSTOMERS' ? 'CUSTOMER' : 'CONTACT';
+      (fetched[key].rows || []).forEach(function (source, index) { rows.push(customerRecord_(source, entity, key, index + 2, cacheAt)); });
     });
+    var consolidated = mergeRowsByKey_(rows, function (row) { return row['Entity Type'] + '|' + row['Entity ID']; });
+    // Do not hold the global Apps Script lock while remote report pages are downloading.
+    // The lock protects only the atomic cache replacement.
+    var write = d.util.withScriptLock(function () {
+      return d.util.replaceSheetData('STRIVEN_CUSTOMER_DATA', consolidated.rows);
+    });
+    var result = { ok: true, version: VERSION, group: 'CUSTOMER', rowsPrepared: consolidated.rows.length, rowsInput: rows.filter(Boolean).length, collapsedRows: consolidated.collapsedRows, conflictCount: consolidated.conflictCount, write: write, reports: summarizeFetched_(fetched), backgroundMaintenance:options.backgroundMaintenance===true, durationMs: Date.now() - started };
+    d.util.logEvent({ module: MODULE_NAME, action: 'REFRESH_CUSTOMER', status: 'COMPLETE', details: result, durationMs: result.durationMs, version: VERSION });
+    return result;
   }
 
   function refreshCustomerData(options){
@@ -424,17 +433,17 @@ function CF_V5133_refreshCustomerDataBase_(options) {
   function CF_V5133_refreshLocationDataBase_(options) {
     options = options || {};
     var d = deps_();
-    return d.util.withScriptLock(function () {
-      var started = Date.now();
-      var cacheAt = d.util.nowString();
-      var fetched = fetchReports_(['LOCATIONS']);
-      var rows = (fetched.LOCATIONS.rows || []).map(function (source, index) { return locationRecord_(source, 'LOCATIONS', index + 2, cacheAt); }).filter(Boolean);
-      var consolidated = mergeRowsByKey_(rows, function (row) { return row['Location ID']; });
-      var write = d.util.replaceSheetData('STRIVEN_LOCATION_DATA', consolidated.rows);
-      var result = { ok: true, version: VERSION, group: 'LOCATION', rowsPrepared: consolidated.rows.length, collapsedRows: consolidated.collapsedRows, conflictCount: consolidated.conflictCount, write: write, reports: summarizeFetched_(fetched), durationMs: Date.now() - started };
-      d.util.logEvent({ module: MODULE_NAME, action: 'REFRESH_LOCATION', status: 'COMPLETE', details: result, durationMs: result.durationMs, version: VERSION });
-      return result;
+    var started = Date.now();
+    var fetched = fetchReports_(['LOCATIONS']);
+    var cacheAt = d.util.nowString();
+    var rows = (fetched.LOCATIONS.rows || []).map(function (source, index) { return locationRecord_(source, 'LOCATIONS', index + 2, cacheAt); }).filter(Boolean);
+    var consolidated = mergeRowsByKey_(rows, function (row) { return row['Location ID']; });
+    var write = d.util.withScriptLock(function () {
+      return d.util.replaceSheetData('STRIVEN_LOCATION_DATA', consolidated.rows);
     });
+    var result = { ok: true, version: VERSION, group: 'LOCATION', rowsPrepared: consolidated.rows.length, collapsedRows: consolidated.collapsedRows, conflictCount: consolidated.conflictCount, write: write, reports: summarizeFetched_(fetched), backgroundMaintenance:options.backgroundMaintenance===true, durationMs: Date.now() - started };
+    d.util.logEvent({ module: MODULE_NAME, action: 'REFRESH_LOCATION', status: 'COMPLETE', details: result, durationMs: result.durationMs, version: VERSION });
+    return result;
   }
 
   function refreshLocationData(options){
@@ -482,23 +491,24 @@ function CF_V5133_refreshCustomerDataBase_(options) {
 function CF_V5133_refreshOperationalDataBase_(options) {
     options = options || {};
     var d = deps_();
-    return d.util.withScriptLock(function () {
-      var started = Date.now();
-      var cacheAt = d.util.nowString();
-      var fetched = fetchReports_(['CUSTOMER_ASSETS','SERVICE_WORK_ORDERS','SERVICE_TASKS','TASKS_CUSTOMERS_ASSETS']);
-      var rows = [];
-      Object.keys(fetched).forEach(function (key) {
-        var entity = reportDefinitions_()[key].entity;
-        (fetched[key].rows || []).forEach(function (source, index) { rows.push(operationalRecord_(source, entity, key, index + 2, cacheAt)); });
-      });
-      rows = enrichOperational_(rows.filter(Boolean));
-      var consolidated = mergeRowsByKey_(rows, function (row) { return row['Entity Type'] + '|' + row['Entity ID']; });
+    var started = Date.now();
+    var fetched = fetchReports_(['CUSTOMER_ASSETS','SERVICE_WORK_ORDERS','SERVICE_TASKS','TASKS_CUSTOMERS_ASSETS']);
+    var cacheAt = d.util.nowString();
+    var rows = [];
+    Object.keys(fetched).forEach(function (key) {
+      var entity = reportDefinitions_()[key].entity;
+      (fetched[key].rows || []).forEach(function (source, index) { rows.push(operationalRecord_(source, entity, key, index + 2, cacheAt)); });
+    });
+    rows = enrichOperational_(rows.filter(Boolean));
+    var consolidated = mergeRowsByKey_(rows, function (row) { return row['Entity Type'] + '|' + row['Entity ID']; });
+    var committed = d.util.withScriptLock(function () {
       var write = d.util.replaceSheetData('STRIVEN_OPERATIONAL_DATA', consolidated.rows);
       var gridHygiene = CF_V5134_trimOperationalCacheGrid_(consolidated.rows.length);
-      var result = { ok: true, version: VERSION, group: 'OPERATIONAL', rowsPrepared: consolidated.rows.length, collapsedRows: consolidated.collapsedRows, conflictCount: consolidated.conflictCount, write: write, gridHygiene: gridHygiene, reports: summarizeFetched_(fetched), reportSummary: reportSummary_(), durationMs: Date.now() - started };
-      d.util.logEvent({ module: MODULE_NAME, action: 'REFRESH_OPERATIONAL', status: 'COMPLETE', details: result, durationMs: result.durationMs, version: VERSION });
-      return result;
+      return {write:write,gridHygiene:gridHygiene};
     });
+    var result = { ok: true, version: VERSION, group: 'OPERATIONAL', rowsPrepared: consolidated.rows.length, collapsedRows: consolidated.collapsedRows, conflictCount: consolidated.conflictCount, write: committed.write, gridHygiene: committed.gridHygiene, reports: summarizeFetched_(fetched), reportSummary: reportSummary_(), backgroundMaintenance:options.backgroundMaintenance===true, durationMs: Date.now() - started };
+    d.util.logEvent({ module: MODULE_NAME, action: 'REFRESH_OPERATIONAL', status: 'COMPLETE', details: result, durationMs: result.durationMs, version: VERSION });
+    return result;
   }
 
   function refreshOperationalData(options){
