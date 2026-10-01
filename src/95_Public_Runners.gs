@@ -726,7 +726,98 @@ function CF_20260930_probeCustomerScopedContactRead_() {
   });
 }
 
+
+/* CF_SERVICEOPS_20261001_READ_ONLY_RELEASE_HEALTH_R1
+ * Release verification must be read-only. It may inspect Script Properties,
+ * trigger topology, queue metadata, and hardening state, but it must not queue
+ * requests, create/delete triggers, refresh reports, or call Striven writes.
+ */
+function CF_20261001_readOnlyReleaseHealth_() {
+  var verification = {
+    singleModel: false,
+    enabled: false,
+    finalWorkerTriggers: 0,
+    watchdogTriggers: 0,
+    legacyAutomationTriggerCount: -1
+  };
+  try {
+    if (CF.EventDrivenServiceAutomation &&
+        typeof CF.EventDrivenServiceAutomation.inspect === 'function') {
+      var state = CF.EventDrivenServiceAutomation.inspect();
+      verification.enabled = state.enabled === true;
+      verification.finalWorkerTriggers = Number(state.finalWorkerTriggers || 0);
+      verification.watchdogTriggers = Number(state.watchdogTriggers || 0);
+      verification.legacyAutomationTriggerCount = Number(state.legacyAutomationTriggerCount || 0);
+      verification.singleModel =
+        state.singleModel === true &&
+        verification.legacyAutomationTriggerCount === 0 &&
+        verification.watchdogTriggers === 1 &&
+        verification.finalWorkerTriggers <= 1;
+    }
+  } catch (healthError) {
+    verification.error = String(healthError && healthError.message || healthError);
+  }
+  return {
+    ok: verification.singleModel === true && verification.enabled === true,
+    service: 'CF ServiceOps',
+    version: '5.14.2',
+    automationModel: 'SINGLE',
+    singleModelVerified: verification.singleModel,
+    automationEnabled: verification.enabled,
+    finalWorkerTriggers: verification.finalWorkerTriggers,
+    watchdogTriggers: verification.watchdogTriggers,
+    legacyAutomationTriggerCount: verification.legacyAutomationTriggerCount,
+    status:
+      verification.singleModel === true && verification.enabled === true
+        ? 'SINGLE_SERVICEOPS_MODEL_VERIFIED'
+        : 'SINGLE_SERVICEOPS_MODEL_NOT_VERIFIED',
+    readOnly: true,
+    liveWriteExecuted: false
+  };
+}
+
+function CF_20261001_readOnlyReleaseAcceptance_() {
+  var health = CF_20261001_readOnlyReleaseHealth_();
+  var hardening = {
+    ok: false,
+    status: 'PRODUCTION_HARDENING_SELF_TEST_UNAVAILABLE'
+  };
+  try {
+    if (typeof CFH_selfTestProductionHardening === 'function') {
+      hardening = CFH_selfTestProductionHardening();
+    }
+  } catch (hardeningError) {
+    hardening = {
+      ok: false,
+      status: 'PRODUCTION_HARDENING_SELF_TEST_FAILED',
+      error: String(hardeningError && hardeningError.message || hardeningError)
+    };
+  }
+  var ok = health.ok === true && hardening && hardening.ok === true;
+  return {
+    ok: ok,
+    service: 'CF ServiceOps',
+    version: '5.14.2',
+    status: ok ? 'RELEASE_ACCEPTANCE_VERIFIED' : 'RELEASE_ACCEPTANCE_FAILED',
+    health: health,
+    productionHardening: hardening,
+    readOnly: true,
+    liveWriteExecuted: false
+  };
+}
+
 function doGet(e) {
+  var releaseOps=e&&e.parameter?String(e.parameter.ops||''):'';
+  if(releaseOps==='health'){
+    return ContentService
+      .createTextOutput(JSON.stringify(CF_20261001_readOnlyReleaseHealth_()))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+  if(releaseOps==='release-verify'){
+    return ContentService
+      .createTextOutput(JSON.stringify(CF_20261001_readOnlyReleaseAcceptance_()))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
   /* CF_SERVICEOPS_V5_14_1_TEMP_TODAY_STEP_RUNNER_R1 */
   var probe=e&&e.parameter?String(e.parameter.ops||''):'';
   if(probe==='probe-customer-contact'){
