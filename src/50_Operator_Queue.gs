@@ -2089,6 +2089,26 @@ var CF_SERVICEOPS_LEAN_QUEUE_V51015_R1_ = (function () {
   }
   function customerId_(r){return clean_(r['Matched Customer ID']||r['Created Customer ID']);}
   function contactId_(r){return clean_(r['Matched Contact ID']||r['Created Contact ID']);}
+  /* CF_SERVICEOPS_V5_14_2_SCOPED_CONTACT_QUEUE_LINK_R1
+   * A Customer-scoped Contact ID and a global Contact ID are distinct Striven
+   * identifiers. Prefer the verified customer-scoped identifier for the
+   * /accounts/{customer}/contacts/{id} route. If scope is not verified, use
+   * the legacy global ContactInfo.aspx route rather than constructing a broken
+   * customer-scoped URL from a global ID.
+   */
+  function contactLinkIdentity_(r){
+    var customer=customerId_(r),base=contactId_(r),root=parseJson_(r['Write Journal JSON'],{})||{},identity=root.contactIdentity||{};
+    var scoped='';
+    if(upper_(identity.scope)==='CUSTOMER'&&identity.identityVerified===true&&clean_(identity.customerId)===customer){
+      scoped=clean_(identity.customerScopedContactId||identity.contactId);
+    }
+    var globalId=clean_(identity.globalContactId);
+    if(!globalId&&base&&base!==scoped)globalId=base;
+    var displayId=scoped||base,url='';
+    if(scoped&&customer)url='https://classicfireplace.striven.com/next/crm#/accounts/'+encodeURIComponent(customer)+'/contacts/'+encodeURIComponent(scoped);
+    else if(globalId||base)url='https://classicfireplace.striven.com/CRM/ContactInfo.aspx?ContactID='+encodeURIComponent(globalId||base);
+    return{displayId:displayId,customerScopedContactId:scoped,globalContactId:globalId||(!scoped?base:''),url:url,scope:scoped?'CUSTOMER':'GLOBAL_OR_UNKNOWN'};
+  }
   function locationId_(r){return clean_(r['Matched Location ID']||r['Created Location ID']);}
   function strivenUrl_(type,id,parent){
     id=clean_(id);parent=clean_(parent);if(!id)return'';
@@ -2194,7 +2214,7 @@ var CF_SERVICEOPS_LEAN_QUEUE_V51015_R1_ = (function () {
     return{state:verified?'DONE':(review?'REVIEW':'PENDING'),id:id,number:number,url:url};
   }
   function strivenText_(r,index,order){
-    var cid=customerId_(r),contact=contactId_(r),location=locationId_(r),assets=assetChecklist_(r,index),wo=workOrderChecklist_(r,order);
+    var cid=customerId_(r),contactLink=contactLinkIdentity_(r),contact=contactLink.displayId,location=locationId_(r),assets=assetChecklist_(r,index),wo=workOrderChecklist_(r,order);
     return line_([
       'Customer: '+(cid||'')+(cid?' ':'')+checklistSymbol_(customerChecklistState_(r,cid)),
       'Contact: '+(contact||'')+(contact?' ':'')+checklistSymbol_(contactChecklistState_(r,contact)),
@@ -2344,11 +2364,11 @@ var CF_SERVICEOPS_LEAN_QUEUE_V51015_R1_ = (function () {
     return b.build();
   }
   function richStriven_(r,text,index,order){
-    var cid=customerId_(r),contact=contactId_(r),location=locationId_(r);
+    var cid=customerId_(r),contactLink=contactLinkIdentity_(r),contact=contactLink.displayId,location=locationId_(r);
     var assets=assetChecklist_(r,index),wo=workOrderChecklist_(r,order);
     var b=SpreadsheetApp.newRichTextValue().setText(text),specs=[
       {prefix:'Customer: ',id:cid,url:strivenUrl_('CUSTOMER',cid)},
-      {prefix:'Contact: ',id:contact,url:strivenUrl_('CONTACT',contact,cid)},
+      {prefix:'Contact: ',id:contact,url:contactLink.url},
       {prefix:'Location: ',id:location,url:strivenUrl_('LOCATION',location,cid)}
     ];
     assets.ids.slice(0,3).forEach(function(id){
@@ -4844,10 +4864,21 @@ function FIX_20260903_reconcileAllExistingOperatorQueue() {
     contact:clean_(r['Matched Contact ID']||r['Created Contact ID']),
     location:clean_(r['Matched Location ID']||r['Created Location ID'])
   };}
+  function parseJournal_(v){try{return CF.Util.parseJson(v,{})||{};}catch(e){try{return JSON.parse(String(v||'{}'))||{};}catch(e2){return{};}}}
+  function contactLinkIdentity_(r){
+    var x=ids_(r),root=parseJournal_(r['Write Journal JSON']),identity=root.contactIdentity||{},scoped='';
+    if(upper_(identity.scope)==='CUSTOMER'&&identity.identityVerified===true&&clean_(identity.customerId)===x.customer)scoped=clean_(identity.customerScopedContactId||identity.contactId);
+    var globalId=clean_(identity.globalContactId);
+    if(!globalId&&x.contact&&x.contact!==scoped)globalId=x.contact;
+    var displayId=scoped||x.contact,url='';
+    if(scoped&&x.customer)url='https://classicfireplace.striven.com/next/crm#/accounts/'+encodeURIComponent(x.customer)+'/contacts/'+encodeURIComponent(scoped);
+    else if(globalId||x.contact)url='https://classicfireplace.striven.com/CRM/ContactInfo.aspx?ContactID='+encodeURIComponent(globalId||x.contact);
+    return{displayId:displayId,url:url,customerScopedContactId:scoped,globalContactId:globalId||(!scoped?x.contact:'')};
+  }
   function strivenText_(r){
-    var x=ids_(r),lines=[];
+    var x=ids_(r),contactLink=contactLinkIdentity_(r),lines=[];
     lines.push('Customer: '+(x.customer?x.customer+' ✓':(upper_(r['Customer Action'])==='CREATE'?'NEW':'—')));
-    lines.push('Contact: '+(x.contact?x.contact+' ✓':(upper_(r['Contact Action'])==='CREATE'?'NEW':'—')));
+    lines.push('Contact: '+(contactLink.displayId?contactLink.displayId+' ✓':(upper_(r['Contact Action'])==='CREATE'?'NEW':'—')));
     lines.push('Location: '+(x.location?x.location+' ✓':(upper_(r['Location Action'])==='CREATE'?'NEW':'—')));
     if(clean_(r['Match Confidence']))lines.push('Confidence: '+clean_(r['Match Confidence'])+(clean_(r['Match Score'])?' ('+clean_(r['Match Score'])+')':''));
     return lines.join('\n');
@@ -4859,9 +4890,9 @@ function FIX_20260903_reconcileAllExistingOperatorQueue() {
     if(!token||!url)return;var i=text.indexOf(token,from||0);if(i>=0)builder.setLinkUrl(i,i+token.length,url);
   }
   function setStrivenRich_(range,r){
-    var text=strivenText_(r),x=ids_(r),b=SpreadsheetApp.newRichTextValue().setText(text),cursor=0;
+    var text=strivenText_(r),x=ids_(r),contactLink=contactLinkIdentity_(r),b=SpreadsheetApp.newRichTextValue().setText(text),cursor=0;
     if(x.customer){setLinkForToken_(b,text,x.customer,customerUrl_(x.customer),cursor);cursor=text.indexOf('\n')+1;}
-    if(x.contact){setLinkForToken_(b,text,x.contact,contactUrl_(x.customer,x.contact),cursor);var p=text.indexOf('\n',cursor);cursor=p>=0?p+1:cursor;}
+    if(contactLink.displayId){setLinkForToken_(b,text,contactLink.displayId,contactLink.url,cursor);var p=text.indexOf('\n',cursor);cursor=p>=0?p+1:cursor;}
     if(x.location)setLinkForToken_(b,text,x.location,locationUrl_(x.customer,x.location),cursor);
     range.setRichTextValue(b.build());
   }

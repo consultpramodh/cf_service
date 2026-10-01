@@ -3985,12 +3985,22 @@ function rootJournal_(record) {
       'Write Journal JSON': safeJson_(state.root)
     });
 
+    var scopedContactIdentity=null;
+    try {
+      if (CF.CustomerScopedContactIdentity && typeof CF.CustomerScopedContactIdentity.resolveRequest === 'function') {
+        scopedContactIdentity=CF.CustomerScopedContactIdentity.resolveRequest(clean_(record['Request ID']),{});
+      }
+    } catch (scopedIdentityError) {
+      scopedContactIdentity={ok:false,status:'CUSTOMER_SCOPED_CONTACT_RESOLUTION_DEFERRED',error:String(scopedIdentityError&&scopedIdentityError.message||scopedIdentityError)};
+    }
+
     return {
       ok: true, status: responseIdMismatch ? 'CONTACT_ASSOCIATED_RECONCILED_ID_CANONICALIZED' : 'CONTACT_ASSOCIATED_RECONCILED',
       requestId: clean_(record['Request ID']),
       matchedCustomerId: customerId, matchedContactId: contactId, matchedLocationId: resolvedLocationId_(record),
       responseIdentifier: responseIdMismatch ? responseId : '',
       contactIdCanonicalized: responseIdMismatch,
+      customerScopedContactIdentity: scopedContactIdentity,
       liveWriteExecuted: false
     };
   }
@@ -5976,6 +5986,374 @@ CF.SalesOrderInternalNotesApi = (function () {
   }
 
   return {version:VERSION,reconcile:reconcile,reconcileVerificationContext:reconcileVerificationContext};
+})();
+
+
+
+/* CF_SERVICEOPS_V5_14_2_CUSTOMER_SCOPED_CONTACT_IDENTITY_R1
+ * Persist the Striven Customer-scoped Contact identifier separately from the
+ * global Contact identifier. This module is read-only against Striven:
+ * it resolves from the canonical Contact report cache and writes only the
+ * Service Request journal / Operator Queue projection.
+ */
+CF.CustomerScopedContactIdentity = (function () {
+  'use strict';
+
+  var VERSION='5.14.2';
+  var LAST_REPORT_REFRESH_PROP='CF_SCOPED_CONTACT_REPORT_REFRESH_AT_V5142';
+  var LAST_MAINTENANCE_PROP='CF_SCOPED_CONTACT_MAINTENANCE_AT_V5142';
+  var REPORT_REFRESH_TTL_MS=15*60*1000;
+
+  function clean_(v){return CF.Util.cleanText(v);}
+  function upper_(v){return clean_(v).toUpperCase();}
+  function parse_(v,f){try{return CF.Util.parseJson(v,f);}catch(e){try{return JSON.parse(String(v||''));}catch(e2){return f;}}}
+  function normPhone_(v){try{return CF.Util.normalizePhone(v);}catch(e){var x=String(v||'').replace(/\D/g,'');if(x.length===11&&x.charAt(0)==='1')x=x.slice(1);return x;}}
+  function normEmail_(v){try{return CF.Util.normalizeEmail(v);}catch(e){return String(v||'').trim().toLowerCase();}}
+  function now_(){return CF.Util.nowString();}
+  function props_(){return PropertiesService.getScriptProperties();}
+
+  function request_(idOrRow){
+    if(typeof idOrRow==='number'){
+      var rows=CF.Util.readRecords('SERVICE_REQUESTS');
+      for(var i=0;i<rows.length;i++)if(rows[i].__rowNumber===idOrRow)return rows[i];
+      return null;
+    }
+    if(idOrRow&&typeof idOrRow==='object')return idOrRow;
+    return CF.Util.findRecord('SERVICE_REQUESTS','Request ID',clean_(idOrRow));
+  }
+  function customerId_(r){return clean_(r&& (r['Matched Customer ID']||r['Created Customer ID']));}
+  function baseContactId_(r){return clean_(r&& (r['Matched Contact ID']||r['Created Contact ID']));}
+  function journal_(r){var root=parse_(r&&r['Write Journal JSON'],{});return root&&typeof root==='object'&&!Array.isArray(root)?root:{};}
+  function idFrom_(o){o=o||{};return clean_(o.id!==undefined?o.id:(o.Id!==undefined?o.Id:o.ID));}
+
+  function globalContactId_(r,root,scopedId){
+    root=root||{};
+    var so=root.salesOrderCreate||{}, cc=root.contactCreate||{}, candidates=[];
+    var cert=so.certification&&so.certification.result||{};
+    if(cert.contactId!==undefined)candidates.push(cert.contactId);
+    var verify=so.verification&&so.verification.result||{};
+    if(verify.contactId!==undefined)candidates.push(verify.contactId);
+    var body=so.responseBody||{};
+    var bodyContact=body.contact||body.Contact||{};
+    candidates.push(idFrom_(bodyContact));
+    if(Array.isArray(cc.existingDuplicateContactIds)&&cc.existingDuplicateContactIds.length===1)candidates.push(cc.existingDuplicateContactIds[0]);
+    candidates.push(cc.existingDuplicateContactId);
+    if(cc.genericResponseIdVerifiedByGet===true)candidates.push(cc.genericResponseIdentifier);
+    if(cc.responseContactId&&clean_(cc.responseContactId)!==clean_(scopedId))candidates.push(cc.responseContactId);
+    var base=baseContactId_(r);
+    if(base&&base!==clean_(scopedId))candidates.push(base);
+    for(var i=0;i<candidates.length;i++){var id=clean_(candidates[i]);if(id&&id!==clean_(scopedId))return id;}
+    return '';
+  }
+
+  function contactRowsForCustomer_(customerId){
+    customerId=clean_(customerId);
+    if(!customerId)return[];
+    var sheet=CF.Util.requireSheet('STRIVEN_CUSTOMER_DATA');
+    if(sheet.getLastRow()<2)return[];
+    var headers=CF.Util.getActualHeaders(sheet),customerCol=headers.indexOf('Customer ID')+1;
+    if(!customerCol)return[];
+    var hits=sheet.getRange(2,customerCol,sheet.getLastRow()-1,1)
+      .createTextFinder(customerId).matchEntireCell(true).findAll();
+    var out=[];
+    hits.forEach(function(hit){
+      var row=hit.getRow(),values=sheet.getRange(row,1,1,headers.length).getValues()[0];
+      var rec=CF.Util.rowToRecord(headers,values,row);
+      if(upper_(rec['Entity Type'])==='CONTACT'&&clean_(rec['Contact ID']||rec['Entity ID']))out.push(rec);
+    });
+    return out;
+  }
+
+  function nameCompatible_(request,row){
+    var reqFirst=upper_(request['First Name']),reqLast=upper_(request['Last Name']);
+    var gotFirst=upper_(row['First Name']),gotLast=upper_(row['Last Name']),full=upper_(row['Full Name']||row['Customer Name']);
+    var tokens=full.replace(/[^A-Z0-9]+/g,' ').trim().split(/\s+/).filter(Boolean);
+    if(reqLast&&gotLast&&reqLast!==gotLast)return false;
+    if(reqLast&&!gotLast&&tokens.length&&tokens.indexOf(reqLast)===-1)return false;
+    if(reqFirst&&gotFirst&&reqFirst!==gotFirst&&tokens.indexOf(reqFirst)===-1)return false;
+    return true;
+  }
+
+  function score_(request,row){
+    if(!nameCompatible_(request,row))return{ok:false,score:0,signals:[],reason:'NAME_CONFLICT'};
+    var reqEmail=normEmail_(request['Normalized Email']||request['Email']);
+    var reqPhone=normPhone_(request['Normalized Phone']||request['Phone']);
+    var reqAlt=normPhone_(request['Normalized Alt Phone']||request['Alt Phone']);
+    var gotEmail=normEmail_(row['Normalized Email']||row['Email']);
+    var gotPhone=normPhone_(row['Normalized Phone']||row['Phone']);
+    var signals=[],score=0;
+    if(reqEmail&&gotEmail&&reqEmail===gotEmail){signals.push('EXACT_EMAIL');score+=100;}
+    if(reqPhone&&gotPhone&&reqPhone===gotPhone){signals.push('EXACT_PHONE');score+=90;}
+    if(reqAlt&&gotPhone&&reqAlt===gotPhone){signals.push('EXACT_ALT_PHONE');score+=80;}
+    if(!signals.length)return{ok:false,score:0,signals:[],reason:'NO_PRIMARY_IDENTITY_MATCH'};
+    var reqFirst=upper_(request['First Name']),reqLast=upper_(request['Last Name']);
+    var gotFirst=upper_(row['First Name']),gotLast=upper_(row['Last Name']),full=upper_(row['Full Name']||row['Customer Name']);
+    if(reqLast&&(gotLast===reqLast||full.indexOf(reqLast)!==-1)){signals.push('LAST_NAME');score+=20;}
+    if(reqFirst&&(gotFirst===reqFirst||full.indexOf(reqFirst)!==-1)){signals.push('FIRST_NAME');score+=10;}
+    return{ok:true,score:score,signals:signals};
+  }
+
+  function current_(r){
+    var root=journal_(r),x=root.contactIdentity||{},customerId=customerId_(r);
+    var scoped=clean_(x.customerScopedContactId||x.contactId);
+    var valid=upper_(x.scope)==='CUSTOMER'&&x.identityVerified===true&&clean_(x.customerId)===customerId&&!!scoped;
+    return{
+      ok:valid,
+      customerId:customerId,
+      customerScopedContactId:valid?scoped:'',
+      globalContactId:valid?clean_(x.globalContactId):'',
+      source:valid?clean_(x.source):'',
+      identityVerified:valid
+    };
+  }
+
+  function persist_(r,candidate,match){
+    var customerId=customerId_(r),scopedId=clean_(candidate['Contact ID']||candidate['Entity ID']);
+    var root=journal_(r),prior=current_(r),globalId=globalContactId_(r,root,scopedId);
+    root.contactIdentity={
+      scope:'CUSTOMER',
+      customerId:customerId,
+      customerScopedContactId:scopedId,
+      globalContactId:globalId,
+      identityVerified:true,
+      source:'STRIVEN_CONTACT_REPORT',
+      matchSignals:(match&&match.signals)||[],
+      matchScore:Number(match&&match.score||0),
+      verifiedAt:now_()
+    };
+    root.contactCreate=root.contactCreate||{};
+    root.contactCreate.reconciliation=root.contactCreate.reconciliation||{};
+    root.contactCreate.reconciliation.customerId=customerId;
+    root.contactCreate.reconciliation.customerScopedContactId=scopedId;
+    root.contactCreate.reconciliation.customerScopedContactVerified=true;
+    root.contactCreate.reconciliation.customerScopedContactVerifiedAt=now_();
+    var changed=!prior.ok||prior.customerScopedContactId!==scopedId||clean_(prior.globalContactId)!==clean_(globalId);
+    if(changed){
+      CF.Util.patchRow('SERVICE_REQUESTS',r.__rowNumber,{
+        'Updated At':now_(),
+        'Write Journal JSON':CF.Util.safeJson?CF.Util.safeJson(root):JSON.stringify(root)
+      });
+      SpreadsheetApp.flush();
+    }
+    return{ok:true,status:changed?'CUSTOMER_SCOPED_CONTACT_ID_PERSISTED':'CUSTOMER_SCOPED_CONTACT_ID_ALREADY_CURRENT',requestId:clean_(r['Request ID']),customerId:customerId,customerScopedContactId:scopedId,globalContactId:globalId,identityVerified:true,changed:changed,liveWriteExecuted:false,strivenMutationExecuted:false};
+  }
+
+  function resolveRequest(idOrRow,options){
+    options=options||{};
+    var r=request_(idOrRow);
+    if(!r)return{ok:false,status:'SERVICE_REQUEST_NOT_FOUND',requestId:clean_(idOrRow),changed:false,liveWriteExecuted:false,strivenMutationExecuted:false};
+    var customerId=customerId_(r);
+    if(!customerId)return{ok:false,status:'CUSTOMER_ID_REQUIRED',requestId:clean_(r['Request ID']),changed:false,liveWriteExecuted:false,strivenMutationExecuted:false};
+    var existing=current_(r);
+    if(existing.ok&&options.reverify!==true)return{ok:true,status:'CUSTOMER_SCOPED_CONTACT_ID_ALREADY_CURRENT',requestId:clean_(r['Request ID']),customerId:customerId,customerScopedContactId:existing.customerScopedContactId,globalContactId:existing.globalContactId,identityVerified:true,changed:false,liveWriteExecuted:false,strivenMutationExecuted:false};
+
+    var rows=contactRowsForCustomer_(customerId),scored=[];
+    rows.forEach(function(row){var s=score_(r,row);if(s.ok)scored.push({row:row,match:s,id:clean_(row['Contact ID']||row['Entity ID'])});});
+    scored.sort(function(a,b){return b.match.score-a.match.score||String(a.id).localeCompare(String(b.id));});
+    if(!scored.length)return{ok:false,status:'CUSTOMER_SCOPED_CONTACT_ID_NOT_FOUND',requestId:clean_(r['Request ID']),customerId:customerId,candidateCount:0,changed:false,liveWriteExecuted:false,strivenMutationExecuted:false};
+    if(scored.length>1&&scored[0].match.score===scored[1].match.score&&scored[0].id!==scored[1].id){
+      return{ok:false,status:'CUSTOMER_SCOPED_CONTACT_ID_AMBIGUOUS',requestId:clean_(r['Request ID']),customerId:customerId,candidateIds:scored.slice(0,5).map(function(x){return x.id;}),changed:false,liveWriteExecuted:false,strivenMutationExecuted:false};
+    }
+    return persist_(r,scored[0].row,scored[0].match);
+  }
+
+  function backfillAll(options){
+    options=options||{};
+    var rows=CF.Util.readRecords('SERVICE_REQUESTS'),max=Math.max(1,Number(options.maxRequests||500)),checked=0,resolved=0,already=0,changed=0,unresolved=0,ambiguous=0,results=[];
+    for(var i=0;i<rows.length&&checked<max;i++){
+      var r=rows[i],customerId=customerId_(r);
+      if(!customerId)continue;
+      checked++;
+      var x=resolveRequest(r.__rowNumber,{reverify:options.reverify===true});
+      if(x.ok){
+        resolved++;
+        if(x.changed)changed++;else already++;
+      }else{
+        unresolved++;
+        if(x.status==='CUSTOMER_SCOPED_CONTACT_ID_AMBIGUOUS')ambiguous++;
+      }
+      if(options.includeResults===true)results.push(x);
+    }
+    var queueRefresh=null;
+    if(options.refreshQueue===true&&CF.OperatorQueue&&typeof CF.OperatorQueue.refresh==='function'){
+      try{queueRefresh=CF.OperatorQueue.refresh();}catch(e){queueRefresh={ok:false,status:'QUEUE_REFRESH_FAILED',error:String(e&&e.message||e)};}
+    }
+    return{ok:true,version:VERSION,status:'CUSTOMER_SCOPED_CONTACT_BACKFILL_COMPLETE',eligibleChecked:checked,resolved:resolved,alreadyCurrent:already,changed:changed,unresolved:unresolved,ambiguous:ambiguous,queueRefresh:queueRefresh,results:results,liveWriteExecuted:false,strivenMutationExecuted:false};
+  }
+
+  function maintenance(options){
+    options=options||{};
+    var p=props_(),lastMs=Date.parse(p.getProperty(LAST_REPORT_REFRESH_PROP)||'')||0,priorMaintenance=String(p.getProperty(LAST_MAINTENANCE_PROP)||''),force=options.forceRefresh===true;
+    // First resolve from current durable report evidence. Only refresh the large
+    // Customer/Contact report when unresolved customer-scoped identities exist.
+    var initial=backfillAll({maxRequests:options.maxRequests||500,reverify:false,refreshQueue:false});
+    var refreshNeeded=force||(!lastMs&&initial.unresolved>0)||((initial.unresolved>0)&&(Date.now()-lastMs>REPORT_REFRESH_TTL_MS));
+    var reportRefresh=null,backfill=initial,totalChanged=Number(initial.changed||0);
+    if(refreshNeeded&&CF.StrivenData&&typeof CF.StrivenData.refreshCustomerData==='function'){
+      try{
+        reportRefresh=CF.StrivenData.refreshCustomerData({});
+        if(!reportRefresh||reportRefresh.ok!==false){
+          p.setProperty(LAST_REPORT_REFRESH_PROP,new Date().toISOString());
+          backfill=backfillAll({maxRequests:options.maxRequests||500,reverify:true,refreshQueue:false});
+          totalChanged+=Number(backfill.changed||0);
+        }
+      }catch(e){reportRefresh={ok:false,status:'CUSTOMER_REPORT_REFRESH_FAILED',error:String(e&&e.message||e)};}
+    }
+    var queueRefresh=null;
+    if((totalChanged>0||options.refreshQueue===true||force||!priorMaintenance)&&CF.OperatorQueue&&typeof CF.OperatorQueue.refresh==='function'){
+      try{queueRefresh=CF.OperatorQueue.refresh();}catch(e2){queueRefresh={ok:false,status:'QUEUE_REFRESH_FAILED',error:String(e2&&e2.message||e2)};}
+    }
+    p.setProperty(LAST_MAINTENANCE_PROP,new Date().toISOString());
+    var out={ok:!reportRefresh||reportRefresh.ok!==false,version:VERSION,status:'CUSTOMER_SCOPED_CONTACT_MAINTENANCE_COMPLETE',reportRefresh:reportRefresh,initialBackfill:initial,backfill:backfill,totalChanged:totalChanged,queueRefresh:queueRefresh,liveWriteExecuted:false,strivenMutationExecuted:false};
+    try{if(CF.Util&&typeof CF.Util.logEvent==='function')CF.Util.logEvent({module:'60_Striven_Write',action:'CUSTOMER_SCOPED_CONTACT_MAINTENANCE',status:out.ok?'COMPLETE':'PARTIAL',details:{refreshNeeded:refreshNeeded,initialUnresolved:initial.unresolved,backfill:{checked:backfill.eligibleChecked,resolved:backfill.resolved,changed:backfill.changed,unresolved:backfill.unresolved,ambiguous:backfill.ambiguous}},version:VERSION});}catch(ignored){}
+    return out;
+  }
+
+  return{version:VERSION,resolveRequest:resolveRequest,backfillAll:backfillAll,maintenance:maintenance,current:current_};
+})();
+
+
+/* CF_SERVICEOPS_V5_14_2_MANUAL_WORK_ORDER_INTERNAL_NOTES_R1
+ * Reuses the verified TESTING_10 / CF.SalesOrderInternalNotesApi contract for
+ * Service Work Orders that already exist but were not created by ServiceOps.
+ * One existing Sales Order is updated at most once per maintenance step.
+ */
+CF.ManualWorkOrderInternalNotes = (function () {
+  'use strict';
+
+  var VERSION='5.14.2';
+  function clean_(v){return CF.Util.cleanText(v);}
+  function parse_(v,f){try{return CF.Util.parseJson(v,f);}catch(e){try{return JSON.parse(String(v||''));}catch(e2){return f;}}}
+  function now_(){return CF.Util.nowString();}
+  function request_(id){return CF.Util.findRecord('SERVICE_REQUESTS','Request ID',clean_(id));}
+  function root_(r){var root=parse_(r&&r['Write Journal JSON'],{});return root&&typeof root==='object'&&!Array.isArray(root)?root:{};}
+  function workOrderId_(r){return clean_(r&&r['Work Order ID']);}
+  function workOrderNumber_(r){return clean_(r&&r['Work Order Number']);}
+  function customerId_(r){return clean_(r&&(r['Matched Customer ID']||r['Created Customer ID']));}
+  function bodyId_(o){o=o||{};return clean_(o.id!==undefined?o.id:(o.Id!==undefined?o.Id:o.ID));}
+
+  function automationCreated_(r,salesOrderId){
+    var root=root_(r),so=root.salesOrderCreate||{};
+    if(Number(so.postAttempts||0)<=0)return false;
+    var ids=[];
+    [so.canonicalSalesOrderId,so.responseIdentifier].forEach(function(v){v=clean_(v);if(v)ids.push(v);});
+    var response=so.responseBody||{};var responseId=bodyId_(response);if(responseId)ids.push(responseId);
+    var verification=so.verification&&so.verification.result||{};var verifyId=clean_(verification.salesOrderId||verification.id);if(verifyId)ids.push(verifyId);
+    var certification=so.certification&&so.certification.result||{};var certId=clean_(certification.salesOrderId||certification.id);if(certId)ids.push(certId);
+    return !ids.length||ids.indexOf(clean_(salesOrderId))!==-1;
+  }
+
+  function expectedNotes_(requestId){
+    if(!CF.OrderPreflight||typeof CF.OrderPreflight.previewRequest!=='function')throw new Error('CF.OrderPreflight.previewRequest is unavailable.');
+    var preview=CF.OrderPreflight.previewRequest(requestId),payload=preview&&preview.payload||{},notes=payload.InternalNotes||payload.internalNotes||null;
+    if(!notes||typeof notes!=='object')throw new Error('Expected InternalNotes payload is unavailable.');
+    var html=clean_(notes.NotesHtml!==undefined?notes.NotesHtml:notes.notesHtml);
+    if(!html||html.indexOf('<table')<0||html.indexOf('WEBFORM SERVICE REQUEST')<0)throw new Error('Canonical WEBFORM SERVICE REQUEST Internal Notes are unavailable.');
+    return notes;
+  }
+
+  function save_(r,result){
+    var root=root_(r),prior=root.manualWorkOrderInternalNotes||{},entry={
+      version:VERSION,
+      salesOrderId:workOrderId_(r),
+      orderNumber:workOrderNumber_(r),
+      status:clean_(result&&result.status),
+      ok:!!(result&&result.ok===true),
+      writeAttempted:!!(result&&result.writeAttempted===true),
+      liveWriteExecuted:!!(result&&result.liveWriteExecuted===true),
+      semanticContentMatches:!!(result&&result.semanticContentMatches===true),
+      automaticPostRetry:false,
+      attemptedAt:now_()
+    };
+    if(result&&result.error)entry.error=String(result.error).slice(0,1000);
+    if(prior.firstAttemptAt)entry.firstAttemptAt=prior.firstAttemptAt;else entry.firstAttemptAt=entry.attemptedAt;
+    root.manualWorkOrderInternalNotes=entry;
+    CF.Util.patchRow('SERVICE_REQUESTS',r.__rowNumber,{'Updated At':now_(),'Write Journal JSON':CF.Util.safeJson?CF.Util.safeJson(root):JSON.stringify(root)});
+    SpreadsheetApp.flush();
+    return entry;
+  }
+
+  function prior_(r){return root_(r).manualWorkOrderInternalNotes||{};}
+  function priorTerminal_(r,id){
+    var p=prior_(r);
+    if(clean_(p.salesOrderId)!==clean_(id))return false;
+    if(p.ok===true&&/ALREADY_CORRECT|UPDATED|PASS_RECONCILED_AFTER_UNCERTAIN_POST_RESPONSE/.test(String(p.status||'')))return true;
+    if(p.writeAttempted===true&&p.ok!==true)return true;
+    return false;
+  }
+  function priorNoWriteCooldown_(r,id){
+    var p=prior_(r);
+    if(clean_(p.salesOrderId)!==clean_(id)||p.ok===true||p.writeAttempted===true)return false;
+    var ms=Date.parse(String(p.attemptedAt||''))||0;
+    return !!ms&&(Date.now()-ms)<6*60*60*1000;
+  }
+
+  function reconcileRequestCore_(requestId,options){
+    options=options||{};
+    var r=request_(requestId);
+    if(!r)return{ok:false,status:'SERVICE_REQUEST_NOT_FOUND',requestId:clean_(requestId),writeAttempted:false,liveWriteExecuted:false};
+    var id=workOrderId_(r);
+    if(!id)return{ok:true,status:'SKIPPED_NO_WORK_ORDER_ID',requestId:clean_(requestId),writeAttempted:false,liveWriteExecuted:false};
+    if(automationCreated_(r,id))return{ok:true,status:'SKIPPED_AUTOMATION_CREATED_WORK_ORDER',requestId:clean_(requestId),salesOrderId:id,writeAttempted:false,liveWriteExecuted:false,manualWorkOrder:false};
+    if(options.force!==true&&priorTerminal_(r,id)){
+      var p=prior_(r);
+      return{ok:p.ok===true,status:p.ok===true?'MANUAL_WORK_ORDER_INTERNAL_NOTES_ALREADY_MAINTAINED':'MANUAL_WORK_ORDER_INTERNAL_NOTES_PREVIOUS_WRITE_REQUIRES_REVIEW',requestId:clean_(requestId),salesOrderId:id,writeAttempted:false,liveWriteExecuted:false,automaticPostRetry:false,manualWorkOrder:true};
+    }
+    if(options.force!==true&&priorNoWriteCooldown_(r,id)){
+      return{ok:true,status:'MANUAL_WORK_ORDER_INTERNAL_NOTES_NO_WRITE_COOLDOWN',requestId:clean_(requestId),salesOrderId:id,writeAttempted:false,liveWriteExecuted:false,automaticPostRetry:false,manualWorkOrder:true};
+    }
+
+    var notes;
+    try{notes=expectedNotes_(requestId);}
+    catch(eExpected){
+      var noExpected={ok:false,status:'EXPECTED_INTERNAL_NOTES_UNAVAILABLE',requestId:clean_(requestId),salesOrderId:id,error:String(eExpected&&eExpected.message||eExpected),writeAttempted:false,liveWriteExecuted:false,manualWorkOrder:true};
+      save_(r,noExpected);return noExpected;
+    }
+    var result;
+    try{
+      result=CF.SalesOrderInternalNotesApi.reconcile({
+        requestId:clean_(requestId),
+        salesOrderId:id,
+        orderNumber:workOrderNumber_(r),
+        customerId:customerId_(r),
+        expectedInternalNotes:notes
+      });
+    }catch(e){
+      result={ok:false,status:'INTERNAL_NOTES_RECONCILIATION_EXCEPTION',requestId:clean_(requestId),salesOrderId:id,error:String(e&&e.message||e),writeAttempted:false,liveWriteExecuted:false,automaticPostRetry:false};
+    }
+    result=result||{ok:false,status:'INTERNAL_NOTES_RECONCILIATION_EMPTY_RESULT',requestId:clean_(requestId),salesOrderId:id,writeAttempted:false,liveWriteExecuted:false};
+    result.manualWorkOrder=true;
+    result.automationCreatedWorkOrder=false;
+    save_(r,result);
+    try{if(CF.Util&&typeof CF.Util.logEvent==='function')CF.Util.logEvent({module:'60_Striven_Write',action:'MANUAL_WORK_ORDER_INTERNAL_NOTES',status:result.status,requestId:clean_(requestId),details:{salesOrderId:id,orderNumber:workOrderNumber_(r),writeAttempted:!!result.writeAttempted,semanticContentMatches:!!result.semanticContentMatches},version:VERSION});}catch(ignored){}
+    return result;
+  }
+
+  function reconcileRequest(requestId,options){
+    var lock=LockService.getScriptLock();
+    if(!lock.tryLock(30000)){
+      return{ok:false,status:'MANUAL_WORK_ORDER_INTERNAL_NOTES_WRITE_LOCK_BUSY',requestId:clean_(requestId),writeAttempted:false,liveWriteExecuted:false,automaticPostRetry:false};
+    }
+    try{return reconcileRequestCore_(requestId,options||{});}
+    finally{lock.releaseLock();}
+  }
+
+  function backlogStep(options){
+    options=options||{};
+    var maxChecks=Math.max(1,Number(options.maxChecks||12)),rows=CF.Util.readRecords('SERVICE_REQUESTS').slice(),checked=0,results=[],writeBoundaryCrossed=false;
+    rows.sort(function(a,b){var av=new Date(a['Submitted At']||a['Created At']||0).getTime()||0,bv=new Date(b['Submitted At']||b['Created At']||0).getTime()||0;return bv-av;});
+    for(var i=0;i<rows.length&&checked<maxChecks;i++){
+      var r=rows[i],id=workOrderId_(r);
+      if(!id||automationCreated_(r,id)||priorTerminal_(r,id)||priorNoWriteCooldown_(r,id))continue;
+      checked++;
+      var x=reconcileRequest(clean_(r['Request ID']),{});
+      results.push(x);
+      if(x&&x.writeAttempted===true){writeBoundaryCrossed=true;break;}
+    }
+    return{ok:results.every(function(x){return !x||x.ok!==false||x.writeAttempted!==true;}),version:VERSION,status:writeBoundaryCrossed?'MANUAL_WORK_ORDER_INTERNAL_NOTES_WRITE_BOUNDARY_REACHED':'MANUAL_WORK_ORDER_INTERNAL_NOTES_BACKLOG_STEP_COMPLETE',checked:checked,results:results,queueRefresh:null,liveWriteExecuted:results.some(function(x){return !!(x&&x.liveWriteExecuted===true);}),writeBoundaryCrossed:writeBoundaryCrossed,automaticPostRetry:false};
+  }
+
+  return{version:VERSION,reconcileRequest:reconcileRequest,backlogStep:backlogStep,isAutomationCreated:function(requestId){var r=request_(requestId);return !!(r&&automationCreated_(r,workOrderId_(r)));}};
 })();
 
 
