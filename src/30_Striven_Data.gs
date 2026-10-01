@@ -394,7 +394,7 @@ CF.StrivenData = (function () {
     var backgroundMin=Number(options.backgroundMinAgeMinutes||configuredTtl);
     if(!isFinite(backgroundMin)||backgroundMin<5)backgroundMin=configuredTtl;
     var effectiveTtl=background?backgroundMin:configuredTtl;
-    var props=PropertiesService.getScriptProperties(),attemptKey='CF_SERVICEOPS_API_BRAKE_LAST_ATTEMPT_'+group+'_MS',last=Number(props.getProperty(attemptKey)||0);
+    var props=PropertiesService.getScriptProperties(),attemptKey='CF_SERVICEOPS_API_BRAKE_LAST_ATTEMPT_'+group+'_MS'+(background?'_BACKGROUND':''),last=Number(props.getProperty(attemptKey)||0);
     if(!isFinite(last)||last<0||last>now+300000)last=0;
     if(!forced&&stamp&&ageMs>=0&&ageMs<=effectiveTtl*60000){var fresh={ok:true,allow:false,status:background?'BACKGROUND_REFRESH_SKIPPED_FRESH_CACHE':'BULK_REFRESH_SKIPPED_FRESH_CACHE',group:group,ttlMinutes:effectiveTtl,configuredTtlMinutes:configuredTtl,cacheAgeMinutes:Math.round(ageMs/6000)/10,apiCallsSuppressed:true,backgroundMaintenance:background,liveWriteExecuted:false};CF_V5133_logBrake_(fresh.status,fresh);return fresh;}
     if(!forced&&last&&now-last<=Math.min(configuredTtl,effectiveTtl)*60000){var cool={ok:true,allow:false,status:background?'BACKGROUND_REFRESH_SKIPPED_COOLDOWN':'BULK_REFRESH_SKIPPED_COOLDOWN',group:group,ttlMinutes:effectiveTtl,configuredTtlMinutes:configuredTtl,minutesSinceLastAttempt:Math.round((now-last)/6000)/10,apiCallsSuppressed:true,backgroundMaintenance:background,liveWriteExecuted:false};CF_V5133_logBrake_(cool.status,cool);return cool;}
