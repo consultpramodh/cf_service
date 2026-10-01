@@ -1,4 +1,4 @@
-# CF ServiceOps — Production v5.14.2
+# CF ServiceOps — Production v5.14.3
 
 This branch is the **only supported production ServiceOps model** for Classic Fireplace & BBQ Store.
 
@@ -72,7 +72,7 @@ and the final request worker takes over.
 - The canonical Contact is customer-scoped under the resolved Customer.
 - A global duplicate Contact is evidence only.
 - A customer-scoped Contact ID is never blindly treated as a global `/v1/contacts/{id}` ID.
-- v5.14.2 persists the verified Customer-scoped Contact ID separately in the request write journal as `contactIdentity.customerScopedContactId`.
+- v5.14.2+ persists the verified Customer-scoped Contact ID separately in the request write journal as `contactIdentity.customerScopedContactId`.
 - The Operator Queue uses the Customer-scoped ID for `/next/crm#/accounts/{customerId}/contacts/{customerScopedContactId}`.
 - When only a global Contact ID is known, the Queue uses the legacy `/CRM/ContactInfo.aspx?ContactID={globalContactId}` route instead of constructing an invalid Customer-scoped URL.
 - The existing recovery watchdog refreshes Contact report evidence and backfills Customer-scoped Contact IDs while the live request queue is idle.
@@ -126,7 +126,7 @@ Production defaults retained by the guarded writer include:
 
 A create write is attempted once. The resulting Work Order is then certified by authoritative read. An uncertain write switches to read-only reconciliation; it does not automatically POST again.
 
-For an existing Service Work Order that was created manually rather than by ServiceOps, v5.14.2 runs the proven official-API Internal Notes reconciliation before certification. It builds the canonical `WEBFORM SERVICE REQUEST` notes from the normalized request, performs GET → one guarded POST → GET verification, preserves Custom Fields, and never automatically retries an uncertain write. The idle watchdog also works through existing manual Work Orders in bounded steps.
+For an existing Service Work Order that was created manually rather than by ServiceOps, the v5.14.2+ path runs the proven official-API Internal Notes reconciliation before certification. It builds the canonical `WEBFORM SERVICE REQUEST` notes from the normalized request, performs GET → one guarded POST → GET verification, preserves Custom Fields, and never automatically retries an uncertain write. The idle watchdog also works through existing manual Work Orders in bounded steps.
 
 ## Request isolation
 
@@ -136,7 +136,26 @@ A result that references a different Request ID is rejected and cannot advance o
 
 The watchdog contains a narrow recovery rule for the known false `PREFLIGHT_BLOCKED` state only when no durable IDs or remote write attempts exist.
 
-## Recovery
+## Unified request execution
+
+v5.14.3 treats the Service Request as one continuous pipeline rather than a collection of isolated clock-trigger events.
+
+The normal path is:
+
+`MATCH → CUSTOMER → LOCATION → CONTACT → ASSOCIATION → INFO SYNC → WORK ORDER → CERTIFICATION`
+
+A successful, authoritative step advances immediately to the next step in the same worker execution when runtime budget remains. A Striven mutation is still journaled before POST and verified before the next mutation can proceed.
+
+The worker yields only when:
+
+- a write outcome is uncertain and must enter read-only reconciliation;
+- identity or ownership is genuinely ambiguous;
+- Striven has not exposed a just-created relationship yet and a later GET-only check is required;
+- the Apps Script execution budget is approaching its safety margin.
+
+A successful write is no longer, by itself, a reason to terminate the worker.
+
+## Recovery and liveness
 
 The permanent watchdog is:
 
@@ -146,17 +165,25 @@ It can recover recent safe incomplete requests and schedule:
 
 `AUTO_FINAL_ServiceOps`
 
-Genuine review/identity conflicts are not silently cleared.
+The worker maintains a heartbeat, active Request ID and start time. An overdue continuation with no live heartbeat is treated as stale and is replaced automatically.
+
+Technical GET-only reconciliation remains `IN PROGRESS`; it is not converted into a false `NEEDS REVIEW / BLOCKED` state. Genuine review/identity conflicts are still left for an operator.
 
 ## Shared-cache maintenance
 
-`99_Production_Hardening.gs` contains no workflow wrappers.
+The watchdog is also the single cache-maintenance owner.
 
-Its only automation role is the independent idle maintenance function:
+When the live request queue is empty, each watchdog pass prewarms at most one cache group:
 
-`CFH_refreshOperationalCacheIfIdle`
+- Operational cache when sufficiently stale;
+- Customer/Contact cache when sufficiently stale;
+- Location cache when sufficiently stale.
 
-It refreshes the shared Operational cache only while the live request queue is empty and the cache is stale.
+Bulk Striven report downloads occur outside the global Apps Script lock; only the atomic sheet-cache replacement is locked.
+
+`99_Production_Hardening.gs` removes the obsolete standalone `CFH_refreshOperationalCacheIfIdle` trigger. The compatibility function remains callable, but it is not independently scheduled.
+
+The hot request path uses targeted Customer/Location/Contact reads and request-scoped Operational reconciliation wherever available. It does not deliberately rebuild a full shared cache merely to advance one request.
 
 ## Production deployment
 
@@ -199,9 +226,10 @@ The release toolkit reads `release.config.json` and automatically:
 
 The normal release is intentionally a **complete-project push with a targeted patch**. Do not construct a partial Apps Script project for deployment.
 
-The canonical release modules remain:
+The canonical release modules are:
 
 - `src/20_Intake_Processing.gs`
+- `src/30_Striven_Data.gs`
 - `src/40_Matching_Profile.gs`
 - `src/50_Operator_Queue.gs`
 - `src/60_Striven_Write.gs`
