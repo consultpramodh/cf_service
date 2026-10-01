@@ -1,3 +1,4 @@
+/* CF_SERVICEOPS_V5_14_3_REQUEST_SCOPED_OPERATIONAL_RECONCILIATION_R1 */
 /* CF_SERVICEOPS_V5_13_5_DURABLE_OPERATIONAL_EVIDENCE_R1 */
 /* CF_SERVICEOPS_V5_13_3_QUEUE_TRIGGER_HYGIENE_R1 */
 /************************************************************
@@ -2859,10 +2860,24 @@ var CF_SERVICEOPS_OPERATIONAL_LINK_RECONCILIATION_V51016_R1_ = (function () {
     out.operationalCacheAgeMinutesAfter=operationalAgeMinutes_();
     return out;
   }
+  function reconcileRequest(requestId){
+    requestId=clean_(requestId);
+    if(!requestId)return{ok:false,version:VERSION,status:'REQUEST_ID_REQUIRED',requestsScanned:0,liveStrivenWriteExecuted:false,sheetWritesExecuted:false};
+    var request=CF.Util.findRecord('SERVICE_REQUESTS','Request ID',requestId);
+    if(!request)return{ok:false,version:VERSION,status:'SERVICE_REQUEST_NOT_FOUND',requestId:requestId,requestsScanned:0,liveStrivenWriteExecuted:false,sheetWritesExecuted:false};
+    var operational=CF.Util.readRecords('STRIVEN_OPERATIONAL_DATA');
+    var out=run_([request],operational,{persist:true});
+    out.status='REQUEST_SCOPED_OPERATIONAL_RECONCILIATION_COMPLETE';
+    out.requestId=requestId;
+    out.operationalCacheAgeMinutes=operationalAgeMinutes_();
+    out.requestScoped=true;
+    return out;
+  }
   return{
     version:VERSION,
     previewAll:previewAll,
-    reconcileAll:reconcileAll
+    reconcileAll:reconcileAll,
+    reconcileRequest:reconcileRequest
   };
 })();
 
