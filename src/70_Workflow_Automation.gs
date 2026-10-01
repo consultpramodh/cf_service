@@ -828,9 +828,9 @@ CF.EventDrivenServiceAutomation = (function () {
   function ensureWorker_(delayMs,currentUid){
     var current=clean_(currentUid),p=props_(),now=Date.now(),rows=triggersBy_(FINAL_HANDLER).filter(function(t){var id='';try{id=clean_(t.getUniqueId&&t.getUniqueId());}catch(e){}return !current||!id||id!==current;});
     if(rows.length){
-      var nextMs=Date.parse(p.getProperty(NEXT_AT)||'')||0,hb=heartbeatMs_();
-      var overdue=!!nextMs&&now-nextMs>WORKER_STALE_MS;
+      var nextMs=Date.parse(p.getProperty(NEXT_AT)||'')||0,hb=heartbeatMs_(),startedMs=Number(p.getProperty(WORKER_STARTED_AT)||0);
       var heartbeatStale=!hb||now-hb>WORKER_STALE_MS;
+      var overdue=nextMs?now-nextMs>WORKER_STALE_MS:(startedMs?now-startedMs>WORKER_BUDGET_MS+WORKER_STALE_MS:heartbeatStale);
       if(!(overdue&&heartbeatStale))return{created:false,count:rows.length,healthyExisting:true,nextAt:nextMs?new Date(nextMs).toISOString():'',heartbeatAt:hb?new Date(hb).toISOString():''};
       rows.forEach(deleteTriggerSafe_);
       log_('STALE_WORKER_TRIGGER_RECOVERY','REPLACED','',{staleTriggerCount:rows.length,nextAt:nextMs?new Date(nextMs).toISOString():'',heartbeatAt:hb?new Date(hb).toISOString():''},'Queued work had an overdue continuation without a live heartbeat.');
