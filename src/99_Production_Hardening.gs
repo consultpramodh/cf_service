@@ -1,6 +1,7 @@
+/* CF_SERVICEOPS_V5_14_3_SINGLE_MAINTENANCE_OWNER_R1 */
 /**
  * CF ServiceOps — Production Guard / Cache Maintenance
- * Version: 5.14.2
+ * Version: 5.14.3
  *
  * This file intentionally contains NO workflow monkey patches.
  * AUTO_FINAL_ServiceOps owns the request lifecycle.
@@ -9,11 +10,11 @@
  * This module only:
  * - enforces the standard service item property;
  * - removes obsolete batch-matching triggers;
- * - maintains the shared Operational cache while the request queue is idle;
+ * - removes the old standalone Operational-cache trigger; cache prewarming is owned by AUTO_98_E2E_Recovery_Watchdog;
  * - reports guard health.
  */
 
-var CFH_VERSION = '5.14.2';
+var CFH_VERSION = '5.14.3';
 var CFH_QUEUE_PROP = 'CF_EVENT_DRIVEN_SERVICE_REQUEST_IDS';
 var CFH_STANDARD_ITEM_PROP = 'STRIVEN_STANDARD_SERVICE_ITEM_ID';
 var CFH_STANDARD_ITEM_ID = '41481';
@@ -61,8 +62,12 @@ function CFH_installOperationalMaintenanceTrigger_() {
       }
     } catch (ignored) {}
   });
-  ScriptApp.newTrigger(CFH_OPERATIONAL_HANDLER).timeBased().everyMinutes(10).create();
-  return {removedExisting: removed, installed: true, cadenceMinutes: 10};
+  return {
+    removedExisting: removed,
+    installed: false,
+    consolidatedInto: 'AUTO_98_E2E_Recovery_Watchdog',
+    reason: 'Single maintenance owner: the ServiceOps watchdog prewarms Operational, Customer/Contact, and Location caches while idle.'
+  };
 }
 
 function CFH_operationalCacheAgeMs_() {
@@ -120,7 +125,7 @@ function CFH_refreshOperationalCacheIfIdle() {
   }
 
   var started = Date.now();
-  var result = CF.StrivenData.refreshOperationalData({});
+  var result = CF.StrivenData.refreshOperationalData({backgroundMaintenance:true,backgroundMinAgeMinutes:20});
   return {
     ok: !result || result.ok !== false,
     version: CFH_VERSION,
@@ -168,14 +173,25 @@ function CFH_selfTestProductionHardening() {
       if (h === 'MATCH_processAll') legacyBatch += 1;
     } catch (ignored) {}
   });
+  var workflow={singleModel:false,watchdogTriggers:0,legacyAutomationTriggerCount:-1};
+  try{
+    if(typeof CF!=='undefined'&&CF.EventDrivenServiceAutomation&&typeof CF.EventDrivenServiceAutomation.inspect==='function'){
+      workflow=CF.EventDrivenServiceAutomation.inspect();
+    }
+  }catch(ignoredWorkflow){}
   return {
     ok:
       props.getProperty(CFH_STANDARD_ITEM_PROP) === CFH_STANDARD_ITEM_ID &&
       legacyBatch === 0 &&
-      maintenance === 1,
+      maintenance === 0 &&
+      workflow.singleModel === true &&
+      Number(workflow.watchdogTriggers||0) === 1,
     version: CFH_VERSION,
     standardServiceItemId: props.getProperty(CFH_STANDARD_ITEM_PROP),
     operationalMaintenanceTriggers: maintenance,
+    maintenanceOwner: 'AUTO_98_E2E_Recovery_Watchdog',
+    watchdogTriggers: Number(workflow.watchdogTriggers||0),
+    legacyAutomationTriggerCount: Number(workflow.legacyAutomationTriggerCount||0),
     legacyBatchMatchingTriggers: legacyBatch,
     operationalCacheAgeMinutes: Math.round(CFH_operationalCacheAgeMs_() / 60000),
     queuedRequestIds: CFH_queue_(),
