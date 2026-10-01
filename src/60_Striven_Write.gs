@@ -6275,6 +6275,12 @@ CF.ManualWorkOrderInternalNotes = (function () {
     if(p.writeAttempted===true&&p.ok!==true)return true;
     return false;
   }
+  function priorNoWriteCooldown_(r,id){
+    var p=prior_(r);
+    if(clean_(p.salesOrderId)!==clean_(id)||p.ok===true||p.writeAttempted===true)return false;
+    var ms=Date.parse(String(p.attemptedAt||''))||0;
+    return !!ms&&(Date.now()-ms)<6*60*60*1000;
+  }
 
   function reconcileRequest(requestId,options){
     options=options||{};
@@ -6286,6 +6292,9 @@ CF.ManualWorkOrderInternalNotes = (function () {
     if(options.force!==true&&priorTerminal_(r,id)){
       var p=prior_(r);
       return{ok:p.ok===true,status:p.ok===true?'MANUAL_WORK_ORDER_INTERNAL_NOTES_ALREADY_MAINTAINED':'MANUAL_WORK_ORDER_INTERNAL_NOTES_PREVIOUS_WRITE_REQUIRES_REVIEW',requestId:clean_(requestId),salesOrderId:id,writeAttempted:false,liveWriteExecuted:false,automaticPostRetry:false,manualWorkOrder:true};
+    }
+    if(options.force!==true&&priorNoWriteCooldown_(r,id)){
+      return{ok:true,status:'MANUAL_WORK_ORDER_INTERNAL_NOTES_NO_WRITE_COOLDOWN',requestId:clean_(requestId),salesOrderId:id,writeAttempted:false,liveWriteExecuted:false,automaticPostRetry:false,manualWorkOrder:true};
     }
 
     var notes;
@@ -6320,7 +6329,7 @@ CF.ManualWorkOrderInternalNotes = (function () {
     rows.sort(function(a,b){var av=new Date(a['Submitted At']||a['Created At']||0).getTime()||0,bv=new Date(b['Submitted At']||b['Created At']||0).getTime()||0;return bv-av;});
     for(var i=0;i<rows.length&&checked<maxChecks;i++){
       var r=rows[i],id=workOrderId_(r);
-      if(!id||automationCreated_(r,id)||priorTerminal_(r,id))continue;
+      if(!id||automationCreated_(r,id)||priorTerminal_(r,id)||priorNoWriteCooldown_(r,id))continue;
       checked++;
       var x=reconcileRequest(clean_(r['Request ID']),{});
       results.push(x);
