@@ -1,4 +1,4 @@
-# CF ServiceOps — Production v5.14.1
+# CF ServiceOps — Production v5.14.2
 
 This branch is the **only supported production ServiceOps model** for Classic Fireplace & BBQ Store.
 
@@ -192,7 +192,7 @@ The seven finalized modules are:
 - `src/95_Public_Runners.gs`
 - `src/99_Production_Hardening.gs`
 
-After deployment, the existing watchdog trigger retains the same public function name and will execute the v5.14.1 watchdog. Its first run removes obsolete automation triggers, recovers safe recent requests, and schedules `AUTO_FINAL_ServiceOps`.
+After deployment, the existing watchdog trigger retains the same public function name and will execute the v5.14.2 watchdog. Its first run removes obsolete automation triggers, recovers safe recent requests, and schedules `AUTO_FINAL_ServiceOps`.
 
 Run `FINALIZE_20260930_verifySingleServiceOpsModel()` to verify the trigger topology. A passing result is:
 
