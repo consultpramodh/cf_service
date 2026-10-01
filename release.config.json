@@ -1,0 +1,87 @@
+{
+  "schemaVersion": 1,
+  "projectName": "CF ServiceOps",
+  "releaseVersion": "5.14.2",
+  "scriptId": "1QZp4NAFeA8LmWBN31ylJYdK4XFepBX1h2lP_APaR-d1lTAC-d8LA9x3g",
+  "deploymentId": "AKfycbwebnCvczGthe6Z_mvYmukLqFLB-9nk8hjNtNP3lR87CE1m_fEx2d9Bn_vpXMPCLUnPbA",
+  "sourceDir": "src",
+  "defaultPatchModules": [
+    "20_Intake_Processing",
+    "40_Matching_Profile",
+    "50_Operator_Queue",
+    "60_Striven_Write",
+    "70_Workflow_Automation",
+    "95_Public_Runners",
+    "99_Production_Hardening"
+  ],
+  "allowedPatchModules": [
+    "20_Intake_Processing",
+    "40_Matching_Profile",
+    "50_Operator_Queue",
+    "60_Striven_Write",
+    "70_Workflow_Automation",
+    "95_Public_Runners",
+    "99_Production_Hardening"
+  ],
+  "obsoleteModules": [
+    "CF_ServiceOps_V2_Shadow_Resolver",
+    "CF_ServiceOps_V2_Core_Ensurers",
+    "CF_ServiceOps_V2_Orchestrator",
+    "CF_ServiceOps_V2_Migration",
+    "CF_ServiceOps_V2_Worker_Bridge",
+    "CF_ServiceOps_V2_Sheet_Runners",
+    "V2_Installer"
+  ],
+  "forbiddenSourceMarkers": [
+    "CF_SERVICEOPS_V2_",
+    "CF.V2",
+    "V2_addMenu",
+    "INSTALL_V2_SHADOW_AND_TEST",
+    "PATCH_V2_LIVE_FINDINGS_",
+    "PATCH_V2_SELECTED_CANARY_SAFETY_"
+  ],
+  "forbiddenAutomationNames": [
+    "CF.AutoCustomerStructure",
+    "AUTO_processCustomerStructure",
+    "AUTO_00_E2E_Route_Request",
+    "AUTO_01_E2E_Customer_Match_Create",
+    "AUTO_02_E2E_Location_Reconcile",
+    "AUTO_03_E2E_Contact_Create_Recover",
+    "AUTO_04_E2E_Customer_Contact_Info_Sync",
+    "AUTO_05_E2E_Sales_Order_Create_Verify",
+    "AUTO_99_E2E_Safe_Stop_Review",
+    "AUTO_E2E_runPhase_",
+    "AUTO_98_E2E_Recovery_Watchdog_BASE_V5115_R1_",
+    "__CFH_BASE_WORKER",
+    "CFH_patchEventDrivenWorker_"
+  ],
+  "requiredMarkers": [
+    {
+      "module": "20_Intake_Processing",
+      "marker": "CF_SERVICEOPS_V5_14_1_CANONICAL_INTAKE_R1"
+    },
+    {
+      "module": "70_Workflow_Automation",
+      "marker": "CF_SERVICEOPS_V5_14_1_SINGLE_AUTOMATION_MODEL_R1"
+    },
+    {
+      "module": "95_Public_Runners",
+      "marker": "CF_SERVICEOPS_V5_14_1_SINGLE_PUBLIC_AUTOMATION_R1"
+    },
+    {
+      "module": "99_Production_Hardening",
+      "marker": "Version: 5.14.2"
+    }
+  ],
+  "health": {
+    "ops": "health",
+    "expectedService": "CF ServiceOps",
+    "expectedVersion": "5.14.2",
+    "expectedStatus": "SINGLE_SERVICEOPS_MODEL_VERIFIED"
+  },
+  "acceptance": {
+    "ops": "release-verify",
+    "expectedVersion": "5.14.2",
+    "expectedStatus": "RELEASE_ACCEPTANCE_VERIFIED"
+  }
+}
