@@ -1,3 +1,4 @@
+/* CF_SERVICEOPS_V5_14_3_UNIFIED_WRITE_CONTINUATION_R1 */
 /* CF_SERVICEOPS_V5_13_9_TARGETED_POST_CUSTOMER_LOCATION_RECONCILIATION_R1 */
 /* CF_SERVICEOPS_V5_13_8_SCOPED_CONTACT_CUSTOMER_ENRICHMENT_R1 */
 /* CF_SERVICEOPS_V5_13_7_PARTIAL_LOCATION_IDENTITY_R1 */
@@ -2391,7 +2392,7 @@ CF.StrivenControlledCustomerCreate = (function () {
   var CONTROLLED_REQUEST_ID = 'SR-20260818160541-7844';
   var CONTROLLED_EXECUTION_TOKEN = 'PHASE5B-C-ONE-CUSTOMER';
   var AUTO_EXECUTION_TOKEN = 'CF-AUTO-CUSTOMER-STRUCTURE-V1';
-  var CUSTOMER_CACHE_MAX_AGE_MINUTES = 15;
+  var CUSTOMER_CACHE_MAX_AGE_MINUTES = 120; // aligned with the shared API brake; background maintenance keeps it warm
 
   function deps_() {
     if (!CF.Config || !CF.Util || !CF.StrivenHttp || !CF.StrivenData) {
@@ -2962,9 +2963,11 @@ CF.StrivenControlledCustomerCreate = (function () {
 
   function refreshCustomerIfStale_() {
     var before = freshnessSnapshot_();
-    if (before.customer.fresh) return { refreshed: false, before: before, after: before };
+    if (before.customer.fresh) return { refreshed: false, suppressed: false, before: before, after: before };
     var result = deps_().data.refreshCustomerData({});
-    return { refreshed: true, result: result, before: before, after: freshnessSnapshot_() };
+    var after = freshnessSnapshot_();
+    var suppressed = !!(result && result.apiCallsSuppressed === true);
+    return { refreshed: !suppressed, suppressed: suppressed, result: result, before: before, after: after };
   }
 
   function refreshLocationAfterPostIfNeeded_(journal) {
@@ -3525,6 +3528,8 @@ CF.StrivenControlledCustomerCreate = (function () {
         responsePrimaryLocationId: locationId,
         liveWriteExecuted: true,
         postOutcome: 'SUCCESS',
+        continuationSafe: true,
+        nextStepReadOnly: !locationId,
         durationMs: Date.now() - started
       };
     });
@@ -3937,9 +3942,11 @@ function rootJournal_(record) {
 
   function refreshContactsIfStale_() {
     var before = freshnessSnapshot_();
-    if (before.customerContactCache.fresh) return { refreshed: false, before: before, after: before };
+    if (before.customerContactCache.fresh) return { refreshed: false, suppressed: false, before: before, after: before };
     var result = deps_().data.refreshCustomerData({});
-    return { refreshed: true, result: result, before: before, after: freshnessSnapshot_() };
+    var after = freshnessSnapshot_();
+    var suppressed = !!(result && result.apiCallsSuppressed === true);
+    return { refreshed: !suppressed, suppressed: suppressed, result: result, before: before, after: after };
   }
 
   function finalizeAssociated_(record, contactId, customerId, reason) {
@@ -4278,11 +4285,13 @@ function executeControlledContactCreate(requestIdOrRow, options) {
         if(priorDuplicateIds.length===1){
           var duplicateId=priorDuplicateIds[0];
           if(!cj.duplicateCandidateRefreshAt&&postPredatesCache_(cj.postFinishedAt)){
+            // Striven already returned the exact duplicate Contact ID. Do not download the
+            // entire Customer/Contact report merely to rediscover that same ID. The
+            // reconciliation helper verifies the known Contact by targeted GET.
             cj.duplicateCandidateRefreshAt=d.util.nowString();
+            cj.duplicateCandidateResolutionMode='DIRECT_GET_FIRST_NO_BULK_REFRESH';
             state.root.contactCreate=cj;
             patchRequest_(record,{'Write Journal JSON':safeJson_(state.root)});
-            try{d.data.refreshCustomerData({});}
-            catch(refreshError){return{ok:false,status:'DUPLICATE_CONTACT_REFRESH_FAILED_GET_ONLY',requestId:clean_(record['Request ID']),error:String(refreshError&&refreshError.message||refreshError),automaticPostRetry:false,liveWriteExecuted:false};}
           }
           var scoped=contactCandidates_(record).filter(function(x){return x.customerId===customerId;});
           if(scoped.length>1)return{ok:false,status:'CUSTOMER_CONTACT_CANDIDATES_AMBIGUOUS',requestId:clean_(record['Request ID']),candidateIds:scoped.map(function(x){return x.contactId;}),automaticPostRetry:false,liveWriteExecuted:false};
@@ -4313,7 +4322,7 @@ function executeControlledContactCreate(requestIdOrRow, options) {
         var known = reconcileKnownContact_(record, contactId, customerId);
         if (known.status !== 'CONTACT_CREATED_ASSOCIATION_REQUIRED') return known;
 
-        // Association is a separate mutation and therefore a separate execution.
+        // Association is a separate journaled mutation step. It may continue in the same worker execution only after the prior step is durably verified.
         cj.associationEndpoint = associationEndpoint_(contactId);
         cj.associationPayload = associationPayload_(customerId);
         cj.associationFingerprint = d.util.canonicalHash({ endpoint: cj.associationEndpoint, payload: cj.associationPayload });
@@ -4375,7 +4384,7 @@ function executeControlledContactCreate(requestIdOrRow, options) {
           'Write Journal JSON': safeJson_(state.root), 'Striven Sync Status': 'PARTIAL', 'Striven Sync Error': '',
           'Last Striven Sync': d.util.nowString(), 'Reconciliation Status': 'CONTACT ASSOCIATION REQUIRED'
         });
-        return { ok: true, status: 'CONTACT_ASSOCIATION_POST_ACCEPTED_RECONCILE_REQUIRED', requestId: clean_(record['Request ID']), matchedContactId: contactId, liveWriteExecuted: true, operation: 'ASSOCIATE_CONTACT', durationMs: Date.now() - started };
+        return { ok: true, status: 'CONTACT_ASSOCIATION_POST_ACCEPTED_RECONCILE_REQUIRED', requestId: clean_(record['Request ID']), matchedContactId: contactId, liveWriteExecuted: true, operation: 'ASSOCIATE_CONTACT', continuationSafe: true, nextStepReadOnly: true, durationMs: Date.now() - started };
       }
 
       if (Number(cj.postAttempts || 0) > 0 && (cj.remoteWriteMayHaveSucceeded === true || upper_(cj.status).indexOf('UNCERTAIN') !== -1 || upper_(cj.status).indexOf('SUCCESS_ID_MISSING') !== -1)) return reconcileUncertainCreate_(record, cj);
@@ -4462,7 +4471,7 @@ function executeControlledContactCreate(requestIdOrRow, options) {
             'Reconciliation Status':duplicateIds.length===1?'EXISTING CONTACT ID '+duplicateIds[0]+' — AUTO RECONCILE':'DUPLICATE CONTACT IDS '+idText+' — REVIEW'
           });
           log_(record,'CONTROLLED_CONTACT_CREATE','DUPLICATE_CONTACT_ID_FOUND',{existingDuplicateContactIds:duplicateIds,existingDuplicateContactId:duplicateIds.length===1?duplicateIds[0]:'',customerId:customerId,automaticPostRetry:false},'');
-          if(duplicateIds.length===1)return{ok:true,status:'DUPLICATE_CONTACT_FOUND_AUTO_RECONCILE_QUEUED',requestId:clean_(record['Request ID']),existingDuplicateContactId:duplicateIds[0],existingDuplicateContactIds:duplicateIds,writeAttempted:true,liveWriteExecuted:true,remoteWriteMayHaveSucceeded:false,automaticPostRetry:false,duplicateCreatePostRetried:false,durationMs:Date.now()-started};
+          if(duplicateIds.length===1)return{ok:true,status:'DUPLICATE_CONTACT_FOUND_AUTO_RECONCILE_QUEUED',requestId:clean_(record['Request ID']),existingDuplicateContactId:duplicateIds[0],existingDuplicateContactIds:duplicateIds,writeAttempted:true,liveWriteExecuted:true,remoteWriteMayHaveSucceeded:false,automaticPostRetry:false,duplicateCreatePostRetried:false,continuationSafe:true,nextStepReadOnly:true,durationMs:Date.now()-started};
           return{ok:false,status:'DUPLICATE_CONTACT_IDS_AMBIGUOUS',requestId:clean_(record['Request ID']),existingDuplicateContactIds:duplicateIds,writeAttempted:true,liveWriteExecuted:true,remoteWriteMayHaveSucceeded:false,automaticPostRetry:false,durationMs:Date.now()-started};
         }
 
@@ -4514,7 +4523,7 @@ function executeControlledContactCreate(requestIdOrRow, options) {
         'Reconciliation Status': 'CONTACT ASSOCIATION REQUIRED'
       });
       log_(record, 'CONTROLLED_CONTACT_CREATE', 'CONTACT_CREATED_ASSOCIATION_RECONCILE_REQUIRED', { contactId: contactIdCreated, customerId: customerId, payloadFingerprint: cj.payloadFingerprint });
-      return { ok: true, status: 'CONTACT_CREATED_ASSOCIATION_RECONCILE_REQUIRED', requestId: clean_(record['Request ID']), responseContactId: contactIdCreated, liveWriteExecuted: true, postOutcome: 'SUCCESS', durationMs: Date.now() - started };
+      return { ok: true, status: 'CONTACT_CREATED_ASSOCIATION_RECONCILE_REQUIRED', requestId: clean_(record['Request ID']), responseContactId: contactIdCreated, liveWriteExecuted: true, postOutcome: 'SUCCESS', continuationSafe: true, nextStepReadOnly: true, durationMs: Date.now() - started };
     });
   }
 
