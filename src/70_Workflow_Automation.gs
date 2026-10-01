@@ -870,7 +870,7 @@ CF.EventDrivenServiceAutomation = (function () {
     var scopedContacts=null,manualWorkOrderNotes=null;
     try{
       if(CF.CustomerScopedContactIdentity&&typeof CF.CustomerScopedContactIdentity.maintenance==='function'){
-        scopedContacts=CF.CustomerScopedContactIdentity.maintenance({refreshQueue:true,maxRequests:500});
+        scopedContacts=CF.CustomerScopedContactIdentity.maintenance({refreshQueue:false,maxRequests:500});
       }
     }catch(scopedError){
       scopedContacts={ok:false,status:'CUSTOMER_SCOPED_CONTACT_MAINTENANCE_ERROR',error:String(scopedError&&scopedError.message||scopedError),liveWriteExecuted:false};
