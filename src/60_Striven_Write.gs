@@ -6002,7 +6002,7 @@ CF.CustomerScopedContactIdentity = (function () {
   var VERSION='5.14.2';
   var LAST_REPORT_REFRESH_PROP='CF_SCOPED_CONTACT_REPORT_REFRESH_AT_V5142';
   var LAST_MAINTENANCE_PROP='CF_SCOPED_CONTACT_MAINTENANCE_AT_V5142';
-  var REPORT_REFRESH_TTL_MS=60*60*1000;
+  var REPORT_REFRESH_TTL_MS=15*60*1000;
 
   function clean_(v){return CF.Util.cleanText(v);}
   function upper_(v){return clean_(v).toUpperCase();}
@@ -6183,23 +6183,29 @@ CF.CustomerScopedContactIdentity = (function () {
 
   function maintenance(options){
     options=options||{};
-    var p=props_(),lastMs=Date.parse(p.getProperty(LAST_REPORT_REFRESH_PROP)||'')||0,force=options.forceRefresh===true;
-    var refreshNeeded=force||!lastMs||(Date.now()-lastMs>REPORT_REFRESH_TTL_MS);
-    var reportRefresh=null;
+    var p=props_(),lastMs=Date.parse(p.getProperty(LAST_REPORT_REFRESH_PROP)||'')||0,priorMaintenance=String(p.getProperty(LAST_MAINTENANCE_PROP)||''),force=options.forceRefresh===true;
+    // First resolve from current durable report evidence. Only refresh the large
+    // Customer/Contact report when unresolved customer-scoped identities exist.
+    var initial=backfillAll({maxRequests:options.maxRequests||500,reverify:false,refreshQueue:false});
+    var refreshNeeded=force||(!lastMs&&initial.unresolved>0)||((initial.unresolved>0)&&(Date.now()-lastMs>REPORT_REFRESH_TTL_MS));
+    var reportRefresh=null,backfill=initial,totalChanged=Number(initial.changed||0);
     if(refreshNeeded&&CF.StrivenData&&typeof CF.StrivenData.refreshCustomerData==='function'){
       try{
         reportRefresh=CF.StrivenData.refreshCustomerData({});
-        if(!reportRefresh||reportRefresh.ok!==false)p.setProperty(LAST_REPORT_REFRESH_PROP,new Date().toISOString());
+        if(!reportRefresh||reportRefresh.ok!==false){
+          p.setProperty(LAST_REPORT_REFRESH_PROP,new Date().toISOString());
+          backfill=backfillAll({maxRequests:options.maxRequests||500,reverify:true,refreshQueue:false});
+          totalChanged+=Number(backfill.changed||0);
+        }
       }catch(e){reportRefresh={ok:false,status:'CUSTOMER_REPORT_REFRESH_FAILED',error:String(e&&e.message||e)};}
     }
-    var backfill=backfillAll({maxRequests:options.maxRequests||500,reverify:refreshNeeded&&(!reportRefresh||reportRefresh.ok!==false),refreshQueue:false});
     var queueRefresh=null;
-    if((backfill.changed>0||options.refreshQueue===true||force)&&CF.OperatorQueue&&typeof CF.OperatorQueue.refresh==='function'){
+    if((totalChanged>0||options.refreshQueue===true||force||!priorMaintenance)&&CF.OperatorQueue&&typeof CF.OperatorQueue.refresh==='function'){
       try{queueRefresh=CF.OperatorQueue.refresh();}catch(e2){queueRefresh={ok:false,status:'QUEUE_REFRESH_FAILED',error:String(e2&&e2.message||e2)};}
     }
     p.setProperty(LAST_MAINTENANCE_PROP,new Date().toISOString());
-    var out={ok:!reportRefresh||reportRefresh.ok!==false,version:VERSION,status:'CUSTOMER_SCOPED_CONTACT_MAINTENANCE_COMPLETE',reportRefresh:reportRefresh,backfill:backfill,queueRefresh:queueRefresh,liveWriteExecuted:false,strivenMutationExecuted:false};
-    try{if(CF.Util&&typeof CF.Util.logEvent==='function')CF.Util.logEvent({module:'60_Striven_Write',action:'CUSTOMER_SCOPED_CONTACT_MAINTENANCE',status:out.ok?'COMPLETE':'PARTIAL',details:{refreshNeeded:refreshNeeded,backfill:{checked:backfill.eligibleChecked,resolved:backfill.resolved,changed:backfill.changed,unresolved:backfill.unresolved,ambiguous:backfill.ambiguous}},version:VERSION});}catch(ignored){}
+    var out={ok:!reportRefresh||reportRefresh.ok!==false,version:VERSION,status:'CUSTOMER_SCOPED_CONTACT_MAINTENANCE_COMPLETE',reportRefresh:reportRefresh,initialBackfill:initial,backfill:backfill,totalChanged:totalChanged,queueRefresh:queueRefresh,liveWriteExecuted:false,strivenMutationExecuted:false};
+    try{if(CF.Util&&typeof CF.Util.logEvent==='function')CF.Util.logEvent({module:'60_Striven_Write',action:'CUSTOMER_SCOPED_CONTACT_MAINTENANCE',status:out.ok?'COMPLETE':'PARTIAL',details:{refreshNeeded:refreshNeeded,initialUnresolved:initial.unresolved,backfill:{checked:backfill.eligibleChecked,resolved:backfill.resolved,changed:backfill.changed,unresolved:backfill.unresolved,ambiguous:backfill.ambiguous}},version:VERSION});}catch(ignored){}
     return out;
   }
 
