@@ -1,3 +1,4 @@
+/* CF_SERVICEOPS_V5_14_3_QUEUE_SYNC_COALESCE_WITH_WORKER_R1 */
 /* CF_SERVICEOPS_V5_14_3_REQUEST_SCOPED_OPERATIONAL_RECONCILIATION_R1 */
 /* CF_SERVICEOPS_V5_13_5_DURABLE_OPERATIONAL_EVIDENCE_R1 */
 /* CF_SERVICEOPS_V5_13_3_QUEUE_TRIGGER_HYGIENE_R1 */
@@ -4963,7 +4964,26 @@ function FIX_20260903_reconcileAllExistingOperatorQueue() {
     try{return ScriptApp.newTrigger(handlerName).timeBased().after(Math.max(1000,Number(delayMs)||5000)).create();}
     catch(e){var msg=String(e&&e.message||e);if(/too many triggers|trigger.*quota|quota.*trigger/i.test(msg)){try{if(CF.Util&&CF.Util.logEvent)CF.Util.logEvent({module:'50_Operator_Queue',action:'QUEUE_TRIGGER_QUOTA_FAIL_SOFT',status:'SKIPPED',message:msg,details:{handler:handlerName,queueStatePreserved:true,businessWriteNotFailed:true},version:'5.13.3'});}catch(logErr2){}return{getUniqueId:function(){return'';},getHandlerFunction:function(){return handlerName;},getEventType:function(){return ScriptApp.EventType.CLOCK;},__cfV5133QuotaDeferred:true};}throw e;}
   }
-function scheduleDirtyRow_(rowNumber){rowNumber=Number(rowNumber||0);if(!rowNumber)return;var lock=LockService.getScriptLock();if(!lock.tryLock(1000))return;try{var p=PropertiesService.getScriptProperties(),rows=[];try{rows=JSON.parse(p.getProperty(DIRTY_ROWS_PROP)||'[]');}catch(e){rows=[];}if(!Array.isArray(rows))rows=[];if(rows.indexOf(rowNumber)<0)rows.push(rowNumber);if(rows.length>100)rows=rows.slice(-100);p.setProperty(DIRTY_ROWS_PROP,JSON.stringify(rows));var scheduled=Number(p.getProperty(SCHEDULED_AT_PROP)||0),stale=!scheduled||(nowMs_()-scheduled>120000);if(stale){CF_V5133_createDedupedOneShot_(TRIGGER,5000);p.setProperty(SCHEDULED_AT_PROP,String(nowMs_()));}}finally{lock.releaseLock();}}
+function scheduleDirtyRow_(rowNumber){
+    rowNumber=Number(rowNumber||0);if(!rowNumber)return;
+    var p=PropertiesService.getScriptProperties(),activeRequest=clean_(p.getProperty('CF_EVENT_DRIVEN_SERVICE_WORKER_ACTIVE_REQUEST')),serviceQueue=[];
+    try{serviceQueue=JSON.parse(p.getProperty('CF_EVENT_DRIVEN_SERVICE_REQUEST_IDS')||'[]');}catch(queueError){serviceQueue=[];}
+    if(activeRequest||(Array.isArray(serviceQueue)&&serviceQueue.length)){
+      // The canonical worker projects its own terminal/review request directly.
+      // Do not start a competing presentation trigger for every intermediate patch.
+      return;
+    }
+    var lock=LockService.getScriptLock();if(!lock.tryLock(1000))return;
+    try{
+      var rows=[];try{rows=JSON.parse(p.getProperty(DIRTY_ROWS_PROP)||'[]');}catch(e){rows=[];}
+      if(!Array.isArray(rows))rows=[];
+      if(rows.indexOf(rowNumber)<0)rows.push(rowNumber);
+      if(rows.length>100)rows=rows.slice(-100);
+      p.setProperty(DIRTY_ROWS_PROP,JSON.stringify(rows));
+      var scheduled=Number(p.getProperty(SCHEDULED_AT_PROP)||0),stale=!scheduled||(nowMs_()-scheduled>120000);
+      if(stale){CF_V5133_createDedupedOneShot_(TRIGGER,5000);p.setProperty(SCHEDULED_AT_PROP,String(nowMs_()));}
+    }finally{lock.releaseLock();}
+  }
   function flushPending_(){var p=PropertiesService.getScriptProperties(),rows=[];try{rows=JSON.parse(p.getProperty(DIRTY_ROWS_PROP)||'[]');}catch(e){rows=[];}p.deleteProperty(DIRTY_ROWS_PROP);p.deleteProperty(SCHEDULED_AT_PROP);if(!Array.isArray(rows)||!rows.length)return{ok:true,status:'NO_DIRTY_ROWS',version:VERSION};SpreadsheetApp.flush();if(rows.length>8){var full=refreshAll_({verifyLimit:25});return{ok:!full||full.ok!==false,status:'COALESCED_FULL_REFRESH',dirtyRows:rows.length,fullRefresh:full,version:VERSION};}var sheet=CF.Util.requireSheet('SERVICE_REQUESTS'),headers=CF.Util.getActualHeaders(sheet),idCol=headers.indexOf('Request ID')+1,results=[];rows.forEach(function(row){if(row<2||row>sheet.getLastRow()||!idCol)return;var id=clean_(sheet.getRange(row,idCol).getDisplayValue());if(id)results.push(refreshRequest_(id,{fullFallback:true,verifyLimit:25}));});var ok=results.every(function(x){return x&&x.ok!==false;});return{ok:ok,status:ok?'DIRTY_ROWS_REFRESHED':'DIRTY_ROW_REFRESH_FAILED',dirtyRows:rows.length,results:results,version:VERSION};}
 
   CF.OperatorQueue.refresh=function(){return refreshAll_({verifyLimit:20});};
