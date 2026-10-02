@@ -4846,8 +4846,59 @@ function FIX_20260903_reconcileAllExistingOperatorQueue() {
     var days=Math.floor(sec/86400);sec-=days*86400;var hrs=Math.floor(sec/3600);sec-=hrs*3600;var mins=Math.floor(sec/60),parts=[];
     if(days)parts.push(days+'d');if(hrs||days)parts.push(hrs+'h');parts.push(mins+'m');return parts.join(' ');
   }
+  // CF_SERVICEOPS_V5_14_2_IDENTITY_CONFLICT_UI_R1
   function processedValue_(r){return r['Last Striven Sync']||r['Completed At']||'';}
   function processComplete_(r){return !!clean_(r['Work Order ID'])||upper_(r['Current Stage'])==='SALES ORDER CREATED'||upper_(r['Striven Sync Status'])==='SYNCED';}
+  function matchEvidence_(r){
+    var raw=r&&r['Match Evidence JSON'];
+    try{return CF.Util.parseJson(raw,{})||{};}catch(e){try{return JSON.parse(String(raw||'{}'))||{};}catch(e2){return{};}}
+  }
+  function customerCandidateEvidence_(r){
+    var evidence=matchEvidence_(r),raw=Array.isArray(evidence.customerCandidates)?evidence.customerCandidates:[],out=[],seen={};
+    raw.forEach(function(candidate){
+      candidate=candidate||{};
+      var row=candidate.row||candidate||{};
+      var id=clean_(row['Customer ID']||row['Entity ID']||candidate.id),name=clean_(row['Customer Name']||row['Full Name']);
+      if(!id||seen[id])return;
+      var reasons=Array.isArray(candidate.reasons)?candidate.reasons:(Array.isArray(row.reasons)?row.reasons:[]);
+      reasons=reasons.map(clean_).filter(Boolean);
+      seen[id]=true;out.push({id:id,name:name,reasons:reasons});
+    });
+    return out;
+  }
+  function friendlyEvidence_(reasons){
+    reasons=(reasons||[]).map(upper_);
+    var labels=[];
+    var secondaryAddress=reasons.indexOf('SECONDARY ADDRESS')>=0,secondaryName=reasons.indexOf('SECONDARY NAME')>=0;
+    if(reasons.indexOf('PRIMARY EMAIL')>=0)labels.push('Email');
+    if(reasons.indexOf('PRIMARY PHONE')>=0)labels.push('Phone');
+    if(reasons.indexOf('PRIMARY ALT PHONE')>=0)labels.push('Alt phone');
+    if(secondaryAddress&&secondaryName)labels.push('Address + name');
+    else{
+      if(secondaryAddress)labels.push('Address');
+      if(secondaryName)labels.push('Name');
+    }
+    reasons.forEach(function(reason){
+      if(['PRIMARY EMAIL','PRIMARY PHONE','PRIMARY ALT PHONE','SECONDARY ADDRESS','SECONDARY NAME'].indexOf(reason)>=0)return;
+      var label=clean_(reason).replace(/^PRIMARY\s+/i,'').replace(/^SECONDARY\s+/i,'');
+      if(label&&labels.indexOf(label)<0)labels.push(label);
+    });
+    return labels.length?labels.join(' + '):'Candidate';
+  }
+  function customerConflictLines_(r){
+    if(upper_(r['Customer Match Status'])!=='AMBIGUOUS')return[];
+    return customerCandidateEvidence_(r).map(function(candidate){
+      return friendlyEvidence_(candidate.reasons)+' → Customer '+candidate.id+(candidate.name?' — '+candidate.name:'');
+    });
+  }
+  function reviewLines_(r){
+    if(upper_(r['Manual Review?'])!=='YES')return[];
+    if(upper_(r['Customer Match Status'])==='AMBIGUOUS'){
+      var conflictLines=customerConflictLines_(r);
+      return ['Review: Customer identity conflict'].concat(conflictLines).concat(['Action: Confirm the correct Customer']);
+    }
+    return ['Review: '+clean_(r['Manual Review Reason']||r['Blocking Issue']||'Required')];
+  }
   function statusText_(r){
     var lines=[clean_(r['Current Stage']||r['Request Status'])];
     var submittedRaw=r['Submitted At']||r['Created At'],processedRaw=processedValue_(r),submitted=formatDateTime_(submittedRaw);
@@ -4856,7 +4907,7 @@ function FIX_20260903_reconcileAllExistingOperatorQueue() {
       lines.push((processComplete_(r)?'Processed: ':'Last processed: ')+formatDateTime_(processedRaw));
       var dur=duration_(submittedRaw,processedRaw);if(dur)lines.push((processComplete_(r)?'Processing time: ':'Processing time so far: ')+dur);
     }else lines.push('Processed: Pending');
-    if(upper_(r['Manual Review?'])==='YES')lines.push('Review: '+clean_(r['Manual Review Reason']||r['Blocking Issue']||'Required'));
+    lines=lines.concat(reviewLines_(r));
     return lines.filter(Boolean).join('\n');
   }
   function ids_(r){return{
@@ -4876,8 +4927,11 @@ function FIX_20260903_reconcileAllExistingOperatorQueue() {
     return{displayId:displayId,url:url,customerScopedContactId:scoped,globalContactId:globalId||(!scoped?x.contact:'')};
   }
   function strivenText_(r){
-    var x=ids_(r),contactLink=contactLinkIdentity_(r),lines=[];
-    lines.push('Customer: '+(x.customer?x.customer+' ✓':(upper_(r['Customer Action'])==='CREATE'?'NEW':'—')));
+    var x=ids_(r),contactLink=contactLinkIdentity_(r),lines=[],candidateIds=customerCandidateEvidence_(r).map(function(candidate){return candidate.id;});
+    var customerDisplay=x.customer?x.customer+' ✓'
+      :(upper_(r['Customer Match Status'])==='AMBIGUOUS'?(candidateIds.length?candidateIds.join(' / ')+' ⚠':'AMBIGUOUS ⚠')
+        :(upper_(r['Customer Action'])==='CREATE'?'NEW':'—'));
+    lines.push('Customer: '+customerDisplay);
     lines.push('Contact: '+(contactLink.displayId?contactLink.displayId+' ✓':(upper_(r['Contact Action'])==='CREATE'?'NEW':'—')));
     lines.push('Location: '+(x.location?x.location+' ✓':(upper_(r['Location Action'])==='CREATE'?'NEW':'—')));
     if(clean_(r['Match Confidence']))lines.push('Confidence: '+clean_(r['Match Confidence'])+(clean_(r['Match Score'])?' ('+clean_(r['Match Score'])+')':''));
@@ -4889,11 +4943,34 @@ function FIX_20260903_reconcileAllExistingOperatorQueue() {
   function setLinkForToken_(builder,text,token,url,from){
     if(!token||!url)return;var i=text.indexOf(token,from||0);if(i>=0)builder.setLinkUrl(i,i+token.length,url);
   }
+  function setCustomerCandidateLinks_(builder,text,r){
+    customerCandidateEvidence_(r).forEach(function(candidate){
+      var prefix=friendlyEvidence_(candidate.reasons)+' → Customer ',needle=prefix+candidate.id,pos=text.indexOf(needle);
+      if(pos>=0)builder.setLinkUrl(pos+prefix.length,pos+needle.length,customerUrl_(candidate.id));
+    });
+  }
+  function statusRich_(r){
+    var text=statusText_(r),b=SpreadsheetApp.newRichTextValue().setText(text);
+    setCustomerCandidateLinks_(b,text,r);
+    return b.build();
+  }
+  function setStatusRich_(range,r){
+    range.setRichTextValue(statusRich_(r));
+    range.setBackground(stageBg_(r['Current Stage'])).setFontWeight('bold');
+  }
   function setStrivenRich_(range,r){
-    var text=strivenText_(r),x=ids_(r),contactLink=contactLinkIdentity_(r),b=SpreadsheetApp.newRichTextValue().setText(text),cursor=0;
-    if(x.customer){setLinkForToken_(b,text,x.customer,customerUrl_(x.customer),cursor);cursor=text.indexOf('\n')+1;}
-    if(contactLink.displayId){setLinkForToken_(b,text,contactLink.displayId,contactLink.url,cursor);var p=text.indexOf('\n',cursor);cursor=p>=0?p+1:cursor;}
-    if(x.location)setLinkForToken_(b,text,x.location,locationUrl_(x.customer,x.location),cursor);
+    var text=strivenText_(r),x=ids_(r),contactLink=contactLinkIdentity_(r),b=SpreadsheetApp.newRichTextValue().setText(text);
+    var firstBreak=text.indexOf('\n'),contactStart=firstBreak>=0?firstBreak+1:0,secondBreak=text.indexOf('\n',contactStart),locationStart=secondBreak>=0?secondBreak+1:contactStart;
+    if(x.customer)setLinkForToken_(b,text,x.customer,customerUrl_(x.customer),0);
+    else{
+      var candidateCursor='Customer: '.length;
+      customerCandidateEvidence_(r).forEach(function(candidate){
+        var pos=text.indexOf(candidate.id,candidateCursor);
+        if(pos>=0&&firstBreak>=0&&pos<firstBreak){b.setLinkUrl(pos,pos+candidate.id.length,customerUrl_(candidate.id));candidateCursor=pos+candidate.id.length;}
+      });
+    }
+    if(contactLink.displayId)setLinkForToken_(b,text,contactLink.displayId,contactLink.url,contactStart);
+    if(x.location)setLinkForToken_(b,text,x.location,locationUrl_(x.customer,x.location),locationStart);
     range.setRichTextValue(b.build());
   }
   function orderText_(r){var number=clean_(r['Work Order Number']),id=clean_(r['Work Order ID']);if(!number&&!id)return'—';return'#'+(number||id)+' - Sales Order\n'+(clean_(r['Work Order Status'])||'Quoted');}
@@ -4907,8 +4984,12 @@ function FIX_20260903_reconcileAllExistingOperatorQueue() {
     if(!idCol||!statusCol)return{ok:false,status:'QUEUE_COLUMNS_MISSING'};
     var src=CF.Util.readRecords('SERVICE_REQUESTS'),map={};src.forEach(function(r){var id=clean_(r['Request ID']);if(id)map[id]=r;});
     var ids=s.getRange(2,idCol,last-1,1).getDisplayValues(),existing=s.getRange(2,statusCol,last-1,1).getDisplayValues(),values=[],bgs=[],updated=0;
-    for(var i=0;i<ids.length;i++){var id=clean_(ids[i][0]),r=map[id];if(r){values.push([statusText_(r)]);bgs.push([stageBg_(r['Current Stage'])]);updated++;}else{values.push([existing[i][0]]);bgs.push(['#ffffff']);}}
-    s.getRange(2,statusCol,values.length,1).setValues(values).setBackgrounds(bgs).setFontWeight('bold');
+    for(var i=0;i<ids.length;i++){
+      var id=clean_(ids[i][0]),r=map[id];
+      if(r){values.push([statusRich_(r)]);bgs.push([stageBg_(r['Current Stage'])]);updated++;}
+      else{values.push([SpreadsheetApp.newRichTextValue().setText(String(existing[i][0]||'')).build()]);bgs.push(['#ffffff']);}
+    }
+    s.getRange(2,statusCol,values.length,1).setRichTextValues(values).setBackgrounds(bgs).setFontWeight('bold');
     return{ok:true,status:'STATUS_TIMING_PROJECTED',updated:updated};
   }
   function refreshRequest_(requestId,options){
@@ -4917,7 +4998,7 @@ function FIX_20260903_reconcileAllExistingOperatorQueue() {
     if(!row){var full=refreshAll_({verifyLimit:options.verifyLimit||25}),after=findQueueRow_(requestId);return{ok:!!after,status:after?'FULL_REFRESH_INSERTED_REQUEST':'REQUEST_STILL_MISSING_AFTER_FULL_REFRESH',requestId:requestId,fullRefresh:full,parity:verifyRequest_(requestId)};}
     var s=queueSheet_(),headers=s.getRange(1,1,1,s.getLastColumn()).getDisplayValues()[0];function col_(name){return headers.indexOf(name)+1;}
     var cStatus=col_('Status'),cStriven=col_('Striven'),cNext=col_('Next Step'),cOrder=col_('Sales Order / Work Order');
-    if(cStatus)s.getRange(row,cStatus).setValue(statusText_(r)).setBackground(stageBg_(r['Current Stage'])).setFontWeight('bold');
+    if(cStatus)setStatusRich_(s.getRange(row,cStatus),r);
     if(cStriven)setStrivenRich_(s.getRange(row,cStriven),r);
     if(cNext)s.getRange(row,cNext).setValue(clean_(r['Next Action'])||'—');
     if(cOrder)setOrderRich_(s.getRange(row,cOrder),r);
@@ -4930,9 +5011,21 @@ function FIX_20260903_reconcileAllExistingOperatorQueue() {
     requestId=clean_(requestId);var src=request_(requestId),row=findQueueRow_(requestId),issues=[];if(!src)return{ok:false,requestId:requestId,issues:['SOURCE_REQUEST_MISSING']};if(!row)return{ok:false,requestId:requestId,issues:['QUEUE_ROW_MISSING']};
     var s=queueSheet_(),headers=s.getRange(1,1,1,s.getLastColumn()).getDisplayValues()[0],vals=s.getRange(row,1,1,headers.length).getDisplayValues()[0];function idx_(name){return headers.indexOf(name);}function q_(name){var i=idx_(name);return i>=0?clean_(vals[i]):'';}
     var expectedStatus=statusText_(src),actualStatus=q_('Status');if(expectedStatus!==actualStatus)issues.push('STATUS_TEXT_MISMATCH');
+    var expectedStriven=strivenText_(src),actualStriven=q_('Striven');if(expectedStriven!==actualStriven)issues.push('STRIVEN_TEXT_MISMATCH');
     var expectedNext=clean_(src['Next Action'])||'—',actualNext=q_('Next Step')||'—';if(expectedNext!==actualNext)issues.push('NEXT_ACTION:'+actualNext+'!='+expectedNext);
     var n=clean_(src['Work Order Number']);if(n&&q_('Sales Order / Work Order').indexOf(n)<0)issues.push('ORDER_NUMBER_MISSING:'+n);
     var oi=idx_('Sales Order / Work Order'),expectedOrderUrl=orderUrl_(src);if(oi>=0&&expectedOrderUrl&&richUrls_(s.getRange(row,oi+1)).indexOf(expectedOrderUrl)<0)issues.push('ORDER_LINK_MISSING');
+    if(upper_(src['Customer Match Status'])==='AMBIGUOUS'){
+      var candidateIds=customerCandidateEvidence_(src).map(function(candidate){return candidate.id;});
+      var statusIndex=idx_('Status'),strivenIndex=idx_('Striven');
+      var statusUrls=statusIndex>=0?richUrls_(s.getRange(row,statusIndex+1)):[];
+      var strivenUrls=strivenIndex>=0?richUrls_(s.getRange(row,strivenIndex+1)):[];
+      candidateIds.forEach(function(candidateId){
+        var url=customerUrl_(candidateId);
+        if(statusIndex>=0&&statusUrls.indexOf(url)<0)issues.push('STATUS_CUSTOMER_LINK_MISSING:'+candidateId);
+        if(strivenIndex>=0&&strivenUrls.indexOf(url)<0)issues.push('STRIVEN_CUSTOMER_LINK_MISSING:'+candidateId);
+      });
+    }
     if(upper_(src['Striven Sync Status'])==='RECONCILE REQUIRED'&&upper_(actualNext).indexOf('RECONCILE')!==0)issues.push('UNSAFE_RECONCILE_PROJECTION');
     return{ok:issues.length===0,requestId:requestId,rowNumber:row,expectedStatus:expectedStatus,actualStatus:actualStatus,sourceNextAction:expectedNext,queueNextAction:actualNext,workOrderNumber:n,issues:issues};
   }
