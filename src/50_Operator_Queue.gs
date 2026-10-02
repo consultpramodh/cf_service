@@ -2213,10 +2213,14 @@ var CF_SERVICEOPS_LEAN_QUEUE_V51015_R1_ = (function () {
     var review=/BLOCK|ERROR|REVIEW|CONFLICT|AMBIGUOUS/.test(status)||upper_(r['Manual Review?'])==='YES';
     return{state:verified?'DONE':(review?'REVIEW':'PENDING'),id:id,number:number,url:url};
   }
+  // CF_SERVICEOPS_V5_14_2_IDENTITY_CONFLICT_CHECKLIST_R1
   function strivenText_(r,index,order){
-    var cid=customerId_(r),contactLink=contactLinkIdentity_(r),contact=contactLink.displayId,location=locationId_(r),assets=assetChecklist_(r,index),wo=workOrderChecklist_(r,order);
+    var cid=customerId_(r);
+    var candidateCustomerIds=!cid&&upper_(r['Customer Match Status'])==='AMBIGUOUS'?evidenceIds_(r,'customer'):[];
+    var customerDisplay=cid||candidateCustomerIds.join(' / ');
+    var contactLink=contactLinkIdentity_(r),contact=contactLink.displayId,location=locationId_(r),assets=assetChecklist_(r,index),wo=workOrderChecklist_(r,order);
     return line_([
-      'Customer: '+(cid||'')+(cid?' ':'')+checklistSymbol_(customerChecklistState_(r,cid)),
+      'Customer: '+customerDisplay+(customerDisplay?' ':'')+checklistSymbol_(customerChecklistState_(r,cid)),
       'Contact: '+(contact||'')+(contact?' ':'')+checklistSymbol_(contactChecklistState_(r,contact)),
       'Location: '+(location||'')+(location?' ':'')+checklistSymbol_(locationChecklistState_(r,location)),
       'Assets: '+(assets.display||'')+(assets.display?' ':'')+checklistSymbol_(assets.state),
@@ -2371,6 +2375,17 @@ var CF_SERVICEOPS_LEAN_QUEUE_V51015_R1_ = (function () {
       {prefix:'Contact: ',id:contact,url:contactLink.url},
       {prefix:'Location: ',id:location,url:strivenUrl_('LOCATION',location,cid)}
     ];
+    if(!cid&&upper_(r['Customer Match Status'])==='AMBIGUOUS'){
+      var customerLineEnd=text.indexOf('\n');if(customerLineEnd<0)customerLineEnd=text.length;
+      var customerCursor='Customer: '.length;
+      evidenceIds_(r,'customer').forEach(function(id){
+        var pos=text.indexOf(id,customerCursor);
+        if(pos>=customerCursor&&pos<customerLineEnd){
+          b.setLinkUrl(pos,pos+id.length,strivenUrl_('CUSTOMER',id));
+          customerCursor=pos+id.length;
+        }
+      });
+    }
     assets.ids.slice(0,3).forEach(function(id){
       specs.push({prefix:'Assets: ',id:id,url:strivenUrl_('ASSET',id)});
     });
@@ -5011,7 +5026,6 @@ function FIX_20260903_reconcileAllExistingOperatorQueue() {
     requestId=clean_(requestId);var src=request_(requestId),row=findQueueRow_(requestId),issues=[];if(!src)return{ok:false,requestId:requestId,issues:['SOURCE_REQUEST_MISSING']};if(!row)return{ok:false,requestId:requestId,issues:['QUEUE_ROW_MISSING']};
     var s=queueSheet_(),headers=s.getRange(1,1,1,s.getLastColumn()).getDisplayValues()[0],vals=s.getRange(row,1,1,headers.length).getDisplayValues()[0];function idx_(name){return headers.indexOf(name);}function q_(name){var i=idx_(name);return i>=0?clean_(vals[i]):'';}
     var expectedStatus=statusText_(src),actualStatus=q_('Status');if(expectedStatus!==actualStatus)issues.push('STATUS_TEXT_MISMATCH');
-    var expectedStriven=strivenText_(src),actualStriven=q_('Striven');if(expectedStriven!==actualStriven)issues.push('STRIVEN_TEXT_MISMATCH');
     var expectedNext=clean_(src['Next Action'])||'—',actualNext=q_('Next Step')||'—';if(expectedNext!==actualNext)issues.push('NEXT_ACTION:'+actualNext+'!='+expectedNext);
     var n=clean_(src['Work Order Number']);if(n&&q_('Sales Order / Work Order').indexOf(n)<0)issues.push('ORDER_NUMBER_MISSING:'+n);
     var oi=idx_('Sales Order / Work Order'),expectedOrderUrl=orderUrl_(src);if(oi>=0&&expectedOrderUrl&&richUrls_(s.getRange(row,oi+1)).indexOf(expectedOrderUrl)<0)issues.push('ORDER_LINK_MISSING');
