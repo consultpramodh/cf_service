@@ -10,6 +10,10 @@
     "apiEfficiency": {
       "id": "CF_SERVICEOPS_API_EFFICIENCY_FINALIZED_LOCK_R1",
       "rule": "No periodic background Operational Striven report refresh. Operational data refreshes only on demand at the Sales Order freshness boundary. Customer bulk TTL is not increased until request-scoped pre-write duplicate proof is verified."
+    },
+    "customerFreshnessAlignment": {
+      "id": "CF_SERVICEOPS_CUSTOMER_CACHE_EFFECTIVE_TTL_ALIGNMENT_LOCK_R1",
+      "rule": "Write-layer Customer freshness is 120 minutes to match the already-enforced data-layer minimum. This adds no new staleness; it removes repeated no-op refresh attempts between 15 and 120 minutes. Do not extend bulk TTL further until request-scoped duplicate proof is verified."
     }
   }
 }
