@@ -1,14 +1,15 @@
 {
-  "requestedAt": "2026-10-05T16:16:00-04:00",
+  "requestedAt": "2026-10-05T16:25:00-04:00",
   "releaseIntent": "Reduce Striven API consumption and repair Contact identity without weakening duplicate or ownership guards.",
   "sourcePolicy": "PULL_CURRENT_LIVE_HEAD",
   "changes": [
-    "Lock exact normalized phone OR email as Contact identity; name is supporting only.",
-    "Retire the repeating background Operational report refresh and preserve on-demand Sales Order freshness refresh.",
-    "Automatically re-evaluate parked CONTACT DIRECT IDENTITY CONFLICT rows using direct Contact GET plus Customer ownership verification.",
-    "Keep Customer bulk TTL unchanged until request-scoped pre-write duplicate lookup is proven.",
-    "Align the Customer-create freshness threshold to the already-enforced 120-minute data-layer brake, eliminating repeated no-op refresh attempts without introducing additional staleness."
+    "Lock exact normalized phone, email, or alt phone as Contact identity; name is supporting evidence only.",
+    "Fail closed when more than one distinct exact Customer-scoped Contact ID remains.",
+    "Align Customer-create freshness to the already-enforced 120-minute data-layer API brake.",
+    "Make idle Customer-scoped Contact maintenance cache-only so unresolved historical rows cannot trigger the 18-page Customer/Contact report.",
+    "Retire the repeating background Operational report refresh while preserving the Sales Order on-demand freshness boundary.",
+    "Automatically re-evaluate parked CONTACT DIRECT IDENTITY CONFLICT rows using direct Contact GET plus Customer ownership verification."
   ],
-  "releaseSequence": 3,
-  "note": "Supersede earlier queued runs; deploy only the latest automation commit."
+  "releaseSequence": 4,
+  "note": "Deploy the production-tested live-head transformer. Supersede any older queued release."
 }
