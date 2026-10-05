@@ -5063,6 +5063,7 @@ function scheduleDirtyRow_(rowNumber){rowNumber=Number(rowNumber||0);if(!rowNumb
   CF.OperatorQueue.verifyRequestParity=verifyRequest_;
   CF.OperatorQueue.verifyRecentParity=verifyRecent_;
   CF.OperatorQueue.flushPendingMutationSync=flushPending_;
+  CF.OperatorQueue.queueRequestRefresh=function(requestId){var r=request_(requestId);if(!r||!r.__rowNumber)return{ok:false,status:'SERVICE_REQUEST_NOT_FOUND',requestId:clean_(requestId)};scheduleDirtyRow_(r.__rowNumber);return{ok:true,status:'QUEUE_REFRESH_SCHEDULED',requestId:clean_(requestId),rowNumber:r.__rowNumber,liveWriteExecuted:false};};
   CF.OperatorQueue.projectStatusTimingAll=applyStatusTimingProjectionAll_;
 
   if(typeof baseApply==='function')CF.OperatorQueue.applyOperatorDecision=function(requestId,decision){SpreadsheetApp.flush();var r=request_(requestId);if(!r)throw new Error('Service Request not found: '+clean_(requestId));var action=upper_(decision&&decision.action||r['Operator Action']),reason=unsafeWriteReason_(r,action);if(reason){try{refreshRequest_(requestId,{fullFallback:true});}catch(e){}throw new Error(reason+' | Authoritative Service Request state blocks '+action+'. Refresh/reconcile; never retry the live create POST.');}var out=baseApply.apply(CF.OperatorQueue,arguments);SpreadsheetApp.flush();var sync=refreshRequest_(requestId,{fullFallback:true,verifyLimit:25});if(out&&typeof out==='object')out.queueCommitSync=sync;return out;};
