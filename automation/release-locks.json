@@ -14,6 +14,10 @@
     "customerFreshnessAlignment": {
       "id": "CF_SERVICEOPS_CUSTOMER_CACHE_EFFECTIVE_TTL_ALIGNMENT_LOCK_R1",
       "rule": "Write-layer Customer freshness is 120 minutes to match the already-enforced data-layer minimum. This adds no new staleness; it removes repeated no-op refresh attempts between 15 and 120 minutes. Do not extend bulk TTL further until request-scoped duplicate proof is verified."
+    },
+    "noBackgroundCustomerReportRefresh": {
+      "id": "CF_SERVICEOPS_NO_BACKGROUND_CUSTOMER_REPORT_REFRESH_LOCK_R1",
+      "rule": "Idle/background Customer-scoped contact maintenance is cache-only. Unresolved historical identities must not trigger the bulk Customer/Contact report. Full Customer refresh remains available only by explicit forceRefresh or the real pre-write Customer freshness boundary."
     }
   }
 }
