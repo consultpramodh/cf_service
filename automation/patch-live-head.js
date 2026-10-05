@@ -119,11 +119,30 @@ if(!writeSrc.includes(CONTACT_LOCK)){
 `    }`;
   writeSrc=replaceRange(writeSrc,ident.start,ident.end,newIdentity);
 
+  if(!writeSrc.includes('function reconcileExistingContactById(')){
+    const insertAt=writeSrc.indexOf('function buildPreview_');
+    if(insertAt<0)die('Contact reconcile wrapper insertion point buildPreview_ not found.');
+    const wrapper=`  function reconcileExistingContactById(requestIdOrRow,contactId){\n`+
+`    return withWriteLock_(function(){\n`+
+`      var record=request_(requestIdOrRow);\n`+
+`      if(!record)throw new Error('Service Request not found.');\n`+
+`      var customerId=resolvedCustomerId_(record);\n`+
+`      contactId=clean_(contactId);\n`+
+`      if(!customerId)throw new Error('CONTACT_RECONCILE_BLOCKED | Customer ID is required.');\n`+
+`      if(!contactId)throw new Error('CONTACT_RECONCILE_BLOCKED | Contact ID is required.');\n`+
+`      return reconcileKnownContact_(record,contactId,customerId);\n`+
+`    });\n`+
+`  }\n\n`;
+    writeSrc=writeSrc.slice(0,insertAt)+wrapper+writeSrc.slice(insertAt);
+  }
+
   if(!writeSrc.includes('evaluateContactIdentityPolicyForTest: contactIdentityDecisionLocked_')){
-    const needle='    executeControlledContactCreate: executeControlledContactCreate,';
-    const at=writeSrc.indexOf(needle);
-    if(at<0)die('Contact module export object not found.');
-    writeSrc=writeSrc.slice(0,at+needle.length)+`\n    evaluateContactIdentityPolicyForTest: contactIdentityDecisionLocked_,`+writeSrc.slice(at+needle.length);
+    const exportRe=/executeControlledContactCreate\s*:\s*executeControlledContactCreate\s*,?/;
+    const exportMatch=exportRe.exec(writeSrc);
+    if(!exportMatch)die('Contact module export object not found.');
+    var exportText=exportMatch[0];
+    if(exportText.charAt(exportText.length-1)!==',')exportText+=',';
+    writeSrc=writeSrc.slice(0,exportMatch.index)+exportText+`\n    reconcileExistingContactById: reconcileExistingContactById,\n    evaluateContactIdentityPolicyForTest: contactIdentityDecisionLocked_,`+writeSrc.slice(exportMatch.index+exportMatch[0].length);
   }
 }
 
@@ -157,7 +176,9 @@ if(!hardSrc.includes(API_LOCK)){
 `  ScriptApp.getProjectTriggers().forEach(function(t){\n`+
 `    try{if(CFH_clean_(t.getHandlerFunction&&t.getHandlerFunction())===CFH_OPERATIONAL_HANDLER){ScriptApp.deleteTrigger(t);removed++;}}catch(ignored){}\n`+
 `  });\n`+
-`  return{ok:true,version:'${target}',status:'BACKGROUND_OPERATIONAL_REFRESH_DISABLED',removedLegacyTriggers:removed,apiCallsSuppressed:true,liveWriteExecuted:false};\n`+
+`  var contactRecovery=null;\n`+
+`  if(removed>0&&typeof FIX_CF_REEVALUATE_FALSE_CONTACT_IDENTITY_CONFLICTS==='function'){try{contactRecovery=FIX_CF_REEVALUATE_FALSE_CONTACT_IDENTITY_CONFLICTS();}catch(recoveryError){contactRecovery={ok:false,error:String(recoveryError&&recoveryError.message||recoveryError)};}}\n`+
+`  return{ok:true,version:'${target}',status:'BACKGROUND_OPERATIONAL_REFRESH_DISABLED',removedLegacyTriggers:removed,apiCallsSuppressed:true,contactRecovery:contactRecovery,liveWriteExecuted:false};\n`+
 `}`;
   hardSrc=replaceRange(hardSrc,refresh.start,refresh.end,refreshReplacement);
 }
@@ -177,6 +198,29 @@ if(!dg.includes(`contactIdentityLock:'${CONTACT_LOCK}'`)){
   dg=dg.replace(service,m=>m+`\n    contactIdentityLock:'${CONTACT_LOCK}',\n    apiEfficiencyLock:'${API_LOCK}',\n    operationalBackgroundRefresh:'DISABLED_ON_DEMAND_ONLY',`);
 }
 runnerSrc=replaceRange(runnerSrc,doGet.start,doGet.end,dg);
+
+const recoveryFn='FIX_CF_REEVALUATE_FALSE_CONTACT_IDENTITY_CONFLICTS';
+if(!runnerSrc.includes(`function ${recoveryFn}()`)){
+  runnerSrc+=`\n\n/* ${CONTACT_LOCK} — reusable direct-GET reconciliation for parked false identity conflicts */\n`+
+`function ${recoveryFn}(){\n`+
+`  if(typeof CF==='undefined'||!CF.Util||!CF.StrivenControlledContactCreate||typeof CF.StrivenControlledContactCreate.reconcileExistingContactById!=='function')throw new Error('CONTACT_RECOVERY_DEPENDENCY_MISSING');\n`+
+`  var rows=CF.Util.readRecords('SERVICE_REQUESTS')||[],targets=[];\n`+
+`  rows.forEach(function(r){\n`+
+`    var recon=String(r['Reconciliation Status']||'').toUpperCase();\n`+
+`    var next=String(r['Next Action']||'');\n`+
+`    if(recon!=='CONTACT DIRECT IDENTITY CONFLICT'&&next.toUpperCase().indexOf('REVIEW CONTACT IDENTITY ')!==0)return;\n`+
+`    var m=next.match(/REVIEW CONTACT IDENTITY\\s+(\\d+)/i);\n`+
+`    if(!m)return;\n`+
+`    targets.push({requestId:String(r['Request ID']||'').trim(),contactId:m[1]});\n`+
+`  });\n`+
+`  var results=[];\n`+
+`  targets.slice(0,25).forEach(function(t){\n`+
+`    try{var x=CF.StrivenControlledContactCreate.reconcileExistingContactById(t.requestId,t.contactId);results.push({requestId:t.requestId,contactId:t.contactId,result:x});if(x&&x.ok&&CF.EventDrivenServiceAutomation&&typeof CF.EventDrivenServiceAutomation.kick==='function'){try{CF.EventDrivenServiceAutomation.kick(t.requestId);}catch(ignoredKick){}}}\n`+
+`    catch(e){results.push({requestId:t.requestId,contactId:t.contactId,ok:false,error:String(e&&e.message||e)});}\n`+
+`  });\n`+
+`  return{ok:true,version:'${target}',status:'FALSE_CONTACT_IDENTITY_CONFLICTS_REEVALUATED',targets:targets.length,processed:results.length,results:results,bulkReportRefreshExecuted:false,liveStrivenWriteExecuted:false};\n`+
+`}\n`;
+}
 
 const testFn=`TESTING_CF_API_AND_CONTACT_LOCKS_${target.replace(/\./g,'_')}`;
 if(!runnerSrc.includes(`function ${testFn}()`)){
@@ -205,6 +249,7 @@ const staticChecks={
   exactChannelAuthoritative:/ok:emailMatch\|\|phoneMatch/.test(writeSrc),
   nameSupportingOnly:writeSrc.includes("nameDecision:'SUPPORTING_ONLY'"),
   ownershipConflictPreserved:writeSrc.includes('CONTACT_OWNERSHIP_CONFLICT'),
+  directExistingContactRecovery:writeSrc.includes('reconcileExistingContactById: reconcileExistingContactById'),
   ambiguousContactProtectionPreserved:/CONTACT_MATCH_AMBIGUOUS|DUPLICATE_CONTACT_IDS_AMBIGUOUS/.test(writeSrc),
   onDemandOperationalRefreshPreserved:/refreshOperationalData\s*\(\s*\{\s*\}\s*\)/.test(writeSrc),
   operationalBackgroundDisabled:hardSrc.includes(API_LOCK)&&hardSrc.includes('BACKGROUND_OPERATIONAL_REFRESH_DISABLED'),
@@ -225,6 +270,7 @@ process.stdout.write(JSON.stringify({
   locks:{contact:CONTACT_LOCK,apiEfficiency:API_LOCK},
   changedFiles:[rel(writeFile),rel(hardeningFile),rel(runnerFile)],
   publicTestFunction:testFn,
+  recoveryFunction:recoveryFn,
   policy:{
     contactIdentity:'EXACT_NORMALIZED_PHONE_OR_EMAIL; NAME SUPPORTING ONLY; CUSTOMER OWNERSHIP HARD REQUIRED',
     operationalRefresh:'NO PERIODIC BACKGROUND STRIVEN REPORT REFRESH; ON-DEMAND SALES-ORDER BOUNDARY ONLY',
