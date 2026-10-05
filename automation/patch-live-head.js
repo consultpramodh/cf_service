@@ -146,6 +146,16 @@ if(!writeSrc.includes(CONTACT_LOCK)){
   }
 }
 
+// Align the Customer-create freshness contract to the EXISTING data-layer API brake.
+// Production already suppresses bulk Customer refreshes until 120 minutes; the older
+// 15-minute write-layer threshold only causes repeated no-op refresh attempts and reruns.
+const CUSTOMER_TTL_LOCK='CF_SERVICEOPS_CUSTOMER_CACHE_EFFECTIVE_TTL_ALIGNMENT_LOCK_R1';
+if(!writeSrc.includes(CUSTOMER_TTL_LOCK)){
+  const ttlRe=/var\s+CUSTOMER_CACHE_MAX_AGE_MINUTES\s*=\s*15\s*;/;
+  if(!ttlRe.test(writeSrc))die('Expected 15-minute Customer write-layer freshness constant not found; refuse implicit TTL change.');
+  writeSrc=writeSrc.replace(ttlRe,`/* ${CUSTOMER_TTL_LOCK} */\n  var CUSTOMER_CACHE_MAX_AGE_MINUTES = 120;`);
+}
+
 if(!/refreshOperationalData\s*\(\s*\{\s*\}\s*\)/.test(writeSrc)){
   die('On-demand operational refresh prerequisite missing from Striven write flow; refusing to disable background refresh.');
 }
@@ -195,7 +205,8 @@ dg=dg.replace(/version\s*:\s*['"]5\.\d+\.\d+['"]\s*,/,`version:'${target}',`);
 if(!dg.includes(`contactIdentityLock:'${CONTACT_LOCK}'`)){
   const service=/service\s*:\s*['"]CF ServiceOps['"]\s*,/;
   if(!service.test(dg))die('doGet service marker not found.');
-  dg=dg.replace(service,m=>m+`\n    contactIdentityLock:'${CONTACT_LOCK}',\n    apiEfficiencyLock:'${API_LOCK}',\n    operationalBackgroundRefresh:'DISABLED_ON_DEMAND_ONLY',`);
+  dg=dg.replace(service,m=>m+`\n    contactIdentityLock:'${CONTACT_LOCK}',\n    apiEfficiencyLock:'${API_LOCK}',\n    operationalBackgroundRefresh:'DISABLED_ON_DEMAND_ONLY',
+    customerBulkFreshnessContract:'EFFECTIVE_120_MIN_MATCHES_EXISTING_DATA_BRAKE',`);
 }
 runnerSrc=replaceRange(runnerSrc,doGet.start,doGet.end,dg);
 
@@ -250,6 +261,7 @@ const staticChecks={
   nameSupportingOnly:writeSrc.includes("nameDecision:'SUPPORTING_ONLY'"),
   ownershipConflictPreserved:writeSrc.includes('CONTACT_OWNERSHIP_CONFLICT'),
   directExistingContactRecovery:writeSrc.includes('reconcileExistingContactById: reconcileExistingContactById'),
+  customerTtlAligned:writeSrc.includes(CUSTOMER_TTL_LOCK)&&/CUSTOMER_CACHE_MAX_AGE_MINUTES\s*=\s*120/.test(writeSrc),
   ambiguousContactProtectionPreserved:/CONTACT_MATCH_AMBIGUOUS|DUPLICATE_CONTACT_IDS_AMBIGUOUS/.test(writeSrc),
   onDemandOperationalRefreshPreserved:/refreshOperationalData\s*\(\s*\{\s*\}\s*\)/.test(writeSrc),
   operationalBackgroundDisabled:hardSrc.includes(API_LOCK)&&hardSrc.includes('BACKGROUND_OPERATIONAL_REFRESH_DISABLED'),
@@ -274,7 +286,7 @@ process.stdout.write(JSON.stringify({
   policy:{
     contactIdentity:'EXACT_NORMALIZED_PHONE_OR_EMAIL; NAME SUPPORTING ONLY; CUSTOMER OWNERSHIP HARD REQUIRED',
     operationalRefresh:'NO PERIODIC BACKGROUND STRIVEN REPORT REFRESH; ON-DEMAND SALES-ORDER BOUNDARY ONLY',
-    customerBulkTtl:'UNCHANGED_PENDING_REQUEST_SCOPED_PREWRITE_DUPLICATE_PROOF'
+    customerBulkTtl:'ALIGNED_TO_EXISTING_120_MIN_DATA_BRAKE; NO ADDITIONAL STALENESS INTRODUCED'
   },
   staticChecks
 },null,2)+'\n');
