@@ -794,6 +794,8 @@ CF.EventDrivenServiceAutomation = (function () {
   var WORKER_DELAY_MS=10000;
   var WORKER_BUDGET_MS=220000;
   var MAX_STEPS=12;
+  /* CF_SERVICEOPS_V5_14_2_STALE_WORKER_RECOVERY_R1 */
+  var WORKER_STALE_MS=10*60*1000;
   function clean_(v){return v===null||v===undefined?'':String(v).trim();}
   function upper_(v){return clean_(v).toUpperCase();}
   function props_(){return PropertiesService.getScriptProperties();}
@@ -815,7 +817,34 @@ CF.EventDrivenServiceAutomation = (function () {
   function deleteTriggerSafe_(t){try{ScriptApp.deleteTrigger(t);return true;}catch(e){return false;}}
   function cleanLegacyTriggers_(){var removed=[];ScriptApp.getProjectTriggers().forEach(function(t){var h='';try{h=clean_(t.getHandlerFunction&&t.getHandlerFunction());}catch(e){}if(isLegacyAutomationHandler_(h)){if(deleteTriggerSafe_(t))removed.push(h);}});return removed;}
   function ensureWatchdog_(){var rows=triggersBy_(WATCHDOG_HANDLER);while(rows.length>1){deleteTriggerSafe_(rows.pop());}if(!rows.length){ScriptApp.newTrigger(WATCHDOG_HANDLER).timeBased().everyMinutes(5).create();return{created:true,count:1};}return{created:false,count:1};}
-  function ensureWorker_(delayMs,currentUid){var current=clean_(currentUid),rows=triggersBy_(FINAL_HANDLER).filter(function(t){var id='';try{id=clean_(t.getUniqueId&&t.getUniqueId());}catch(e){}return !current||!id||id!==current;});if(rows.length)return{created:false,count:rows.length};if(!queue_().length)return{created:false,count:0,reason:'QUEUE_EMPTY'};var delay=Math.max(1000,Number(delayMs||WORKER_DELAY_MS));ScriptApp.newTrigger(FINAL_HANDLER).timeBased().after(delay).create();var at=new Date(Date.now()+delay).toISOString();props_().setProperty(NEXT_AT,at);return{created:true,count:1,scheduledAt:at};}
+  function ensureWorker_(delayMs,currentUid){
+    var current=clean_(currentUid);
+    var rows=triggersBy_(FINAL_HANDLER).filter(function(t){
+      var id='';
+      try{id=clean_(t.getUniqueId&&t.getUniqueId());}catch(e){}
+      return !current||!id||id!==current;
+    });
+    if(rows.length){
+      var queued=queue_();
+      var nextAt=clean_(props_().getProperty(NEXT_AT));
+      var nextAtMs=dateMs_(nextAt);
+      var stale=queued.length>0&&nextAtMs>0&&(Date.now()-nextAtMs)>WORKER_STALE_MS;
+      if(!stale)return{created:false,count:rows.length,stale:false,scheduledAt:nextAt};
+      rows.forEach(deleteTriggerSafe_);
+      log_('STALE_FINAL_WORKER_RECOVERY','RECOVERED',queued[0]||'',{
+        deletedStaleWorkerTriggers:rows.length,
+        staleScheduledAt:nextAt,
+        staleAgeMs:Date.now()-nextAtMs,
+        queuedRequestIds:queued.slice(0,10)
+      },'Stale AUTO_FINAL_ServiceOps trigger replaced so queued requests can continue.');
+    }
+    if(!queue_().length)return{created:false,count:0,reason:'QUEUE_EMPTY'};
+    var delay=Math.max(1000,Number(delayMs||WORKER_DELAY_MS));
+    ScriptApp.newTrigger(FINAL_HANDLER).timeBased().after(delay).create();
+    var at=new Date(Date.now()+delay).toISOString();
+    props_().setProperty(NEXT_AT,at);
+    return{created:true,count:1,scheduledAt:at,staleRecovered:rows.length>0};
+  }
   function normalizeTopology_(currentUid){var removed=cleanLegacyTriggers_();var finals=triggersBy_(FINAL_HANDLER),current=clean_(currentUid),kept=false,removedFinal=0;finals.forEach(function(t){var id='';try{id=clean_(t.getUniqueId&&t.getUniqueId());}catch(e){}if(current&&id===current){kept=true;return;}if(!kept){kept=true;return;}if(deleteTriggerSafe_(t))removedFinal++;});return{removedLegacyTriggers:removed,removedDuplicateFinalTriggers:removedFinal,watchdog:ensureWatchdog_()};}
   function falsePreflightPark_(r){if(!r)return false;if(upper_(r['Current Stage'])!=='NEEDS REVIEW'||upper_(r['Request Status'])!=='BLOCKED'||upper_(r['Manual Review?'])!=='YES')return false;var reason=[r['Manual Review Reason'],r['Blocking Issue'],r['Reconciliation Status']].map(clean_).join(' ');if(!/PREFLIGHT_BLOCKED/i.test(reason))return false;if(upper_(r['Duplicate Risk Status'])!=='NONE')return false;if(upper_(r['Customer Match Status'])!=='NOT FOUND'||upper_(r['Customer Action'])!=='CREATE')return false;if(upper_(r['Contact Action'])!=='CREATE'||upper_(r['Location Action'])!=='CREATE'||upper_(r['Work Order Action'])!=='CREATE')return false;if(clean_(r['Matched Customer ID']||r['Created Customer ID']||r['Matched Contact ID']||r['Created Contact ID']||r['Matched Location ID']||r['Created Location ID']||r['Work Order ID']))return false;var root=parse_(r['Write Journal JSON']),keys=['customerCreate','contactCreate','standaloneLocationCreate','salesOrderCreate'];for(var i=0;i<keys.length;i++){var x=root&&root[keys[i]]||{};if(Number(x.postAttempts||0)>0||x.remoteWriteMayHaveSucceeded===true)return false;}return true;}
   function recoverFalsePreflightPark_(r){if(!falsePreflightPark_(r))return r;if(typeof CF.Util.clearRowDataValidations==='function')CF.Util.clearRowDataValidations('SERVICE_REQUESTS',r.__rowNumber);CF.Util.patchRow('SERVICE_REQUESTS',r.__rowNumber,{'Updated At':now_(),'Current Stage':'READY FOR CUSTOMER CREATE','Request Status':'OPEN','Manual Review?':'NO','Manual Review Reason':'','Blocking Issue':'','Next Action':'CREATE CUSTOMER','Striven Sync Status':'PARTIAL','Striven Sync Error':'','Reconciliation Status':'AUTO-RECOVERED FALSE PREFLIGHT PARK'});SpreadsheetApp.flush();log_('FALSE_PREFLIGHT_PARK_RECOVERY','RESTORED',r['Request ID'],{},'No Striven write had occurred; request returned to its own durable stage.');return request_(r['Request ID'])||r;}
@@ -894,7 +923,22 @@ CF.EventDrivenServiceAutomation = (function () {
   function recoveryWatchdog(){if(upper_(props_().getProperty(ENABLED))!=='TRUE')return{ok:true,version:VERSION,status:'RECOVERY_WATCHDOG_AUTOMATION_DISABLED',liveWriteExecuted:false};var topology=normalizeTopology_(''),q=queue_(),maintenance=null;if(!q.length){var rows=recentRecoverable_();if(rows.length){mutateQueue_(function(existing){rows.forEach(function(r){existing.push(clean_(r['Request ID']));});return existing;});q=queue_();}}if(!q.length)maintenance=idleMaintenance_();var worker=ensureWorker_(WORKER_DELAY_MS,'');return{ok:true,version:VERSION,status:q.length?'RECOVERY_QUEUE_ACTIVE':'RECOVERY_IDLE',queuedRequestIds:q,recoverableRecentCount:recentRecoverable_().length,topology:topology,worker:worker,idleMaintenance:maintenance,liveWriteExecuted:!!(maintenance&&maintenance.liveWriteExecuted===true)};}
   function activate(){props_().setProperty(ENABLED,'true');props_().setProperty(AUTO_SO,'true');props_().setProperty(PREPARATION_ONLY,'false');cleanLegacyTriggers_();triggersBy_(FINAL_HANDLER).forEach(deleteTriggerSafe_);triggersBy_(WATCHDOG_HANDLER).forEach(deleteTriggerSafe_);ensureWatchdog_();var rows=recentRecoverable_();mutateQueue_(function(q){rows.forEach(function(r){q.push(clean_(r['Request ID']));});return q;});var worker=ensureWorker_(1000,''),hardening=null;try{if(typeof CFH_installAndVerifyProductionHardening==='function')hardening=CFH_installAndVerifyProductionHardening();}catch(e){hardening={ok:false,status:'PRODUCTION_GUARD_INSTALL_FAILED',error:String(e&&e.message||e)};}var handlers=ScriptApp.getProjectTriggers().map(function(t){try{return clean_(t.getHandlerFunction&&t.getHandlerFunction());}catch(e){return'';}});var result={ok:!hardening||hardening.ok!==false,version:VERSION,status:'SINGLE_SERVICEOPS_MODEL_ACTIVE',finalHandler:FINAL_HANDLER,watchdogHandler:WATCHDOG_HANDLER,queuedRequestIds:queue_(),recoveredRequestIds:rows.map(function(r){return clean_(r['Request ID']);}),worker:worker,hardening:hardening,activeAutomationHandlers:handlers.filter(function(h){return h===FINAL_HANDLER||h===WATCHDOG_HANDLER;}),legacyAutomationTriggerCount:handlers.filter(isLegacyAutomationHandler_).length,liveWriteExecuted:false};log_('ACTIVATE_SINGLE_MODEL',result.legacyAutomationTriggerCount===0?'PASS':'FAIL','',{result:result},'');return result;}
   function disable(){props_().setProperty(ENABLED,'false');props_().setProperty(AUTO_SO,'false');triggersBy_(FINAL_HANDLER).forEach(deleteTriggerSafe_);triggersBy_(WATCHDOG_HANDLER).forEach(deleteTriggerSafe_);cleanLegacyTriggers_();writeQueue_([]);return{ok:true,version:VERSION,status:'SERVICEOPS_AUTOMATION_DISABLED',liveWriteExecuted:false};}
-  function inspect(){var handlers=ScriptApp.getProjectTriggers().map(function(t){try{return clean_(t.getHandlerFunction&&t.getHandlerFunction());}catch(e){return'';}});return{ok:true,version:VERSION,enabled:upper_(props_().getProperty(ENABLED))==='TRUE',finalHandler:FINAL_HANDLER,watchdogHandler:WATCHDOG_HANDLER,queuedRequestIds:queue_(),finalWorkerTriggers:handlers.filter(function(h){return h===FINAL_HANDLER;}).length,watchdogTriggers:handlers.filter(function(h){return h===WATCHDOG_HANDLER;}).length,legacyAutomationTriggerCount:handlers.filter(isLegacyAutomationHandler_).length,singleModel:handlers.filter(isLegacyAutomationHandler_).length===0&&handlers.filter(function(h){return h===WATCHDOG_HANDLER;}).length===1};}
+  function inspect(){
+    var handlers=ScriptApp.getProjectTriggers().map(function(t){try{return clean_(t.getHandlerFunction&&t.getHandlerFunction());}catch(e){return'';}});
+    var queued=queue_(),nextAt=clean_(props_().getProperty(NEXT_AT)),nextAtMs=dateMs_(nextAt);
+    var finalCount=handlers.filter(function(h){return h===FINAL_HANDLER;}).length;
+    return{
+      ok:true,version:VERSION,enabled:upper_(props_().getProperty(ENABLED))==='TRUE',
+      finalHandler:FINAL_HANDLER,watchdogHandler:WATCHDOG_HANDLER,
+      queuedRequestIds:queued,
+      finalWorkerTriggers:finalCount,
+      watchdogTriggers:handlers.filter(function(h){return h===WATCHDOG_HANDLER;}).length,
+      legacyAutomationTriggerCount:handlers.filter(isLegacyAutomationHandler_).length,
+      singleModel:handlers.filter(isLegacyAutomationHandler_).length===0&&handlers.filter(function(h){return h===WATCHDOG_HANDLER;}).length===1,
+      nextWorkerScheduledAt:nextAt,
+      workerStale:queued.length>0&&finalCount>0&&nextAtMs>0&&(Date.now()-nextAtMs)>WORKER_STALE_MS
+    };
+  }
   return{version:VERSION,kick:kick,worker:worker,recoveryWatchdog:recoveryWatchdog,activate:activate,disable:disable,inspect:inspect,queuedRequestIds:queue_,allHandlerNames:function(){return[FINAL_HANDLER,WATCHDOG_HANDLER];}};
 })();
 

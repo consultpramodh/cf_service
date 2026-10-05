@@ -1499,9 +1499,9 @@ function contactNameCandidates_(request, contacts) {
     if (location.status === 'AMBIGUOUS') return 'REVIEW LOCATION MATCH';
     if (history.duplicateRisk === 'HIGH') return 'REVIEW ACTIVE WORK / DUPLICATE RISK';
 
-    if (plan.customerAction === 'CREATE') return 'APPROVE PROPOSED ACTION — CREATE CUSTOMER';
-    if (plan.contactAction === 'CREATE') return 'APPROVE PROPOSED ACTION — CREATE CONTACT';
-    if (plan.locationAction === 'CREATE') return 'APPROVE PROPOSED ACTION — CREATE LOCATION';
+    if (plan.customerAction === 'CREATE') return 'AUTO — CREATE CUSTOMER';
+    if (plan.contactAction === 'CREATE') return 'AUTO — CREATE CONTACT';
+    if (plan.locationAction === 'CREATE') return 'AUTO — CREATE LOCATION';
 
     return 'CUSTOMER STRUCTURE RESOLVED';
   }
