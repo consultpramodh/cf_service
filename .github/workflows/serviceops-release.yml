@@ -1,0 +1,221 @@
+name: CF ServiceOps live-head release
+
+on:
+  push:
+    branches:
+      - serviceops-automation
+    paths:
+      - automation/release-request.json
+      - automation/patch-live-head.js
+      - automation/release-locks.json
+      - .github/workflows/serviceops-release.yml
+
+concurrency:
+  group: cf-serviceops-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      SCRIPT_ID: 1QZp4NAFeA8LmWBN31ylJYdK4XFepBX1h2lP_APaR-d1lTAC-d8LA9x3g
+      PRODUCTION_DEPLOYMENT_ID: AKfycbwebnCvczGthe6Z_mvYmukLqFLB-9nk8hjNtNP3lR87CE1m_fEx2d9Bn_vpXMPCLUnPbA
+      CLASP_VERSION: 3.3.0
+      CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
+      CLASPRC_B64: ${{ secrets.CLASPRC_B64 }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Authenticate clasp
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -n "${CLASPRC_JSON}" ]]; then
+            printf '%s' "${CLASPRC_JSON}" > "$HOME/.clasprc.json"
+          elif [[ -n "${CLASPRC_B64}" ]]; then
+            printf '%s' "${CLASPRC_B64}" | base64 --decode > "$HOME/.clasprc.json"
+          else
+            echo "::error::Missing GitHub secret CLASPRC_JSON (or CLASPRC_B64). No Apps Script changes were attempted."
+            exit 78
+          fi
+          npx -y "@google/clasp@${CLASP_VERSION}" show-authorized-user --json
+
+      - name: Pull CURRENT production Apps Script HEAD
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p live/src work post/src
+          printf '{"scriptId":"%s","rootDir":"src"}\n' "$SCRIPT_ID" > live/.clasp.json
+          npx -y "@google/clasp@${CLASP_VERSION}" --project live pull
+
+          FILE_COUNT=$(find live/src -type f | wc -l | tr -d ' ')
+          if [[ "$FILE_COUNT" -lt 15 ]]; then
+            echo "::error::Incomplete live pull: only $FILE_COUNT files."
+            exit 2
+          fi
+
+          DEPLOYMENTS=$(npx -y "@google/clasp@${CLASP_VERSION}" --project live list-deployments "$SCRIPT_ID")
+          printf '%s\n' "$DEPLOYMENTS"
+          grep -F "$PRODUCTION_DEPLOYMENT_ID" <<<"$DEPLOYMENTS" >/dev/null || {
+            echo "::error::Existing production deployment not found. Refusing release."
+            exit 3
+          }
+
+          cp -a live/. work/
+          tar -czf pre-live-head.tar.gz -C live .
+
+      - name: Patch only the current live source
+        shell: bash
+        run: |
+          set -euo pipefail
+          node automation/patch-live-head.js work/src | tee patch-result.json
+          node --check automation/patch-live-head.js
+
+          python3 - <<'PY'
+          import hashlib, json
+          from pathlib import Path
+
+          pre=Path('live/src')
+          work=Path('work/src')
+          result=json.load(open('patch-result.json',encoding='utf-8'))
+          allowed=set(result['changedFiles'])
+
+          def hashes(root):
+              out={}
+              for p in sorted(root.rglob('*')):
+                  if p.is_file():
+                      out[p.relative_to(root).as_posix()]=hashlib.sha256(p.read_bytes()).hexdigest()
+              return out
+
+          a,b=hashes(pre),hashes(work)
+          if set(a)!=set(b):
+              raise SystemExit('FILE_INVENTORY_CHANGED')
+          changed={k for k in a if a[k]!=b[k]}
+          if changed!=allowed:
+              raise SystemExit(f'CHANGED_FILE_LOCK_FAILED actual={sorted(changed)} allowed={sorted(allowed)}')
+
+          for rel in sorted(changed):
+              print('changed:',rel)
+          PY
+
+          while IFS= read -r f; do
+            node --check "work/src/$f"
+          done < <(jq -r '.changedFiles[]' patch-result.json)
+
+      - name: Push COMPLETE project and verify remote parity
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx -y "@google/clasp@${CLASP_VERSION}" --project work push --force
+
+          printf '{"scriptId":"%s","rootDir":"src"}\n' "$SCRIPT_ID" > post/.clasp.json
+          npx -y "@google/clasp@${CLASP_VERSION}" --project post pull
+
+          python3 - <<'PY'
+          import hashlib
+          from pathlib import Path
+
+          def hashes(root):
+              out={}
+              for p in sorted(Path(root).rglob('*')):
+                  if p.is_file():
+                      out[p.relative_to(root).as_posix()]=hashlib.sha256(p.read_bytes()).hexdigest()
+              return out
+
+          expected=hashes('work/src')
+          actual=hashes('post/src')
+          if expected!=actual:
+              missing=sorted(set(expected)-set(actual))
+              extra=sorted(set(actual)-set(expected))
+              different=sorted(k for k in set(expected)&set(actual) if expected[k]!=actual[k])
+              raise SystemExit(f'REMOTE_SHA_PARITY_FAILED missing={missing} extra={extra} different={different}')
+          print('REMOTE_SHA_PARITY_PASS')
+          PY
+
+      - name: Create immutable version and update EXISTING deployment
+        shell: bash
+        run: |
+          set -euo pipefail
+          TARGET=$(jq -r '.targetVersion' patch-result.json)
+          DESC="CF ServiceOps v${TARGET} - API Efficiency + Contact Identity Locks"
+
+          VERSION_OUT=$(npx -y "@google/clasp@${CLASP_VERSION}" --project work create-version "$DESC")
+          printf '%s\n' "$VERSION_OUT"
+          IMMUTABLE=$(sed -nE 's/.*Created version[[:space:]]+([0-9]+).*/\1/p' <<<"$VERSION_OUT" | tail -1)
+          if [[ -z "$IMMUTABLE" ]]; then
+            echo "::error::Could not parse immutable Apps Script version."
+            exit 4
+          fi
+
+          npx -y "@google/clasp@${CLASP_VERSION}" --project work update-deployment "$PRODUCTION_DEPLOYMENT_ID" -V "$IMMUTABLE" -d "$DESC"
+          printf '%s' "$IMMUTABLE" > immutable-version.txt
+          printf '%s' "$TARGET" > release-version.txt
+
+      - name: Verify production health and apply immediate recovery when available
+        shell: bash
+        run: |
+          set -euo pipefail
+          TARGET=$(cat release-version.txt)
+          URL="https://script.google.com/macros/s/${PRODUCTION_DEPLOYMENT_ID}/exec"
+          PASS=0
+          for attempt in 1 2 3 4 5 6; do
+            BODY=$(curl -fsSL --max-time 30 "$URL" || true)
+            echo "health attempt $attempt: $BODY"
+            if jq -e --arg v "$TARGET" '.version==$v and .contactIdentityLock=="CF_SERVICEOPS_CONTACT_IDENTITY_FINALIZED_LOCK_R1" and .apiEfficiencyLock=="CF_SERVICEOPS_API_EFFICIENCY_FINALIZED_LOCK_R1"' <<<"$BODY" >/dev/null 2>&1; then
+              PASS=1
+              break
+            fi
+            sleep 5
+          done
+          [[ "$PASS" == "1" ]] || { echo "::error::Production health lock verification failed."; exit 5; }
+
+          RECOVERY_FN=$(jq -r '.recoveryFunction' patch-result.json)
+          TEST_FN=$(jq -r '.publicTestFunction' patch-result.json)
+
+          # These are acceleration steps only. If the Apps Script Execution API is
+          # unavailable, the retired 10-minute trigger will self-delete and run
+          # the same parked-contact recovery on its next invocation.
+          npx -y "@google/clasp@${CLASP_VERSION}" --project work run-function "$RECOVERY_FN" || true
+          npx -y "@google/clasp@${CLASP_VERSION}" --project work run-function "$TEST_FN" || true
+
+      - name: Write release checkpoint
+        if: always()
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          out={
+            'workflowRunId': os.environ.get('GITHUB_RUN_ID'),
+            'commit': os.environ.get('GITHUB_SHA'),
+            'scriptId': os.environ.get('SCRIPT_ID'),
+            'deploymentId': os.environ.get('PRODUCTION_DEPLOYMENT_ID'),
+          }
+          for name,key in [('release-version.txt','releaseVersion'),('immutable-version.txt','immutableAppsScriptVersion')]:
+              p=Path(name)
+              if p.exists(): out[key]=p.read_text().strip()
+          p=Path('patch-result.json')
+          if p.exists(): out['patch']=json.load(open(p,encoding='utf-8'))
+          Path('release-checkpoint.json').write_text(json.dumps(out,indent=2),encoding='utf-8')
+          PY
+
+      - name: Preserve recovery evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cf-serviceops-release-${{ github.run_id }}
+          path: |
+            pre-live-head.tar.gz
+            patch-result.json
+            release-checkpoint.json
+          if-no-files-found: ignore
+          retention-days: 30
