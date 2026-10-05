@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "sourceOfTruth": "CURRENT_LIVE_APPS_SCRIPT_HEAD",
+  "minimumObservedProductionVersion": "5.14.2",
+  "locks": {
+    "contactIdentity": {
+      "id": "CF_SERVICEOPS_CONTACT_IDENTITY_FINALIZED_LOCK_R1",
+      "rule": "Exact normalized phone OR exact normalized email establishes Contact identity. Name is supporting evidence only. Customer ownership remains separately mandatory. Ambiguous/multiple exact Contact matches fail closed."
+    },
+    "apiEfficiency": {
+      "id": "CF_SERVICEOPS_API_EFFICIENCY_FINALIZED_LOCK_R1",
+      "rule": "No periodic background Operational Striven report refresh. Operational data refreshes only on demand at the Sales Order freshness boundary. Customer bulk TTL is not increased until request-scoped pre-write duplicate proof is verified."
+    }
+  }
+}
