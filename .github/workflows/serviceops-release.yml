@@ -6,13 +6,10 @@ on:
       - serviceops-automation
     paths:
       - automation/release-request.json
-      - automation/patch-live-head.js
-      - automation/release-locks.json
-      - .github/workflows/serviceops-release.yml
 
 concurrency:
   group: cf-serviceops-production
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 permissions:
   contents: read
