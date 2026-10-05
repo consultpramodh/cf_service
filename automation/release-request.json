@@ -1,0 +1,11 @@
+{
+  "requestedAt": "2026-10-05",
+  "releaseIntent": "Reduce Striven API consumption and repair Contact identity without weakening duplicate or ownership guards.",
+  "sourcePolicy": "PULL_CURRENT_LIVE_HEAD",
+  "changes": [
+    "Lock exact normalized phone OR email as Contact identity; name is supporting only.",
+    "Retire the repeating background Operational report refresh and preserve on-demand Sales Order freshness refresh.",
+    "Automatically re-evaluate parked CONTACT DIRECT IDENTITY CONFLICT rows using direct Contact GET plus Customer ownership verification.",
+    "Keep Customer bulk TTL unchanged until request-scoped pre-write duplicate lookup is proven."
+  ]
+}
