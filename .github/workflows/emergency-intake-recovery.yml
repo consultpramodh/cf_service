@@ -6,6 +6,7 @@ on:
       - production
     paths:
       - .github/workflows/emergency-intake-recovery.yml
+      - src/20_Intake_Processing.gs
   workflow_dispatch:
 
 permissions:

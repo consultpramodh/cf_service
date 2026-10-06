@@ -4741,7 +4741,7 @@ function fetchAllGravityEntries_() {
         return;
       }
       if (wf.length && sr.length && !localPairNeedsHydration_(wf[0], sr[0])) {
-        if (upper_(sr[0]['Current Stage']) === 'NEW INTAKE' && clean_(sr[0]['Request ID'])) {
+        if (clean_(sr[0]['Current Stage']).toUpperCase() === 'NEW INTAKE' && clean_(sr[0]['Request ID'])) {
           candidates.push({
             submissionId:id,
             status:'LOCAL_REQUEST_PENDING',
