@@ -917,6 +917,21 @@ function doGet(e) {
     return ContentService.createTextOutput(JSON.stringify(warningResult)).setMimeType(ContentService.MimeType.JSON);
   }
 
+  /* CF_SERVICEOPS_V5_14_3_DASHBOARD_REFRESH_RUNNER_R1 */
+  if(ops==='dashboard-refresh'){
+    if(!CF.OperatorQueue||typeof CF.OperatorQueue.refreshDashboard!=='function'){
+      return ContentService.createTextOutput(JSON.stringify({ok:false,status:'DASHBOARD_REFRESH_UNAVAILABLE'})).setMimeType(ContentService.MimeType.JSON);
+    }
+    var dashboardMetrics=CF.OperatorQueue.refreshDashboard();
+    return ContentService.createTextOutput(JSON.stringify({
+      ok:true,
+      status:'DASHBOARD_REFRESHED',
+      metrics:dashboardMetrics||{},
+      liveWriteExecuted:false,
+      liveStrivenWriteExecuted:false
+    })).setMimeType(ContentService.MimeType.JSON);
+  }
+
   /* CF_SERVICEOPS_V5_14_1_PUBLIC_HEALTH_R1 */
   var todayBatch=null;
   try { todayBatch=CF_20260930_queueTodayEndToEndOnce_(); }
