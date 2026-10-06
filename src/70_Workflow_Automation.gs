@@ -1326,7 +1326,7 @@ CF.StatusWarningReconciler=(function(){
     if(remoteContact&&remoteContact!=='0'){
       var contactReviewText=clean_(r['Next Action'])+' '+clean_(r['Manual Review Reason'])+' '+clean_(r['Blocking Issue']);
       var explicitContactReview=upper_(r['Contact Match Status'])==='AMBIGUOUS'||upper_(r['Contact Action'])==='REVIEW'||
-        /CONTACT MATCH|CONTACT IDENTITY|HOUSEHOLD CONTACT|MULTIPLE CONTACTS/i.test(contactReviewText);
+        /CONTACT MATCH|CONTACT IDENTITY|HOUSEHOLD CONTACT|MULTIPLE CONTACTS|TECHNICAL RECOVERY|UNCERTAIN_RECONCILE_REQUIRED/i.test(contactReviewText);
       var strongTaskContactIdentity=te.phoneMatch===true&&te.nameMatch===true;
       if(existingContact&&existingContact!==remoteContact&&!explicitContactReview){
         return{ok:false,status:'PROVEN_CONTACT_CONFLICT_RETAINED',requestId:clean_(r['Request ID']),requestContactId:existingContact,orderContactId:remoteContact,stateChanged:true,liveWriteExecuted:false};
@@ -1419,7 +1419,7 @@ CF.StatusWarningReconciler=(function(){
     if(/POSSIBLE DUPLICATE|DUPLICATE REQUEST/.test(reason+' '+next))return false;
     if(stage==='NEEDS REVIEW'||status==='BLOCKED'||status==='ERROR'){
       return !!(oid_(r)||onum_(r))||
-        /VERIFY EXISTING SALES ORDER|MANUAL REVIEW SALES ORDER|REVIEW EXISTING SALES ORDER|GET-ONLY VERIFY CONTACT|REVIEW CUSTOMER MATCH|REVIEW CONTACT MATCH|REVIEW LOCATION MATCH|VERIFY POSTAL|REVIEW EXISTING LOCATION|SALES ORDER VERIFICATION|CUSTOMER IDENTITY|HOUSEHOLD CONTACT|MULTIPLE CONTACTS/.test(next+' '+recon+' '+reason);
+        /VERIFY EXISTING SALES ORDER|MANUAL REVIEW SALES ORDER|REVIEW EXISTING SALES ORDER|GET-ONLY VERIFY CONTACT|REVIEW CUSTOMER MATCH|REVIEW CONTACT MATCH|REVIEW LOCATION MATCH|VERIFY POSTAL|REVIEW EXISTING LOCATION|SALES ORDER VERIFICATION|CUSTOMER IDENTITY|HOUSEHOLD CONTACT|MULTIPLE CONTACTS|REVIEW TECHNICAL RECOVERY STATE|UNCERTAIN_RECONCILE_REQUIRED/.test(next+' '+recon+' '+reason);
     }
     return [
       'SALES ORDER CREATED',
@@ -1453,7 +1453,7 @@ CF.StatusWarningReconciler=(function(){
     for(var i=0;i<rows.length&&processed<limit;i++){
       var r=rows[i];if(!candidate_(r))continue;considered++;
       var id=clean_(r['Request ID']),hydrated=hydrate_(r,ctx);
-      if(hydrated.stateChanged!==true&&/^(NO_|CUSTOMER_CONFLICT_NOT_PROVEN|CONTACT_REVIEW_NOT_PROVEN|PROVEN_.*CONFLICT|REQUEST_LOCATION_CONFLICT|TARGETED_LOCATION_(?:AMBIGUOUS|NOT_PROVEN)|WORK_ORDER_.*CONFLICT|OPERATIONAL_WORK_ORDER_IDENTITY_INCOMPLETE)/.test(clean_(hydrated.status))){
+      if(hydrated.stateChanged!==true&&/^(NO_|DURABLE_NOT_IN_OPERATIONAL_CACHE|CUSTOMER_CONFLICT_NOT_PROVEN|CONTACT_REVIEW_NOT_PROVEN|PROVEN_.*CONFLICT|REQUEST_LOCATION_CONFLICT|TARGETED_LOCATION_(?:AMBIGUOUS|NOT_PROVEN)|WORK_ORDER_.*CONFLICT|OPERATIONAL_WORK_ORDER_IDENTITY_INCOMPLETE)/.test(clean_(hydrated.status))){
         skippedUnproven++;
         continue;
       }
