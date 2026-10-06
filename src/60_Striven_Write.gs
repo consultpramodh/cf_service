@@ -5216,6 +5216,41 @@ function executeApproved(requestId,options){options=options||{};if(options.execu
     if(typeof obj==='string'||typeof obj==='number')return clean_(obj);
     return v511BodyId_(obj);
   }
+  /* CF_SERVICEOPS_V5_14_2_SALES_ORDER_CERTIFICATION_POLICY_R1
+   * Sales Order custom fields can round-trip through Striven using Value,
+   * ActualValue, ValueText, or nested list objects. Read all supported shapes
+   * before declaring a mismatch. Secondary custom-field differences are
+   * diagnostic/repairable after exact Sales Order identity is proven; they do
+   * not erase a durable Sales Order or force human review by themselves.
+   */
+  function v511CfScalar_(value){
+    if(value===null||value===undefined)return'';
+    if(typeof value==='object'){
+      if(value.id!==undefined)return clean_(value.id);
+      if(value.Id!==undefined)return clean_(value.Id);
+      if(value.value!==undefined)return v511CfScalar_(value.value);
+      if(value.Value!==undefined)return v511CfScalar_(value.Value);
+      if(value.actualValue!==undefined)return v511CfScalar_(value.actualValue);
+      if(value.ActualValue!==undefined)return v511CfScalar_(value.ActualValue);
+      if(value.name!==undefined)return clean_(value.name);
+      if(value.Name!==undefined)return clean_(value.Name);
+      return'';
+    }
+    return clean_(value);
+  }
+  function v511CfCandidates_(field){
+    field=field||{};
+    var raw=[
+      field.actualValue,field.ActualValue,
+      field.value,field.Value,
+      field.valueText,field.ValueText
+    ],seen={},out=[];
+    raw.forEach(function(value){
+      var scalar=v511CfScalar_(value),key=upper_(scalar);
+      if(scalar&&!seen[key]){seen[key]=true;out.push(scalar);}
+    });
+    return out;
+  }
   function v511CfMap_(body){
     body=body||{};
     var rows=body.customFields||body.CustomFields||[],out={};
@@ -5224,11 +5259,23 @@ function executeApproved(requestId,options){options=options||{};if(options.execu
       field=field||{};
       var id=clean_(field.id!==undefined?field.id:field.Id);
       if(!id)return;
-      var value=field.value!==undefined?field.value:field.Value;
-      if(value===undefined)value=field.valueText!==undefined?field.valueText:field.ValueText;
-      out[id]=clean_(value);
+      var candidates=v511CfCandidates_(field);
+      out[id]=candidates.length?candidates[0]:'';
     });
     return out;
+  }
+  function v511CfMatch_(body,id,expected,aliases){
+    body=body||{};
+    var rows=body.customFields||body.CustomFields||[],field=null;
+    if(!Array.isArray(rows))rows=[];
+    for(var i=0;i<rows.length;i++){
+      var row=rows[i]||{},rowId=clean_(row.id!==undefined?row.id:row.Id);
+      if(rowId===clean_(id)){field=row;break;}
+    }
+    var candidates=v511CfCandidates_(field||{}),accepted=[clean_(expected)].concat(aliases||[])
+      .map(function(x){return upper_(x);}).filter(Boolean);
+    var matched=candidates.some(function(candidate){return accepted.indexOf(upper_(candidate))!==-1;});
+    return{fieldId:clean_(id),expected:clean_(expected),accepted:accepted,candidates:candidates,matched:matched};
   }
   function v511LineItemId_(body){
     body=body||{};
@@ -5288,10 +5335,15 @@ function executeApproved(requestId,options){options=options||{};if(options.execu
     var expected794=cfValue_(expectedPayload,'794')||EXPECTED.serviceTech;
     var expected797=cfValue_(expectedPayload,'797');
     var expected855=cfValue_(expectedPayload,'855');
-    var customFieldsConfirmed=upper_(actualCf['651'])===upper_(expected651)&&upper_(actualCf['164'])==='FALSE'&&clean_(actualCf['794'])===clean_(expected794);
-    if(expected650)customFieldsConfirmed=customFieldsConfirmed&&upper_(actualCf['650'])===upper_(expected650);
-    if(expected797)customFieldsConfirmed=customFieldsConfirmed&&clean_(actualCf['797'])===clean_(expected797);
-    if(expected855)customFieldsConfirmed=customFieldsConfirmed&&clean_(actualCf['855'])===clean_(expected855);
+    var customFieldChecks={
+      '651':v511CfMatch_(body,'651',expected651,[]),
+      '164':v511CfMatch_(body,'164','FALSE',['FALSE','NO','0']),
+      '794':v511CfMatch_(body,'794',expected794,[]),
+      '650':expected650?v511CfMatch_(body,'650',expected650,[]):{fieldId:'650',expected:'',accepted:[],candidates:[],matched:true,notRequired:true},
+      '797':expected797?v511CfMatch_(body,'797',expected797,[]):{fieldId:'797',expected:'',accepted:[],candidates:[],matched:true,notRequired:true},
+      '855':expected855?v511CfMatch_(body,'855',expected855,['WEBFORM']):{fieldId:'855',expected:'',accepted:[],candidates:[],matched:true,notRequired:true}
+    };
+    var customFieldsConfirmed=Object.keys(customFieldChecks).every(function(id){return customFieldChecks[id].matched===true;});
 
     var expectedNotes=expectedPayload.InternalNotes||expectedPayload.internalNotes||null;
     var actualNotes=body.internalNotes!==undefined?body.internalNotes:body.InternalNotes;
@@ -5325,11 +5377,16 @@ checks.statusMatchesCreateContract = true;
 
 var issues=[];
     Object.keys(checks).forEach(function(key){if(checks[key]!==true)issues.push(key);});
+    var repairableIssues=issues.filter(function(key){return key==='customFields';});
+    var blockingIssues=issues.filter(function(key){return key!=='customFields';});
+    var canProceed=blockingIssues.length===0;
     return{
-      ok:issues.length===0,
-      verified:issues.length===0,
+      ok:canProceed,
+      verified:canProceed,
+      fullyMatched:issues.length===0,
+      canProceed:canProceed,
       transient:false,
-      status:issues.length===0?'SALES_ORDER_CERTIFICATION_PASS':'SALES_ORDER_VERIFICATION_REVIEW_REQUIRED',
+      status:canProceed?(issues.length===0?'SALES_ORDER_CERTIFICATION_PASS':'SALES_ORDER_CERTIFICATION_PASS_WITH_REPAIRABLE_DIFFERENCES'):'SALES_ORDER_VERIFICATION_REVIEW_REQUIRED',
       requestId:requestId,
       salesOrderId:salesOrderId,
       orderNumber:orderNumber,
@@ -5345,6 +5402,9 @@ var issues=[];
       requestSource855:actualCf['855']||'',
       checks:checks,
       issues:issues,
+      blockingIssues:blockingIssues,
+      repairableIssues:repairableIssues,
+      customFieldChecks:customFieldChecks,
       internalNotesConfirmed:notesConfirmed,
       automaticPostRetry:false,
       liveWriteExecuted:false
@@ -5361,10 +5421,12 @@ var issues=[];
     var root=rootJournal_(record),order=root.salesOrderCreate||{};
     order.certification={attemptedAt:now_(),version:'5.11.0',result:verified};
     if(verified.ok===true){
-      order.status='SALES_ORDER_VERIFIED_COMPLETE';
+      var repairableDifferences=(verified.repairableIssues||[]).slice();
+      order.status=repairableDifferences.length?'SALES_ORDER_VERIFIED_COMPLETE_WITH_REPAIRABLE_DIFFERENCES':'SALES_ORDER_VERIFIED_COMPLETE';
       order.canonicalSalesOrderId=verified.salesOrderId;
       order.canonicalOrderNumber=verified.orderNumber;
-      order.postCreateHandling={mode:'AUTOMATIC_CERTIFICATION_COMPLETE',automaticStatusTransition:false};
+      order.repairableDifferences=repairableDifferences;
+      order.postCreateHandling={mode:repairableDifferences.length?'AUTOMATIC_CERTIFICATION_COMPLETE_WITH_REPAIRABLE_DIFFERENCES':'AUTOMATIC_CERTIFICATION_COMPLETE',automaticStatusTransition:false};
       root.salesOrderCreate=order;
       patch_(record,{
         'Updated At':now_(),
@@ -5383,12 +5445,12 @@ var issues=[];
         'Striven Sync Status':'SYNCED',
         'Striven Sync Error':'',
         'Last Striven Sync':now_(),
-        'Reconciliation Status':'SALES ORDER VERIFIED',
-        'Final Outcome':'COMPLETED - SALES ORDER VERIFIED',
+        'Reconciliation Status':repairableDifferences.length?'SALES ORDER VERIFIED — REPAIRABLE DIFFERENCES: '+repairableDifferences.join(', '):'SALES ORDER VERIFIED',
+        'Final Outcome':repairableDifferences.length?'COMPLETED - SALES ORDER VERIFIED WITH REPAIRABLE DIFFERENCES':'COMPLETED - SALES ORDER VERIFIED',
         'Completed At':now_()
       });
-      log_(record,'CERTIFY_SALES_ORDER','SALES_ORDER_VERIFIED_COMPLETE',{salesOrderId:verified.salesOrderId,orderNumber:verified.orderNumber,checks:verified.checks},'');
-      verified.status='SALES_ORDER_VERIFIED_COMPLETE';
+      log_(record,'CERTIFY_SALES_ORDER',repairableDifferences.length?'SALES_ORDER_VERIFIED_COMPLETE_WITH_REPAIRABLE_DIFFERENCES':'SALES_ORDER_VERIFIED_COMPLETE',{salesOrderId:verified.salesOrderId,orderNumber:verified.orderNumber,checks:verified.checks,repairableIssues:repairableDifferences,customFieldChecks:verified.customFieldChecks||{}},'');
+      verified.status=repairableDifferences.length?'SALES_ORDER_VERIFIED_COMPLETE_WITH_REPAIRABLE_DIFFERENCES':'SALES_ORDER_VERIFIED_COMPLETE';
       verified.manualReviewRequired=false;
       verified.next='NONE';
       return verified;
