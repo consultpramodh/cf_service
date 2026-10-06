@@ -2632,6 +2632,113 @@ CF.StrivenControlledCustomerCreate = (function () {
     return Object.keys(byId).map(function (id) { return byId[id]; });
   }
 
+  /* CF_SERVICEOPS_V5_14_2_REQUEST_SCOPED_UNIQUE_CUSTOMER_LINK_R1
+   * Once fresh cache evidence yields exactly one Customer from exact phone/email,
+   * do not rebuild the entire matching map. Link the deterministic Customer,
+   * perform one customer-scoped Location read, and let the guarded Contact
+   * module resolve/reuse/create the Contact later.
+   */
+  function adoptUniqueExistingCustomer_(record,candidate,reason){
+    var d=deps_(),customerId=clean_(candidate&&candidate.customerId);
+    if(!record||!customerId)return{ok:false,status:'UNIQUE_CUSTOMER_LINK_INPUT_INVALID',requestId:clean_(record&&record['Request ID']),liveWriteExecuted:false};
+    var targeted={ok:false,status:'TARGETED_LOCATION_MODULE_UNAVAILABLE',matches:[],liveWriteExecuted:false},locations=[];
+    try{
+      if(CF.StandaloneLocationCreateV5128&&typeof CF.StandaloneLocationCreateV5128.findExisting==='function'){
+        targeted=CF.StandaloneLocationCreateV5128.findExisting(record,customerId,{allowUniquePrimaryFallback:false});
+        locations=targeted&&Array.isArray(targeted.matches)?targeted.matches:[];
+      }
+    }catch(locationError){
+      targeted={ok:false,status:'TARGETED_LOCATION_READ_FAILED',matches:[],error:String(locationError&&locationError.message||locationError),liveWriteExecuted:false};
+    }
+    if(!locations.length)locations=exactLocationCandidates_(record,customerId);
+    if(locations.length>1){
+      var msg='Unique Customer '+customerId+' is confirmed, but multiple service-address Location candidates were found.';
+      patchRequest_(record,{
+        'Updated At':d.util.nowString(),
+        'Current Stage':'NEEDS REVIEW',
+        'Request Status':'BLOCKED',
+        'Manual Review?':'YES',
+        'Manual Review Reason':msg,
+        'Blocking Issue':msg,
+        'Next Action':'REVIEW LOCATION CANDIDATES',
+        'Customer Match Status':'MATCHED',
+        'Matched Customer ID':customerId,
+        'Matched Customer Name':clean_(candidate.customerName)||clean_(record['Full Name']),
+        'Customer Action':'LINK EXISTING',
+        'Location Match Status':'AMBIGUOUS',
+        'Location Action':'REVIEW',
+        'Striven Sync Status':'BLOCKED',
+        'Reconciliation Status':'UNIQUE CUSTOMER LINKED — LOCATION AMBIGUOUS'
+      });
+      return{ok:false,status:'UNIQUE_CUSTOMER_LOCATION_AMBIGUOUS',requestId:clean_(record['Request ID']),matchedCustomerId:customerId,locationCandidates:locations.map(function(x){return clean_(x['Location ID']);}),liveWriteExecuted:false};
+    }
+    var root=parseJson_(record['Write Journal JSON'],{})||{};
+    root.prewriteUniqueCustomerLink={
+      status:'AUTO_LINKED_EXACT_SINGLE_CANDIDATE',
+      linkedAt:d.util.nowString(),
+      customerId:customerId,
+      reasons:(candidate.reasons||[]).slice(),
+      source:reason||'PREWRITE_EXACT_PHONE_EMAIL_GUARD',
+      targetedLocationStatus:clean_(targeted&&targeted.status)
+    };
+    if(locations.length===1&&clean_(locations[0]['Location ID'])){
+      var locationId=clean_(locations[0]['Location ID']);
+      patchRequest_(record,{
+        'Updated At':d.util.nowString(),
+        'Current Stage':'READY FOR CONTACT CREATE',
+        'Request Status':'OPEN',
+        'Manual Review?':'NO',
+        'Manual Review Reason':'',
+        'Blocking Issue':'',
+        'Next Action':'CREATE OR RECONCILE CONTACT',
+        'Customer Match Status':'MATCHED',
+        'Matched Customer ID':customerId,
+        'Matched Customer Name':clean_(candidate.customerName)||clean_(record['Full Name']),
+        'Customer Action':'LINK EXISTING',
+        'Contact Match Status':'NOT FOUND',
+        'Matched Contact ID':'',
+        'Contact Action':'CREATE',
+        'Location Match Status':'MATCHED',
+        'Matched Location ID':locationId,
+        'Matched Location Address':clean_(locations[0]['Full Address']),
+        'Location Action':'LINK EXISTING',
+        'Customer Structure Status':'CUSTOMER + LOCATION CONFIRMED — CONTACT PENDING',
+        'Write Journal JSON':safeJson_(root),
+        'Striven Sync Status':'PARTIAL',
+        'Striven Sync Error':'',
+        'Last Striven Sync':d.util.nowString(),
+        'Reconciliation Status':'UNIQUE CUSTOMER AUTO-LINKED — EXISTING LOCATION CONFIRMED'
+      });
+      return{ok:true,status:'PREWRITE_UNIQUE_CUSTOMER_AUTO_LINKED_LOCATION_MATCHED',requestId:clean_(record['Request ID']),matchedCustomerId:customerId,matchedLocationId:locationId,targetedLocationReadExecuted:targeted.status!=='TARGETED_LOCATION_MODULE_UNAVAILABLE',targetedLocationStatus:clean_(targeted.status),liveWriteExecuted:false};
+    }
+    patchRequest_(record,{
+      'Updated At':d.util.nowString(),
+      'Current Stage':'READY FOR LOCATION CREATE',
+      'Request Status':'OPEN',
+      'Manual Review?':'NO',
+      'Manual Review Reason':'',
+      'Blocking Issue':'',
+      'Next Action':'AUTO — CREATE LOCATION',
+      'Customer Match Status':'MATCHED',
+      'Matched Customer ID':customerId,
+      'Matched Customer Name':clean_(candidate.customerName)||clean_(record['Full Name']),
+      'Customer Action':'LINK EXISTING',
+      'Contact Match Status':'NOT FOUND',
+      'Matched Contact ID':'',
+      'Contact Action':'CREATE',
+      'Location Match Status':'NOT FOUND',
+      'Matched Location ID':'',
+      'Location Action':'CREATE',
+      'Customer Structure Status':'CUSTOMER CONFIRMED — SERVICE LOCATION CREATE REQUIRED',
+      'Write Journal JSON':safeJson_(root),
+      'Striven Sync Status':'PARTIAL',
+      'Striven Sync Error':'',
+      'Last Striven Sync':d.util.nowString(),
+      'Reconciliation Status':'UNIQUE CUSTOMER AUTO-LINKED — LOCATION NOT FOUND'
+    });
+    return{ok:true,status:'PREWRITE_UNIQUE_CUSTOMER_AUTO_LINKED_LOCATION_CREATE_REQUIRED',requestId:clean_(record['Request ID']),matchedCustomerId:customerId,targetedLocationReadExecuted:targeted.status!=='TARGETED_LOCATION_MODULE_UNAVAILABLE',targetedLocationStatus:clean_(targeted.status),liveWriteExecuted:false};
+  }
+
   /* CF_SERVICEOPS_V5_10_38_SEMANTIC_LOCATION_RECONCILIATION_R1 */
   function semanticLocationAddressKey_(value) {
     var text=clean_(value).toUpperCase();
@@ -3206,71 +3313,21 @@ CF.StrivenControlledCustomerCreate = (function () {
       return reconcileUncertainCustomer_(record, initialAssessment.journal);
     }
 
-    // Customer cache only. If it was refreshed, immediately re-run canonical
-    // matching so a newly visible exact Customer can be consumed in this run.
+    // Customer cache only. The cache layer owns the 120-minute API brake.
+    // After that guard, use request-scoped exact lookup rather than rebuilding
+    // the entire Customer/Contact matching map.
     var refresh = refreshCustomerIfStale_();
-    var refreshMatching=null;
-    if (refresh.refreshed && CF.Matching && typeof CF.Matching.recheckRequest === 'function') {
-      refreshMatching=CF.Matching.recheckRequest(record.__rowNumber,{persist:true});
-      record=request_(record.__rowNumber);
-      if(resolvedCustomerId_(record)||upper_(record['Manual Review?'])==='YES'||upper_(record['Current Stage'])!=='READY FOR CUSTOMER CREATE'){
-        return {
-          ok: upper_(record['Manual Review?'])!=='YES',
-          status: resolvedCustomerId_(record)?'REFRESHED_CUSTOMER_AUTO_LINKED':'REFRESHED_CUSTOMER_MATCHING_REEVALUATED',
-          requestId: clean_(record['Request ID']),
-          matchedCustomerId: resolvedCustomerId_(record),
-          matching: refreshMatching,
-          liveWriteExecuted: false,
-          freshness: refresh.after,
-          durationMs: Date.now() - started
-        };
-      }
-    }
+    record=request_(record.__rowNumber);
 
-    // Independent exact phone/email duplicate guard on the freshest cache.
-    // One exact Customer is an answer, not a human-review condition. Re-run the
-    // canonical matcher and consume the deterministic match. Multiple Customers
-    // remain a genuine ambiguity and stay fail-closed.
+    // Independent exact phone/email duplicate guard on the freshest available
+    // cache. One exact Customer is consumed directly; multiple candidates remain
+    // a genuine ambiguity and fail closed.
     var candidates = customerCandidatesFromCache_(record);
     if (candidates.length === 1) {
-      var candidateId=clean_(candidates[0].customerId);
-      var matchingResult=CF.Matching&&typeof CF.Matching.recheckRequest==='function'
-        ?CF.Matching.recheckRequest(record.__rowNumber,{persist:true})
-        :null;
-      var matchedRecord=request_(record.__rowNumber);
-      var matchedId=resolvedCustomerId_(matchedRecord);
-      if(matchedId===candidateId){
-        return {
-          ok:true,
-          status:'PREWRITE_UNIQUE_CUSTOMER_AUTO_LINKED',
-          requestId:clean_(matchedRecord['Request ID']),
-          matchedCustomerId:matchedId,
-          candidateCustomerIds:[candidateId],
-          matching:matchingResult,
-          liveWriteExecuted:false,
-          durationMs:Date.now()-started
-        };
-      }
-      if(upper_(matchedRecord['Manual Review?'])==='YES'){
-        return {
-          ok:false,
-          status:'PREWRITE_UNIQUE_CUSTOMER_RECHECK_REQUIRES_REVIEW',
-          requestId:clean_(matchedRecord['Request ID']),
-          candidateCustomerIds:[candidateId],
-          matching:matchingResult,
-          liveWriteExecuted:false,
-          durationMs:Date.now()-started
-        };
-      }
-      return {
-        ok:false,
-        status:'PREWRITE_UNIQUE_CUSTOMER_NOT_CONSUMED',
-        requestId:clean_(matchedRecord['Request ID']),
-        candidateCustomerIds:[candidateId],
-        matching:matchingResult,
-        liveWriteExecuted:false,
-        durationMs:Date.now()-started
-      };
+      var adopted=adoptUniqueExistingCustomer_(record,candidates[0],refresh.refreshed?'POST_REFRESH_EXACT_GUARD':'FRESH_CACHE_EXACT_GUARD');
+      adopted.durationMs=Date.now()-started;
+      adopted.freshness=refresh.after||refresh.before||null;
+      return adopted;
     }
     if (candidates.length > 1) {
       var candidateIds = candidates.map(function (candidate) { return candidate.customerId; });
@@ -3323,37 +3380,13 @@ CF.StrivenControlledCustomerCreate = (function () {
         };
       }
 
-      // Re-run the duplicate guard under the mutation lock. A single exact
-      // candidate is auto-linked through canonical matching; only ambiguity stops.
+      // Re-run the exact duplicate guard under the mutation lock. A single
+      // candidate is still consumed without a full-map matcher rebuild.
       var lockedCandidates = customerCandidatesFromCache_(record);
       if (lockedCandidates.length === 1) {
-        var lockedCandidateId=clean_(lockedCandidates[0].customerId);
-        var lockedMatching=CF.Matching&&typeof CF.Matching.recheckRequest==='function'
-          ?CF.Matching.recheckRequest(record.__rowNumber,{persist:true})
-          :null;
-        var lockedMatchedRecord=request_(record.__rowNumber);
-        var lockedMatchedId=resolvedCustomerId_(lockedMatchedRecord);
-        if(lockedMatchedId===lockedCandidateId){
-          return {
-            ok:true,
-            status:'PREWRITE_UNIQUE_CUSTOMER_AUTO_LINKED_UNDER_LOCK',
-            requestId:clean_(lockedMatchedRecord['Request ID']),
-            matchedCustomerId:lockedMatchedId,
-            candidateCustomerIds:[lockedCandidateId],
-            matching:lockedMatching,
-            liveWriteExecuted:false,
-            durationMs:Date.now()-started
-          };
-        }
-        return {
-          ok:false,
-          status:upper_(lockedMatchedRecord['Manual Review?'])==='YES'?'PREWRITE_UNIQUE_CUSTOMER_RECHECK_REQUIRES_REVIEW_UNDER_LOCK':'PREWRITE_UNIQUE_CUSTOMER_NOT_CONSUMED_UNDER_LOCK',
-          requestId:clean_(lockedMatchedRecord['Request ID']),
-          candidateCustomerIds:[lockedCandidateId],
-          matching:lockedMatching,
-          liveWriteExecuted:false,
-          durationMs:Date.now()-started
-        };
+        var lockedAdopted=adoptUniqueExistingCustomer_(record,lockedCandidates[0],'UNDER_WRITE_LOCK_EXACT_GUARD');
+        lockedAdopted.durationMs=Date.now()-started;
+        return lockedAdopted;
       }
       if (lockedCandidates.length > 1) {
         return {
