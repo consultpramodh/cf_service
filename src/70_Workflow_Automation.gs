@@ -911,8 +911,10 @@ CF.EventDrivenServiceAutomation = (function () {
       contactId=certContactId;
     }else if(certContactId&&contactId&&certContactId!==contactId)return null;
     var certBill=clean_(cert.billToLocationId),certShip=clean_(cert.shipToLocationId);
-    if((issues.indexOf('billToLocation')!==-1||issues.indexOf('shipToLocation')!==-1)&&(!certBill||certBill!==certShip))return null;
-    return{root:root,cert:cert,issues:issues,orderId:orderId,customerId:customerId,contactId:contactId||certContactId,locationId:clean_(r['Matched Location ID']||r['Created Location ID']),certLocationId:certBill&&certBill===certShip?certBill:''};
+    var certBillMissing=!certBill||certBill==='0',certShipMissing=!certShip||certShip==='0';
+    var bothCertLocationsMissing=certBillMissing&&certShipMissing;
+    if((issues.indexOf('billToLocation')!==-1||issues.indexOf('shipToLocation')!==-1)&&!bothCertLocationsMissing&&(!certBill||!certShip||certBill!==certShip))return null;
+    return{root:root,cert:cert,issues:issues,orderId:orderId,customerId:customerId,contactId:contactId||certContactId,locationId:clean_(r['Matched Location ID']||r['Created Location ID']),certLocationId:bothCertLocationsMissing?'':(certBill&&certBill===certShip?certBill:'')};
   }
   function legacySalesOrderReviewEligible_(r){return !!legacySalesOrderReviewEvidence_(r);}
   function recoverLegacySalesOrderReview_(r){
