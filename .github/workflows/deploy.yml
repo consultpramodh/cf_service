@@ -21,7 +21,9 @@ permissions:
   contents: read
 
 concurrency:
-  group: cf-serviceops-production
+  # v2 key intentionally releases the corrected request-scoped acceptance run
+  # from the obsolete shared-queue acceptance job. Future v2 runs remain serialized.
+  group: cf-serviceops-production-v2
   cancel-in-progress: false
 
 jobs:
