@@ -1105,6 +1105,37 @@ CF.EventDrivenServiceAutomation = (function () {
       workerStale:queued.length>0&&finalCount>0&&nextAtMs>0&&(Date.now()-nextAtMs)>WORKER_STALE_MS
     };
   }
-  return{version:VERSION,kick:kick,worker:worker,recoveryWatchdog:recoveryWatchdog,activate:activate,disable:disable,inspect:inspect,queuedRequestIds:queue_,allHandlerNames:function(){return[FINAL_HANDLER,WATCHDOG_HANDLER];}};
+  function acceptanceStep(requestId){
+    requestId=clean_(requestId);
+    if(!requestId)return{ok:false,version:VERSION,status:'REQUEST_ID_REQUIRED',requestId:'',liveWriteExecuted:false};
+    var before=request_(requestId);
+    if(!before)return{ok:false,version:VERSION,status:'REQUEST_NOT_FOUND',requestId:requestId,liveWriteExecuted:false};
+    before=recoverDeterministicReview_(before);
+    if(terminal_(before))return{ok:true,version:VERSION,status:'REQUEST_TERMINAL',requestId:requestId,currentStage:clean_(before['Current Stage']),requestStatus:clean_(before['Request Status']),manualReview:clean_(before['Manual Review?']),liveWriteExecuted:false};
+    var beforeSig=signature_(before);
+    var result=assertRequestScoped_(requestId,step_(requestId));
+    var after=request_(requestId)||before;
+    return{
+      ok:result&&result.ok!==false,
+      version:VERSION,
+      status:'REQUEST_SCOPED_ACCEPTANCE_STEP',
+      requestId:requestId,
+      stepStatus:clean_(result&&result.status),
+      stateChanged:beforeSig!==signature_(after),
+      currentStage:clean_(after['Current Stage']),
+      requestStatus:clean_(after['Request Status']),
+      manualReview:clean_(after['Manual Review?']),
+      nextAction:clean_(after['Next Action']),
+      customerId:clean_(after['Matched Customer ID']||after['Created Customer ID']),
+      contactId:clean_(after['Matched Contact ID']||after['Created Contact ID']),
+      locationId:clean_(after['Matched Location ID']||after['Created Location ID']),
+      workOrderId:clean_(after['Work Order ID']),
+      workOrderNumber:clean_(after['Work Order Number']),
+      reconciliationStatus:clean_(after['Reconciliation Status']),
+      finalOutcome:clean_(after['Final Outcome']),
+      liveWriteExecuted:!!(result&&result.liveWriteExecuted===true)
+    };
+  }
+  return{version:VERSION,kick:kick,worker:worker,acceptanceStep:acceptanceStep,recoveryWatchdog:recoveryWatchdog,activate:activate,disable:disable,inspect:inspect,queuedRequestIds:queue_,allHandlerNames:function(){return[FINAL_HANDLER,WATCHDOG_HANDLER];}};
 })();
 
