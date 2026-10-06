@@ -5476,6 +5476,27 @@ function executeApproved(requestId,options){options=options||{};if(options.execu
     }
   }
 
+  /* CF_SERVICEOPS_V5_14_3_CANONICAL_CONTACT_LINEAGE_R1
+   * A legacy Work Order may still reference the superseded Contact ID after an
+   * operator-approved customer-scoped Contact correction. This is repairable
+   * only when the durable journal proves the exact old -> canonical ID lineage.
+   */
+  function v514CanonicalContactLineage_(record,orderContactId,expectedContactId){
+    orderContactId=clean_(orderContactId);expectedContactId=clean_(expectedContactId);
+    if(!record||!orderContactId||!expectedContactId||orderContactId===expectedContactId)return{proven:false};
+    var root=rootJournal_(record),cc=root.contactCreate||{},rec=cc.reconciliation||{},tech=cc.technicalRecovery||{};
+    var operatorApproved=tech.operatorApprovedCustomerScopedContact===true||/OPERATOR-APPROVED CUSTOMER-SCOPED CONTACT PATH/i.test(clean_(rec.reason));
+    var canonical=clean_(rec.canonicalContactId||tech.customerScopedContactId);
+    var legacy=[];
+    function add_(v){v=clean_(v);if(v&&legacy.indexOf(v)===-1)legacy.push(v);}
+    add_(tech.priorLedgerContactId);
+    add_(cc.existingDuplicateContactId);
+    (Array.isArray(cc.existingDuplicateContactIds)?cc.existingDuplicateContactIds:[]).forEach(add_);
+    if(clean_(rec.responseIdentifier)!==expectedContactId)add_(rec.responseIdentifier);
+    var proven=operatorApproved&&canonical===expectedContactId&&legacy.indexOf(orderContactId)!==-1;
+    return{proven:proven,operatorApproved:operatorApproved,canonicalContactId:canonical,legacyContactIds:legacy,orderContactId:orderContactId,expectedContactId:expectedContactId};
+  }
+
   function v511ReadOnlyVerify_(requestId,preferredSalesOrderId){
     var record=request_(requestId);
     var salesOrderId=clean_(preferredSalesOrderId||record['Work Order ID']);
@@ -5569,12 +5590,16 @@ var issues=[];
     var expectedLocationId=clean_(locationId_(record));
     var billMissing=!clean_(bill)||clean_(bill)==='0';
     var shipMissing=!clean_(ship)||clean_(ship)==='0';
-    var missingLocationRepresentation=!!expectedLocationId&&billMissing&&shipMissing&&checks.customer===true&&checks.contact===true;
     var taskEvidence=v514ExistingTaskEvidence_(orderNumber);
-    var taskBackedLineItemRepresentation=taskEvidence.hasTask===true&&checks.customer===true&&checks.contact===true&&
+    var canonicalContactLineage=v514CanonicalContactLineage_(record,contact,contactId_(record));
+    var contactIdentityAccepted=checks.contact===true||canonicalContactLineage.proven===true;
+    var missingLocationRepresentation=!!expectedLocationId&&billMissing&&shipMissing&&checks.customer===true&&contactIdentityAccepted;
+    var taskBackedIdentity=taskEvidence.hasTask===true&&checks.customer===true&&contactIdentityAccepted&&
       ((checks.billToLocation===true&&checks.shipToLocation===true)||missingLocationRepresentation);
+    var taskBackedLineItemRepresentation=taskBackedIdentity;
     var repairableIssues=issues.filter(function(key){
       return key==='customFields'||
+        (canonicalContactLineage.proven===true&&taskBackedIdentity&&key==='contact')||
         (missingLocationRepresentation&&(key==='billToLocation'||key==='shipToLocation'))||
         (taskBackedLineItemRepresentation&&key==='lineItem');
     });
@@ -5612,6 +5637,7 @@ var issues=[];
         treatedAsRepairable:missingLocationRepresentation
       },
       existingTaskEvidence:taskEvidence,
+      canonicalContactLineage:canonicalContactLineage,
       taskBackedLineItemRepresentation:taskBackedLineItemRepresentation,
       customFieldChecks:customFieldChecks,
       internalNotesConfirmed:notesConfirmed,
