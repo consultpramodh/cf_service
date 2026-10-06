@@ -1282,10 +1282,10 @@ CF.StatusWarningReconciler=(function(){
     }
     if(!existingCustomer||existingCustomer!==w.customerId){
       var candidates=customerCandidateIds_(r);
-      var strongTaskIdentity=te.phoneMatch||te.nameMatch;
       var candidateSupported=!candidates.length||candidates.indexOf(w.customerId)!==-1;
-      if(!strongTaskIdentity||!candidateSupported){
-        return{ok:false,status:'CUSTOMER_CONFLICT_NOT_PROVEN_BY_EXISTING_WORK',requestId:clean_(r['Request ID']),candidateCustomerIds:candidates,workOrderCustomerId:w.customerId,taskIds:te.taskIds,stateChanged:false,liveWriteExecuted:false};
+      var customerEvidenceAccepted=te.phoneMatch===true||(te.nameMatch===true&&candidateSupported);
+      if(!customerEvidenceAccepted){
+        return{ok:false,status:'CUSTOMER_CONFLICT_NOT_PROVEN_BY_EXISTING_WORK',requestId:clean_(r['Request ID']),candidateCustomerIds:candidates,workOrderCustomerId:w.customerId,taskIds:te.taskIds,taskPhoneMatch:te.phoneMatch,taskNameMatch:te.nameMatch,stateChanged:false,liveWriteExecuted:false};
       }
       patch_(r,{
         'Updated At':CF.Util.nowString(),
