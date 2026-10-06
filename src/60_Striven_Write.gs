@@ -6625,6 +6625,20 @@ CF.StandaloneLocationCreateV5128=(function(){
   function norm_(v){return upper_(v).replace(/[^A-Z0-9]/g,'');}
   function postal_(v){var x=norm_(v);return x.length===6?x.slice(0,3)+' '+x.slice(3):clean_(v);}
   function province_(v){var x=upper_(v);return x==='ONTARIO'||x==='ONT'?'ON':clean_(v);}
+  function country_(v){var x=upper_(v);return x==='CA'||x==='CAN'||x==='CANADA'?'Canada':(clean_(v)||'Canada');}
+  function deterministicCountryValidationReject_(errorText){
+    var text=clean_(errorText);
+    return /^HTTP 400:/i.test(text)&&(/country code .* could not be read/i.test(text)||/country_Invalid/i.test(text));
+  }
+  function safeCorrectedCountryRetry_(journal,nextPayload){
+    journal=journal||{};nextPayload=nextPayload||{};
+    if(Number(journal.postAttempts||0)<1||Number(journal.correctedValidationRetryAttempts||0)>=1)return false;
+    if(!deterministicCountryValidationReject_(journal.error))return false;
+    var prior=journal.payload&&journal.payload.Address?journal.payload.Address:{};
+    var next=nextPayload.Address||{};
+    var priorCountry=clean_(prior.Country),nextCountry=clean_(next.Country);
+    return !!priorCountry&&!!nextCountry&&upper_(priorCountry)!==upper_(nextCountry);
+  }
   function request_(id){return CF.Util.findRecord('SERVICE_REQUESTS','Request ID',clean_(id));}
   function resolved_(r,a,b){return clean_(r[a]||r[b]);}
   function rootJournal_(r){var raw=clean_(r['Write Journal JSON']);if(!raw)return{};try{var x=JSON.parse(raw);return x&&typeof x==='object'?x:{};}catch(e){return{};}}
@@ -6637,7 +6651,7 @@ CF.StandaloneLocationCreateV5128=(function(){
       City:clean_(r['City']),
       State:province_(r['Province']),
       PostalCode:postal_(r['Postal Code']),
-      Country:clean_(r['Country'])||'Canada',
+      Country:country_(r['Country']),
       Latitude:0,
       Longitude:0,
       FullAddress:clean_(r['Full Address'])
@@ -6721,17 +6735,50 @@ CF.StandaloneLocationCreateV5128=(function(){
     try{matches=search_(r,customerId,{allowUniquePrimaryFallback:false});}catch(searchError){return{ok:false,status:'LOCATION_READ_RECONCILE_FAILED',requestId:clean_(requestId),error:String(searchError&&searchError.message||searchError),liveWriteExecuted:false,automaticPostRetry:false};}
     if(matches.length===1)return finalize_(r,matches[0],Number(j.postAttempts||0)>0);
     if(matches.length>1){var msg='Multiple exact Customer Locations match the submitted service address. Do not create another Location.';patch_(r,{'Updated At':CF.Util.nowString(),'Current Stage':'NEEDS REVIEW','Request Status':'BLOCKED','Manual Review?':'YES','Manual Review Reason':msg,'Blocking Issue':msg,'Next Action':'REVIEW LOCATION CANDIDATES','Striven Sync Status':'BLOCKED','Reconciliation Status':'LOCATION EXACT MATCH AMBIGUOUS'});return{ok:false,status:'LOCATION_EXACT_MATCH_AMBIGUOUS',requestId:clean_(requestId),candidateCount:matches.length,liveWriteExecuted:false};}
-    if(Number(j.postAttempts||0)>0)return{ok:true,status:'LOCATION_POST_RECONCILE_PENDING',requestId:clean_(requestId),liveWriteExecuted:false,automaticPostRetry:false};
-    var endpoint=CF.Config.getEndpoint('CUSTOMER_LOCATION_CREATE',{customerId:customerId}),payload=payload_(r),fingerprint=CF.Util.canonicalHash({requestId:clean_(requestId),customerId:customerId,endpoint:endpoint,payload:payload});
-    j={status:'POST_INTENT_RECORDED',postAttempts:1,postStartedAt:CF.Util.nowString(),writeFingerprint:fingerprint,endpoint:endpoint,payload:payload,remoteWriteMayHaveSucceeded:false,noAutomaticWriteRetry:true};root.standaloneLocationCreate=j;
-    patch_(r,{'Updated At':CF.Util.nowString(),'Write Journal JSON':JSON.stringify(root),'Current Stage':'READY FOR LOCATION CREATE','Request Status':'IN PROGRESS','Next Action':'CREATE LOCATION — GUARDED SINGLE POST','Striven Sync Status':'SYNCING','Reconciliation Status':'LOCATION POST INTENT RECORDED'});
+    var endpoint=CF.Config.getEndpoint('CUSTOMER_LOCATION_CREATE',{customerId:customerId}),payload=payload_(r);
+    var correctedCountryRetry=safeCorrectedCountryRetry_(j,payload);
+    if(Number(j.postAttempts||0)>0&&!correctedCountryRetry){
+      if(deterministicCountryValidationReject_(j.error)){
+        j.status='LOCATION_POST_REJECTED_VALIDATION_TECHNICAL_BLOCK';j.remoteWriteMayHaveSucceeded=false;j.noAutomaticWriteRetry=true;j.technicalBlockedAt=CF.Util.nowString();root.standaloneLocationCreate=j;
+        var validationMsg='Location create was rejected by Striven validation and no safe corrected payload remains. No Location was created.';
+        patch_(r,{'Updated At':CF.Util.nowString(),'Write Journal JSON':JSON.stringify(root),'Current Stage':'READY FOR LOCATION CREATE','Request Status':'ERROR','Manual Review?':'NO','Manual Review Reason':'','Blocking Issue':validationMsg+' '+clean_(j.error),'Next Action':'FIX LOCATION PAYLOAD VALIDATION — DO NOT CREATE DUPLICATE LOCATION','Striven Sync Status':'ERROR','Striven Sync Error':clean_(j.error),'Reconciliation Status':'LOCATION POST REJECTED — TECHNICAL FIX REQUIRED'});
+        return{ok:false,version:VERSION,status:'LOCATION_POST_REJECTED_VALIDATION_TECHNICAL_BLOCK',requestId:clean_(requestId),remoteWriteMayHaveSucceeded:false,automaticPostRetry:false,liveWriteExecuted:false};
+      }
+      return{ok:true,status:'LOCATION_POST_RECONCILE_PENDING',requestId:clean_(requestId),liveWriteExecuted:false,automaticPostRetry:false};
+    }
+    var fingerprint=CF.Util.canonicalHash({requestId:clean_(requestId),customerId:customerId,endpoint:endpoint,payload:payload});
+    if(correctedCountryRetry){
+      j.previousRejectedPayload=j.payload||null;
+      j.previousValidationError=clean_(j.error);
+      j.status='CORRECTED_VALIDATION_RETRY_INTENT_RECORDED';
+      j.postAttempts=Number(j.postAttempts||0)+1;
+      j.correctedValidationRetryAttempts=Number(j.correctedValidationRetryAttempts||0)+1;
+      j.correctedRetryReason='HTTP 400 country validation rejected prior payload before creation; targeted Customer Location search returned no exact match and Country was canonicalized.';
+      j.postStartedAt=CF.Util.nowString();
+      j.writeFingerprint=fingerprint;
+      j.endpoint=endpoint;
+      j.payload=payload;
+      j.remoteWriteMayHaveSucceeded=false;
+      j.noAutomaticWriteRetry=true;
+      j.error='';
+    }else{
+      j={status:'POST_INTENT_RECORDED',postAttempts:1,correctedValidationRetryAttempts:0,postStartedAt:CF.Util.nowString(),writeFingerprint:fingerprint,endpoint:endpoint,payload:payload,remoteWriteMayHaveSucceeded:false,noAutomaticWriteRetry:true};
+    }
+    root.standaloneLocationCreate=j;
+    patch_(r,{'Updated At':CF.Util.nowString(),'Write Journal JSON':JSON.stringify(root),'Current Stage':'READY FOR LOCATION CREATE','Request Status':'IN PROGRESS','Next Action':correctedCountryRetry?'CREATE LOCATION — ONE SAFE CORRECTED VALIDATION RETRY':'CREATE LOCATION — GUARDED SINGLE POST','Striven Sync Status':'SYNCING','Striven Sync Error':'','Reconciliation Status':correctedCountryRetry?'LOCATION VALIDATION REJECTION CORRECTED — SAFE RETRY INTENT RECORDED':'LOCATION POST INTENT RECORDED'});
     try{
       var response=CF.StrivenHttp.requestJson(endpoint,{method:'post',payload:payload,attempts:1,idempotent:false});
       j.status='POST_ACCEPTED_RECONCILE_REQUIRED';j.postFinishedAt=CF.Util.nowString();j.httpStatus=response&&response.status||200;j.responseBody=response&&response.json||{};j.remoteWriteMayHaveSucceeded=true;root.standaloneLocationCreate=j;
       patch_(request_(requestId),{'Updated At':CF.Util.nowString(),'Write Journal JSON':JSON.stringify(root),'Current Stage':'READY FOR LOCATION CREATE','Request Status':'IN PROGRESS','Next Action':'RECONCILE LOCATION CREATE — DO NOT RETRY POST','Striven Sync Status':'PARTIAL','Striven Sync Error':'','Reconciliation Status':'LOCATION POST ACCEPTED — RECONCILE'});
       return{ok:true,version:VERSION,status:'LOCATION_POST_ACCEPTED_RECONCILE_REQUIRED',requestId:clean_(requestId),liveWriteExecuted:true,automaticPostRetry:false};
     }catch(postError){
-      j.status='LOCATION_POST_OUTCOME_UNCERTAIN_RECONCILE_REQUIRED';j.postFinishedAt=CF.Util.nowString();j.remoteWriteMayHaveSucceeded=true;j.error=String(postError&&postError.message||postError);root.standaloneLocationCreate=j;
+      j.postFinishedAt=CF.Util.nowString();j.error=String(postError&&postError.message||postError);
+      if(deterministicCountryValidationReject_(j.error)){
+        j.status='LOCATION_POST_REJECTED_VALIDATION_NO_REMOTE_WRITE';j.remoteWriteMayHaveSucceeded=false;root.standaloneLocationCreate=j;
+        patch_(request_(requestId),{'Updated At':CF.Util.nowString(),'Write Journal JSON':JSON.stringify(root),'Current Stage':'READY FOR LOCATION CREATE','Request Status':'IN PROGRESS','Next Action':'RECONCILE REJECTED LOCATION POST — SAFE CORRECTION CHECK','Striven Sync Status':'PARTIAL','Striven Sync Error':j.error,'Reconciliation Status':'LOCATION POST REJECTED BY COUNTRY VALIDATION — NO REMOTE WRITE'});
+        return{ok:false,version:VERSION,status:'LOCATION_POST_REJECTED_VALIDATION_NO_REMOTE_WRITE',requestId:clean_(requestId),remoteWriteMayHaveSucceeded:false,automaticPostRetry:false,liveWriteExecuted:true};
+      }
+      j.status='LOCATION_POST_OUTCOME_UNCERTAIN_RECONCILE_REQUIRED';j.remoteWriteMayHaveSucceeded=true;root.standaloneLocationCreate=j;
       patch_(request_(requestId),{'Updated At':CF.Util.nowString(),'Write Journal JSON':JSON.stringify(root),'Current Stage':'READY FOR LOCATION CREATE','Request Status':'IN PROGRESS','Next Action':'RECONCILE LOCATION CREATE — DO NOT RETRY POST','Striven Sync Status':'RECONCILE REQUIRED','Striven Sync Error':j.error,'Reconciliation Status':'LOCATION POST OUTCOME UNCERTAIN — RECONCILE'});
       return{ok:false,version:VERSION,status:'LOCATION_POST_OUTCOME_UNCERTAIN_RECONCILE_REQUIRED',requestId:clean_(requestId),remoteWriteMayHaveSucceeded:true,automaticPostRetry:false,liveWriteExecuted:true};
     }
