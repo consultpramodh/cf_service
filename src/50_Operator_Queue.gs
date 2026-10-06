@@ -963,6 +963,33 @@ function salesOrderText_(row,operationalIndex){
     return isNaN(ms) ? 0 : ms;
   }
 
+  /* CF_SERVICEOPS_V5_14_3_DASHBOARD_REVIEW_BREAKDOWN_R1 */
+  function dashboardReviewClass_(row) {
+    if (!row) return '';
+    var stage = upper_(row['Current Stage']);
+    var manual = upper_(row['Manual Review?']);
+    if (stage !== 'NEEDS REVIEW' && manual !== 'YES') return '';
+    var text = upper_([
+      row['Manual Review Reason'],
+      row['Blocking Issue'],
+      row['Next Action'],
+      row['Reconciliation Status']
+    ].map(clean_).join(' '));
+
+    if (/POSSIBLE DUPLICATE|DUPLICATE REQUEST/.test(text)) return 'Duplicate review';
+    if (/CUSTOMER IDENTITY CONFLICT|BLOCKED CUSTOMER MATCH|PRIMARY IDENTITY/.test(text)) return 'Customer identity';
+    if (/POSSIBLE HOUSEHOLD CONTACT|MULTIPLE CONTACTS|CONTACT.*AMBIGUOUS/.test(text)) return 'Contact identity';
+    if (/POSTAL CODE|LOCATION RESOLUTION REQUIRES OPERATOR REVIEW|BLOCKED LOCATION MATCH|LOCATION.*AMBIGUOUS/.test(text)) return 'Location identity';
+    if (/EXISTING SALES ORDER|VERIFY EXISTING SALES ORDER|MANUAL REVIEW SALES ORDER|DURABLE SALES ORDER ALREADY EXISTS|SALES ORDER CREATED AND VERIFIED/.test(text)) return 'Existing Work Order warning';
+    if (/GET-ONLY VERIFY CONTACT|UNCERTAIN_RECONCILE_REQUIRED|RECONCILIATION STAYED UNCHANGED|TECHNICAL/.test(text)) return 'Technical recovery';
+    return 'Other review';
+  }
+
+  function dashboardRecoverableReview_(row) {
+    var c = dashboardReviewClass_(row);
+    return c === 'Existing Work Order warning' || c === 'Technical recovery';
+  }
+
   function dashboardMetrics_(requests, operationalRows) {
     var d = deps_();
     var scheduleIndex = operationalScheduleIndex_(operationalRows);
@@ -1004,11 +1031,20 @@ function salesOrderText_(row,operationalIndex){
       ['Completed', statusCounts.COMPLETED]
     ];
 
+    var reviewRows = activeRows.filter(function (row) {
+      return upper_(row['Current Stage']) === 'NEEDS REVIEW' || upper_(row['Manual Review?']) === 'YES';
+    });
+    var recoverableReviewRows = reviewRows.filter(dashboardRecoverableReview_);
+    var genuineReviewRows = reviewRows.filter(function (row) { return !dashboardRecoverableReview_(row); });
+    var reviewBreakdown = countBy_(reviewRows, dashboardReviewClass_);
+
     return {
       total: requests.length,
       newThisWeek: requests.filter(function (row) { return requestDateMs_(row) >= weekStart; }).length,
       activeQueue: activeRows.length,
-      needsReview: activeRows.filter(function (row) { return upper_(row['Current Stage']) === 'NEEDS REVIEW' || upper_(row['Manual Review?']) === 'YES'; }).length,
+      needsReview: reviewRows.length,
+      recoverableWarnings: recoverableReviewRows.length,
+      genuineReviews: genuineReviewRows.length,
       scheduled: scheduled,
       toSchedule: toSchedule,
       completed: completed,
@@ -1016,6 +1052,7 @@ function salesOrderText_(row,operationalIndex){
       cities: countBy_(requests, function (row) { return row['City']; }).slice(0, 10),
       campaigns: countBy_(requests, function (row) { return row['Campaign Code']; }).slice(0, 10),
       stages: countBy_(activeRows, function (row) { return row['Current Stage']; }).slice(0, 10),
+      reviewBreakdown: reviewBreakdown,
       workOrdersSince20260701: reportingWorkOrders.length,
       workOrderStatusesSince20260701: {
         approved: statusCounts.APPROVED,
@@ -1094,6 +1131,19 @@ function salesOrderText_(row,operationalIndex){
       'Operator processing belongs in 03 Operator Queue.\n\n' +
       '01 Webform Requests, 02 Service Requests and all Striven/cache/log sheets are backend technical ledgers and remain hidden during normal operation.'
     ).setWrap(true).setVerticalAlignment('top').setBackground('#f3f3f3');
+
+    sheet.getRange('G36:H36').merge().setValue('Review Breakdown')
+      .setFontWeight('bold').setBackground('#d9eaf7').setHorizontalAlignment('center');
+    sheet.getRange('G37:H37').setValues([['Recoverable / stale warnings', metrics.recoverableWarnings]])
+      .setFontWeight('bold');
+    sheet.getRange('G38:H38').setValues([['Genuine / unproven review', metrics.genuineReviews]])
+      .setFontWeight('bold');
+    var reviewRows = (metrics.reviewBreakdown || []).slice(0, 5);
+    while (reviewRows.length < 5) reviewRows.push(['', '']);
+    sheet.getRange('G39:H43').setValues(reviewRows).setWrap(true);
+    sheet.getRange('G44:H44').merge().setValue(
+      'Recoverable warnings are existing-work/technical states that automation can re-check. Genuine review means identity or location evidence is still conflicting or insufficient.'
+    ).setFontStyle('italic').setFontColor('#666666').setWrap(true);
 
     [150, 95, 28, 180, 95, 28, 190, 190].forEach(function (width, index) { sheet.setColumnWidth(index + 1, width); });
     sheet.setFrozenRows(2);
