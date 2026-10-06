@@ -86,6 +86,44 @@ jobs:
           echo "LIVE_SINGLE_MODEL_VERIFY_FAILED"
           exit 1
 
+      - name: Run frozen recent-10 acceptance cohort
+        shell: bash
+        env:
+          ACCEPTANCE_URL: https://script.google.com/macros/s/AKfycbwebnCvczGthe6Z_mvYmukLqFLB-9nk8hjNtNP3lR87CE1m_fEx2d9Bn_vpXMPCLUnPbA/exec
+        run: |
+          set -euo pipefail
+          IDS=(
+            SR-20261006104413-7346
+            SR-20261005182859-2159
+            SR-20261005121227-9352
+            SR-20261005084731-2148
+            SR-20261004220141-5643
+            SR-20261004203633-9340
+            SR-20261004115129-2627
+            SR-20261004104029-7927
+            SR-20261003160054-7269
+            SR-20261003120429-6643
+          )
+          : > recent10-acceptance.jsonl
+          for id in "${IDS[@]}"; do
+            BODY="$(curl -fsSL --retry 2 --max-time 240 --get               --data-urlencode "ops=recent10-acceptance-step"               --data-urlencode "id=$id" "$ACCEPTANCE_URL")"
+            printf '%s\n' "$BODY" | tee -a recent10-acceptance.jsonl
+            node -e '
+              const x=JSON.parse(process.argv[1]);
+              if(!x || x.requestId!==process.argv[2]) process.exit(2);
+            ' "$BODY" "$id"
+          done
+          echo "RECENT10_ACCEPTANCE_EXECUTION_PASS"
+
+      - name: Upload recent-10 acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cf-serviceops-recent10-acceptance
+          path: recent10-acceptance.jsonl
+          retention-days: 30
+          if-no-files-found: warn
+
       - name: Upload pre-change live checkpoint
         if: always()
         uses: actions/upload-artifact@v4
