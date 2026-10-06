@@ -344,10 +344,17 @@ CF.OperatorQueue = (function () {
     return value === 'APPROVED' || value === 'IN PROGRESS' || value === 'COMPLETED';
   }
 
+  /* CF_SERVICEOPS_V5_14_3_DASHBOARD_WORK_ORDER_DATE_FALLBACK_R1
+   * The current Striven operational report leaves Sales Order Date blank on
+   * Work Order rows. Use Sales Order Date when present; otherwise Created At.
+   * Keep salesOrderDateMs_ unchanged so missing-source-field diagnostics remain
+   * visible instead of pretending the report populated the field.
+   */
   function reportingWorkOrder_(row) {
     if (upper_(row && row['Entity Type']) !== 'WORK_ORDER') return false;
     if (!reportingWorkOrderStatus_(row['Status'])) return false;
     var orderDate = salesOrderDateMs_(row);
+    if (!orderDate) orderDate = parseOperationalDateMs_(row && row['Created At']);
     return !!orderDate && orderDate >= workOrderReportingCutoffMs_();
   }
 
@@ -1080,7 +1087,7 @@ function salesOrderText_(row,operationalIndex){
       'Definitions\n\n' +
       'Scheduled = active Service Request linked to a scheduled date in Active Work JSON or the Striven operational cache.\n\n' +
       'To Be Scheduled = active Service Request with no linked scheduled date.\n\n' +
-      'Service Work Orders = Striven WORK_ORDER records with Sales Order Date on/after Jul 1, 2026 and Status Approved, In Progress, or Completed. Created At is not used for this count.'
+      'Service Work Orders = Striven WORK_ORDER records dated on/after Jul 1, 2026 and Status Approved, In Progress, or Completed. Sales Order Date is used when available; Created At is the fallback when Striven leaves Sales Order Date blank.'
     ).setWrap(true).setVerticalAlignment('top').setBackground('#fffdf2');
 
     sheet.getRange('G24:H33').merge().setValue(
