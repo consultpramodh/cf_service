@@ -958,10 +958,11 @@ function doGet(e) {
     })).setMimeType(ContentService.MimeType.JSON);
   }
 
-  /* CF_SERVICEOPS_V5_14_1_PUBLIC_HEALTH_R1 */
-  var todayBatch=null;
-  try { todayBatch=CF_20260930_queueTodayEndToEndOnce_(); }
-  catch (batchError) { todayBatch={status:'QUEUE_FAILED',error:String(batchError&&batchError.message||batchError)}; }
+  /* CF_SERVICEOPS_V5_14_4_PUBLIC_HEALTH_READ_ONLY_R1
+   * Health must never execute matching, queue processing, reconciliation,
+   * report refreshes, or Striven work. It is a state read only.
+   */
+  var todayBatch={status:'DISABLED_IN_HEALTH_ENDPOINT',liveWriteExecuted:false};
   var verification = {
     singleModel: false,
     enabled: false,
