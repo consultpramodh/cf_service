@@ -1136,7 +1136,7 @@ CF.EventDrivenServiceAutomation = (function () {
       liveWriteExecuted:!!(manualWorkOrderNotes&&manualWorkOrderNotes.liveWriteExecuted===true)
     };
   }
-  function recoveryWatchdog(){if(upper_(props_().getProperty(ENABLED))!=='TRUE')return{ok:true,version:VERSION,status:'RECOVERY_WATCHDOG_AUTOMATION_DISABLED',liveWriteExecuted:false};var topology=normalizeTopology_(''),q=queue_(),maintenance=null;if(!q.length){var rows=recentRecoverable_();if(rows.length){mutateQueue_(function(existing){rows.forEach(function(r){existing.push(clean_(r['Request ID']));});return existing;});q=queue_();}}if(!q.length)maintenance=idleMaintenance_();var worker=ensureWorker_(WORKER_DELAY_MS,'');return{ok:true,version:VERSION,status:q.length?'RECOVERY_QUEUE_ACTIVE':'RECOVERY_IDLE',queuedRequestIds:q,recoverableRecentCount:recentRecoverable_().length,topology:topology,worker:worker,idleMaintenance:maintenance,liveWriteExecuted:!!(maintenance&&maintenance.liveWriteExecuted===true)};}
+  function recoveryWatchdog(){if(upper_(props_().getProperty(ENABLED))!=='TRUE')return{ok:true,version:VERSION,status:'RECOVERY_WATCHDOG_AUTOMATION_DISABLED',liveWriteExecuted:false};var topology=normalizeTopology_(''),q=queue_(),maintenance=null,historicalBacklog=null;if(!q.length){var rows=recentRecoverable_();if(rows.length){mutateQueue_(function(existing){rows.forEach(function(r){existing.push(clean_(r['Request ID']));});return existing;});q=queue_();}}if(!q.length)maintenance=idleMaintenance_();if(!q.length&&!(maintenance&&maintenance.liveWriteExecuted===true)){try{if(CF.StatusWarningReconciler&&typeof CF.StatusWarningReconciler.step==='function')historicalBacklog=CF.StatusWarningReconciler.step({limit:2});}catch(backlogError){historicalBacklog={ok:false,status:'HISTORICAL_EXISTING_WORK_RECONCILIATION_ERROR',error:String(backlogError&&backlogError.message||backlogError),liveWriteExecuted:false};}}var worker=ensureWorker_(WORKER_DELAY_MS,'');return{ok:true,version:VERSION,status:q.length?'RECOVERY_QUEUE_ACTIVE':'RECOVERY_IDLE',queuedRequestIds:q,recoverableRecentCount:recentRecoverable_().length,topology:topology,worker:worker,idleMaintenance:maintenance,historicalExistingWorkBacklog:historicalBacklog,liveWriteExecuted:!!((maintenance&&maintenance.liveWriteExecuted===true)||(historicalBacklog&&historicalBacklog.liveWriteExecuted===true))};}
   function activate(){props_().setProperty(ENABLED,'true');props_().setProperty(AUTO_SO,'true');props_().setProperty(PREPARATION_ONLY,'false');cleanLegacyTriggers_();triggersBy_(FINAL_HANDLER).forEach(deleteTriggerSafe_);triggersBy_(WATCHDOG_HANDLER).forEach(deleteTriggerSafe_);ensureWatchdog_();var rows=recentRecoverable_();mutateQueue_(function(q){rows.forEach(function(r){q.push(clean_(r['Request ID']));});return q;});var worker=ensureWorker_(1000,''),hardening=null;try{if(typeof CFH_installAndVerifyProductionHardening==='function')hardening=CFH_installAndVerifyProductionHardening();}catch(e){hardening={ok:false,status:'PRODUCTION_GUARD_INSTALL_FAILED',error:String(e&&e.message||e)};}var handlers=ScriptApp.getProjectTriggers().map(function(t){try{return clean_(t.getHandlerFunction&&t.getHandlerFunction());}catch(e){return'';}});var result={ok:!hardening||hardening.ok!==false,version:VERSION,status:'SINGLE_SERVICEOPS_MODEL_ACTIVE',finalHandler:FINAL_HANDLER,watchdogHandler:WATCHDOG_HANDLER,queuedRequestIds:queue_(),recoveredRequestIds:rows.map(function(r){return clean_(r['Request ID']);}),worker:worker,hardening:hardening,activeAutomationHandlers:handlers.filter(function(h){return h===FINAL_HANDLER||h===WATCHDOG_HANDLER;}),legacyAutomationTriggerCount:handlers.filter(isLegacyAutomationHandler_).length,liveWriteExecuted:false};log_('ACTIVATE_SINGLE_MODEL',result.legacyAutomationTriggerCount===0?'PASS':'FAIL','',{result:result},'');return result;}
   function disable(){props_().setProperty(ENABLED,'false');props_().setProperty(AUTO_SO,'false');triggersBy_(FINAL_HANDLER).forEach(deleteTriggerSafe_);triggersBy_(WATCHDOG_HANDLER).forEach(deleteTriggerSafe_);cleanLegacyTriggers_();writeQueue_([]);return{ok:true,version:VERSION,status:'SERVICEOPS_AUTOMATION_DISABLED',liveWriteExecuted:false};}
   function inspect(){
@@ -1324,8 +1324,15 @@ CF.StatusWarningReconciler=(function(){
 
     var existingContact=contact_(r);
     if(remoteContact&&remoteContact!=='0'){
-      if(existingContact&&existingContact!==remoteContact&&upper_(r['Contact Match Status'])!=='AMBIGUOUS'&&!/CONTACT MATCH|CONTACT IDENTITY/i.test(clean_(r['Next Action'])+' '+clean_(r['Manual Review Reason']))){
+      var contactReviewText=clean_(r['Next Action'])+' '+clean_(r['Manual Review Reason'])+' '+clean_(r['Blocking Issue']);
+      var explicitContactReview=upper_(r['Contact Match Status'])==='AMBIGUOUS'||upper_(r['Contact Action'])==='REVIEW'||
+        /CONTACT MATCH|CONTACT IDENTITY|HOUSEHOLD CONTACT|MULTIPLE CONTACTS/i.test(contactReviewText);
+      var strongTaskContactIdentity=te.phoneMatch===true&&te.nameMatch===true;
+      if(existingContact&&existingContact!==remoteContact&&!explicitContactReview){
         return{ok:false,status:'PROVEN_CONTACT_CONFLICT_RETAINED',requestId:clean_(r['Request ID']),requestContactId:existingContact,orderContactId:remoteContact,stateChanged:true,liveWriteExecuted:false};
+      }
+      if((!existingContact||existingContact!==remoteContact)&&explicitContactReview&&!strongTaskContactIdentity){
+        return{ok:false,status:'CONTACT_REVIEW_NOT_PROVEN_BY_TASK_IDENTITY',requestId:clean_(r['Request ID']),requestContactId:existingContact,orderContactId:remoteContact,taskIds:te.taskIds,taskPhoneMatch:te.phoneMatch,taskNameMatch:te.nameMatch,stateChanged:true,liveWriteExecuted:false};
       }
       if(!existingContact||existingContact!==remoteContact){
         patch_(r,{
@@ -1338,7 +1345,7 @@ CF.StatusWarningReconciler=(function(){
           'Manual Review?':'NO',
           'Manual Review Reason':'',
           'Blocking Issue':'',
-          'Reconciliation Status':'EXISTING WORK ORDER RESOLVED CONTACT WARNING'
+          'Reconciliation Status':explicitContactReview?'EXISTING WORK ORDER + TASK RESOLVED CONTACT WARNING':'EXISTING WORK ORDER RESOLVED CONTACT WARNING'
         });
         existingContact=remoteContact;
       }
@@ -1409,9 +1416,19 @@ CF.StatusWarningReconciler=(function(){
     if(!r||terminal_(r))return false;
     if(upper_(r['Duplicate Risk Status'])!=='NONE')return false;
     var stage=upper_(r['Current Stage']),status=upper_(r['Request Status']),next=upper_(r['Next Action']),recon=upper_(r['Reconciliation Status']),reason=upper_(r['Manual Review Reason']+' '+r['Blocking Issue']);
-    if(stage!=='NEEDS REVIEW'&&status!=='BLOCKED'&&status!=='ERROR')return false;
     if(/POSSIBLE DUPLICATE|DUPLICATE REQUEST/.test(reason+' '+next))return false;
-    return /VERIFY EXISTING SALES ORDER|MANUAL REVIEW SALES ORDER|REVIEW EXISTING SALES ORDER|GET-ONLY VERIFY CONTACT|REVIEW CUSTOMER MATCH|REVIEW CONTACT MATCH|REVIEW LOCATION MATCH|VERIFY POSTAL|REVIEW EXISTING LOCATION|SALES ORDER VERIFICATION/.test(next+' '+recon+' '+reason);
+    if(stage==='NEEDS REVIEW'||status==='BLOCKED'||status==='ERROR'){
+      return !!(oid_(r)||onum_(r))||
+        /VERIFY EXISTING SALES ORDER|MANUAL REVIEW SALES ORDER|REVIEW EXISTING SALES ORDER|GET-ONLY VERIFY CONTACT|REVIEW CUSTOMER MATCH|REVIEW CONTACT MATCH|REVIEW LOCATION MATCH|VERIFY POSTAL|REVIEW EXISTING LOCATION|SALES ORDER VERIFICATION|CUSTOMER IDENTITY|HOUSEHOLD CONTACT|MULTIPLE CONTACTS/.test(next+' '+recon+' '+reason);
+    }
+    return [
+      'SALES ORDER CREATED',
+      'CUSTOMER STRUCTURE COMPLETE',
+      'CUSTOMER RESOLVED',
+      'READY FOR LOCATION CREATE',
+      'READY FOR CONTACT CREATE',
+      'READY FOR CUSTOMER CREATE'
+    ].indexOf(stage)!==-1;
   }
   function snapshot(){
     var rows=CF.Util.readRecords('SERVICE_REQUESTS')||[],candidates=[],genuine=[];
@@ -1420,10 +1437,15 @@ CF.StatusWarningReconciler=(function(){
   }
   function priority_(r){
     if(oid_(r)||onum_(r))return 0;
+    var stage=upper_(r['Current Stage']);
     var text=upper_(clean_(r['Next Action'])+' '+clean_(r['Manual Review Reason'])+' '+clean_(r['Reconciliation Status']));
-    if(/VERIFY EXISTING SALES ORDER|MANUAL REVIEW SALES ORDER|REVIEW EXISTING SALES ORDER|SALES ORDER VERIFICATION/.test(text))return 1;
-    if(/GET-ONLY VERIFY CONTACT/.test(text))return 2;
-    return 3;
+    if(stage==='SALES ORDER CREATED')return 1;
+    if(/VERIFY EXISTING SALES ORDER|MANUAL REVIEW SALES ORDER|REVIEW EXISTING SALES ORDER|SALES ORDER VERIFICATION/.test(text))return 2;
+    if(/GET-ONLY VERIFY CONTACT/.test(text))return 3;
+    if(stage==='CUSTOMER STRUCTURE COMPLETE')return 4;
+    if(stage==='CUSTOMER RESOLVED')return 5;
+    if(stage==='READY FOR LOCATION CREATE'||stage==='READY FOR CONTACT CREATE')return 6;
+    return 7;
   }
   function step(options){
     options=options||{};var limit=Math.max(1,Math.min(8,Number(options.limit||4))),ctx=operational_(),rows=CF.Util.readRecords('SERVICE_REQUESTS')||[],results=[],processed=0,considered=0,skippedUnproven=0,progressed=0,writeBoundary=false;
@@ -1431,7 +1453,7 @@ CF.StatusWarningReconciler=(function(){
     for(var i=0;i<rows.length&&processed<limit;i++){
       var r=rows[i];if(!candidate_(r))continue;considered++;
       var id=clean_(r['Request ID']),hydrated=hydrate_(r,ctx);
-      if(hydrated.stateChanged!==true&&/^(NO_|CUSTOMER_CONFLICT_NOT_PROVEN|PROVEN_.*CONFLICT|REQUEST_LOCATION_CONFLICT|TARGETED_LOCATION_(?:AMBIGUOUS|NOT_PROVEN)|WORK_ORDER_.*CONFLICT|OPERATIONAL_WORK_ORDER_IDENTITY_INCOMPLETE)/.test(clean_(hydrated.status))){
+      if(hydrated.stateChanged!==true&&/^(NO_|CUSTOMER_CONFLICT_NOT_PROVEN|CONTACT_REVIEW_NOT_PROVEN|PROVEN_.*CONFLICT|REQUEST_LOCATION_CONFLICT|TARGETED_LOCATION_(?:AMBIGUOUS|NOT_PROVEN)|WORK_ORDER_.*CONFLICT|OPERATIONAL_WORK_ORDER_IDENTITY_INCOMPLETE)/.test(clean_(hydrated.status))){
         skippedUnproven++;
         continue;
       }
