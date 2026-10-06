@@ -133,6 +133,22 @@ jobs:
           done
           echo "RECENT10_ACCEPTANCE_PASS_ALL_10"
 
+      - name: Refresh live Dashboard
+        shell: bash
+        env:
+          DASHBOARD_URL: https://script.google.com/macros/s/AKfycbwebnCvczGthe6Z_mvYmukLqFLB-9nk8hjNtNP3lR87CE1m_fEx2d9Bn_vpXMPCLUnPbA/exec
+        run: |
+          set -euo pipefail
+          BODY="$(curl -fsSL --max-time 90 --get \
+            --data-urlencode "ops=dashboard-refresh" "$DASHBOARD_URL")"
+          echo "DASHBOARD_REFRESH=$BODY"
+          node -e '
+            const x=JSON.parse(process.argv[1]);
+            if(!x || x.ok!==true || x.status!=="DASHBOARD_REFRESHED") process.exit(2);
+            if(!x.metrics || Number(x.metrics.total||0)<1) process.exit(3);
+            console.log("DASHBOARD_REFRESH_PASS");
+          ' "$BODY"
+
       - name: Snapshot stale Status warning backlog
         shell: bash
         env:
