@@ -5444,6 +5444,38 @@ function executeApproved(requestId,options){options=options||{};if(options.execu
     }catch(ignoredPreview){}
     return null;
   }
+  /* CF_SERVICEOPS_V5_14_3_EXISTING_TASK_CERTIFICATION_EVIDENCE_R1
+   * Existing Work Order + Task is operational evidence that the durable order
+   * is already carrying the service workflow. It may make an old line-item
+   * representation difference repairable, but never overrides Customer,
+   * Contact, or a different nonzero Location identity.
+   */
+  function v514ExistingTaskEvidence_(orderNumber){
+    orderNumber=clean_(orderNumber);
+    if(!orderNumber)return{hasTask:false,taskIds:[],taskCount:0,source:'NO_ORDER_NUMBER'};
+    try{
+      var sheet=deps_().util.requireSheet('STRIVEN_OPERATIONAL_DATA');
+      if(!sheet||sheet.getLastRow()<2)return{hasTask:false,taskIds:[],taskCount:0,source:'OPERATIONAL_CACHE_EMPTY'};
+      var headers=deps_().util.getActualHeaders(sheet);
+      var orderCol=headers.indexOf('Work Order Number')+1;
+      var typeCol=headers.indexOf('Entity Type')+1;
+      var taskCol=headers.indexOf('Task ID')+1;
+      if(!orderCol||!typeCol||!taskCol)return{hasTask:false,taskIds:[],taskCount:0,source:'OPERATIONAL_SCHEMA_INCOMPLETE'};
+      var matches=sheet.getRange(2,orderCol,sheet.getLastRow()-1,1).createTextFinder(orderNumber).matchEntireCell(true).findAll();
+      var seen={},ids=[];
+      matches.forEach(function(cell){
+        var row=cell.getRow();
+        var type=upper_(sheet.getRange(row,typeCol).getDisplayValue());
+        if(type!=='TASK'&&type!=='TASK_RELATIONSHIP')return;
+        var id=clean_(sheet.getRange(row,taskCol).getDisplayValue());
+        if(id&&!seen[id]){seen[id]=true;ids.push(id);}
+      });
+      return{hasTask:ids.length>0,taskIds:ids,taskCount:ids.length,source:'STRIVEN_OPERATIONAL_DATA'};
+    }catch(e){
+      return{hasTask:false,taskIds:[],taskCount:0,source:'OPERATIONAL_TASK_LOOKUP_FAILED',error:String(e&&e.message||e)};
+    }
+  }
+
   function v511ReadOnlyVerify_(requestId,preferredSalesOrderId){
     var record=request_(requestId);
     var salesOrderId=clean_(preferredSalesOrderId||record['Work Order ID']);
@@ -5538,8 +5570,13 @@ var issues=[];
     var billMissing=!clean_(bill)||clean_(bill)==='0';
     var shipMissing=!clean_(ship)||clean_(ship)==='0';
     var missingLocationRepresentation=!!expectedLocationId&&billMissing&&shipMissing&&checks.customer===true&&checks.contact===true;
+    var taskEvidence=v514ExistingTaskEvidence_(orderNumber);
+    var taskBackedLineItemRepresentation=taskEvidence.hasTask===true&&checks.customer===true&&checks.contact===true&&
+      ((checks.billToLocation===true&&checks.shipToLocation===true)||missingLocationRepresentation);
     var repairableIssues=issues.filter(function(key){
-      return key==='customFields'||(missingLocationRepresentation&&(key==='billToLocation'||key==='shipToLocation'));
+      return key==='customFields'||
+        (missingLocationRepresentation&&(key==='billToLocation'||key==='shipToLocation'))||
+        (taskBackedLineItemRepresentation&&key==='lineItem');
     });
     var blockingIssues=issues.filter(function(key){return repairableIssues.indexOf(key)===-1;});
     var canProceed=blockingIssues.length===0;
@@ -5574,6 +5611,8 @@ var issues=[];
         bothMissingOrZero:billMissing&&shipMissing,
         treatedAsRepairable:missingLocationRepresentation
       },
+      existingTaskEvidence:taskEvidence,
+      taskBackedLineItemRepresentation:taskBackedLineItemRepresentation,
       customFieldChecks:customFieldChecks,
       internalNotesConfirmed:notesConfirmed,
       automaticPostRetry:false,

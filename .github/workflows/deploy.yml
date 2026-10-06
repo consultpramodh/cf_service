@@ -133,6 +133,50 @@ jobs:
           done
           echo "RECENT10_ACCEPTANCE_PASS_ALL_10"
 
+      - name: Reconcile stale Status warnings from existing Work Orders and Tasks
+        shell: bash
+        env:
+          RECONCILE_URL: https://script.google.com/macros/s/AKfycbwebnCvczGthe6Z_mvYmukLqFLB-9nk8hjNtNP3lR87CE1m_fEx2d9Bn_vpXMPCLUnPbA/exec
+        run: |
+          set -euo pipefail
+          : > status-warning-reconciliation.jsonl
+          stalled=0
+          for round in $(seq 1 40); do
+            BODY="$(curl -fsSL --retry 2 --max-time 150 --get \
+              --data-urlencode "ops=status-warning-reconcile-step" \
+              --data-urlencode "limit=6" "$RECONCILE_URL")"
+            printf '%s\n' "$BODY" | tee -a status-warning-reconciliation.jsonl
+            RECOVERABLE="$(node -e 'const x=JSON.parse(process.argv[1]); process.stdout.write(String(Number(x.recoverableCandidateCount||0)))' "$BODY")"
+            PROGRESSED="$(node -e 'const x=JSON.parse(process.argv[1]); process.stdout.write(String(Number(x.progressed||0)))' "$BODY")"
+            if [ "$RECOVERABLE" -eq 0 ]; then
+              echo "STATUS_WARNING_RECONCILIATION_NO_RECOVERABLE_ROWS"
+              break
+            fi
+            if [ "$PROGRESSED" -eq 0 ]; then
+              stalled=$((stalled+1))
+            else
+              stalled=0
+            fi
+            if [ "$stalled" -ge 3 ]; then
+              echo "STATUS_WARNING_RECONCILIATION_STALLED_WITH_GENUINE_OR_UNPROVEN_ROWS=$RECOVERABLE"
+              break
+            fi
+            sleep 2
+          done
+          SNAP="$(curl -fsSL --retry 2 --max-time 60 --get \
+            --data-urlencode "ops=status-warning-reconcile-snapshot" "$RECONCILE_URL")"
+          printf '%s\n' "$SNAP" | tee -a status-warning-reconciliation.jsonl
+          echo "STATUS_WARNING_FINAL_SNAPSHOT=$SNAP"
+
+      - name: Upload status-warning reconciliation evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cf-serviceops-status-warning-reconciliation
+          path: status-warning-reconciliation.jsonl
+          retention-days: 30
+          if-no-files-found: warn
+
       - name: Upload recent-10 acceptance evidence
         if: always()
         uses: actions/upload-artifact@v4
