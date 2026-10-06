@@ -3206,39 +3206,88 @@ CF.StrivenControlledCustomerCreate = (function () {
       return reconcileUncertainCustomer_(record, initialAssessment.journal);
     }
 
-    // Customer cache only. This avoids the previous multi-cache runtime overrun.
+    // Customer cache only. If it was refreshed, immediately re-run canonical
+    // matching so a newly visible exact Customer can be consumed in this run.
     var refresh = refreshCustomerIfStale_();
-    if (refresh.refreshed) {
-      var after = buildPreview_(record.__rowNumber, options);
-      return {
-        ok: true,
-        status: 'REFRESHED_CUSTOMER_READY_RUN_AGAIN',
-        requestId: clean_(record['Request ID']),
-        liveWriteExecuted: false,
-        freshness: refresh.after,
-        readyForLivePostNextRun: after.blockers.length === 0,
-        durationMs: Date.now() - started
-      };
+    var refreshMatching=null;
+    if (refresh.refreshed && CF.Matching && typeof CF.Matching.recheckRequest === 'function') {
+      refreshMatching=CF.Matching.recheckRequest(record.__rowNumber,{persist:true});
+      record=request_(record.__rowNumber);
+      if(resolvedCustomerId_(record)||upper_(record['Manual Review?'])==='YES'||upper_(record['Current Stage'])!=='READY FOR CUSTOMER CREATE'){
+        return {
+          ok: upper_(record['Manual Review?'])!=='YES',
+          status: resolvedCustomerId_(record)?'REFRESHED_CUSTOMER_AUTO_LINKED':'REFRESHED_CUSTOMER_MATCHING_REEVALUATED',
+          requestId: clean_(record['Request ID']),
+          matchedCustomerId: resolvedCustomerId_(record),
+          matching: refreshMatching,
+          liveWriteExecuted: false,
+          freshness: refresh.after,
+          durationMs: Date.now() - started
+        };
+      }
     }
 
-    // Independent exact phone/email duplicate guard on fresh cache.
+    // Independent exact phone/email duplicate guard on the freshest cache.
+    // One exact Customer is an answer, not a human-review condition. Re-run the
+    // canonical matcher and consume the deterministic match. Multiple Customers
+    // remain a genuine ambiguity and stay fail-closed.
     var candidates = customerCandidatesFromCache_(record);
-    if (candidates.length) {
+    if (candidates.length === 1) {
+      var candidateId=clean_(candidates[0].customerId);
+      var matchingResult=CF.Matching&&typeof CF.Matching.recheckRequest==='function'
+        ?CF.Matching.recheckRequest(record.__rowNumber,{persist:true})
+        :null;
+      var matchedRecord=request_(record.__rowNumber);
+      var matchedId=resolvedCustomerId_(matchedRecord);
+      if(matchedId===candidateId){
+        return {
+          ok:true,
+          status:'PREWRITE_UNIQUE_CUSTOMER_AUTO_LINKED',
+          requestId:clean_(matchedRecord['Request ID']),
+          matchedCustomerId:matchedId,
+          candidateCustomerIds:[candidateId],
+          matching:matchingResult,
+          liveWriteExecuted:false,
+          durationMs:Date.now()-started
+        };
+      }
+      if(upper_(matchedRecord['Manual Review?'])==='YES'){
+        return {
+          ok:false,
+          status:'PREWRITE_UNIQUE_CUSTOMER_RECHECK_REQUIRES_REVIEW',
+          requestId:clean_(matchedRecord['Request ID']),
+          candidateCustomerIds:[candidateId],
+          matching:matchingResult,
+          liveWriteExecuted:false,
+          durationMs:Date.now()-started
+        };
+      }
+      return {
+        ok:false,
+        status:'PREWRITE_UNIQUE_CUSTOMER_NOT_CONSUMED',
+        requestId:clean_(matchedRecord['Request ID']),
+        candidateCustomerIds:[candidateId],
+        matching:matchingResult,
+        liveWriteExecuted:false,
+        durationMs:Date.now()-started
+      };
+    }
+    if (candidates.length > 1) {
       var candidateIds = candidates.map(function (candidate) { return candidate.customerId; });
       patchRequest_(record, {
         'Updated At': d.util.nowString(),
         'Current Stage': 'NEEDS REVIEW',
         'Request Status': 'BLOCKED',
         'Manual Review?': 'YES',
-        'Manual Review Reason': 'Fresh pre-write duplicate guard found Customer candidate(s): ' + candidateIds.join(', '),
-        'Blocking Issue': 'Do not create Customer. Resolve the fresh exact phone/email candidate first.',
-        'Next Action': 'REVIEW EXISTING CUSTOMER CANDIDATE',
+        'Manual Review Reason': 'Fresh pre-write duplicate guard found multiple Customer candidates: ' + candidateIds.join(', '),
+        'Blocking Issue': 'Do not create Customer. Exact phone/email evidence resolves to multiple Customers.',
+        'Next Action': 'REVIEW EXISTING CUSTOMER CANDIDATES',
         'Striven Sync Status': 'BLOCKED',
-        'Reconciliation Status': 'PRE-WRITE CUSTOMER CANDIDATE FOUND'
+        'Reconciliation Status': 'PRE-WRITE CUSTOMER CANDIDATES AMBIGUOUS'
       });
       return {
         ok: false,
-        status: 'PREWRITE_CUSTOMER_CANDIDATE_FOUND',
+        status: 'PREWRITE_CUSTOMER_CANDIDATES_AMBIGUOUS',
         requestId: clean_(record['Request ID']),
         candidateCustomerIds: candidateIds,
         liveWriteExecuted: false,
@@ -3274,12 +3323,42 @@ CF.StrivenControlledCustomerCreate = (function () {
         };
       }
 
-      // Re-run fresh duplicate guard under the mutation lock.
+      // Re-run the duplicate guard under the mutation lock. A single exact
+      // candidate is auto-linked through canonical matching; only ambiguity stops.
       var lockedCandidates = customerCandidatesFromCache_(record);
-      if (lockedCandidates.length) {
+      if (lockedCandidates.length === 1) {
+        var lockedCandidateId=clean_(lockedCandidates[0].customerId);
+        var lockedMatching=CF.Matching&&typeof CF.Matching.recheckRequest==='function'
+          ?CF.Matching.recheckRequest(record.__rowNumber,{persist:true})
+          :null;
+        var lockedMatchedRecord=request_(record.__rowNumber);
+        var lockedMatchedId=resolvedCustomerId_(lockedMatchedRecord);
+        if(lockedMatchedId===lockedCandidateId){
+          return {
+            ok:true,
+            status:'PREWRITE_UNIQUE_CUSTOMER_AUTO_LINKED_UNDER_LOCK',
+            requestId:clean_(lockedMatchedRecord['Request ID']),
+            matchedCustomerId:lockedMatchedId,
+            candidateCustomerIds:[lockedCandidateId],
+            matching:lockedMatching,
+            liveWriteExecuted:false,
+            durationMs:Date.now()-started
+          };
+        }
+        return {
+          ok:false,
+          status:upper_(lockedMatchedRecord['Manual Review?'])==='YES'?'PREWRITE_UNIQUE_CUSTOMER_RECHECK_REQUIRES_REVIEW_UNDER_LOCK':'PREWRITE_UNIQUE_CUSTOMER_NOT_CONSUMED_UNDER_LOCK',
+          requestId:clean_(lockedMatchedRecord['Request ID']),
+          candidateCustomerIds:[lockedCandidateId],
+          matching:lockedMatching,
+          liveWriteExecuted:false,
+          durationMs:Date.now()-started
+        };
+      }
+      if (lockedCandidates.length > 1) {
         return {
           ok: false,
-          status: 'PREWRITE_CUSTOMER_CANDIDATE_FOUND_UNDER_LOCK',
+          status: 'PREWRITE_CUSTOMER_CANDIDATES_AMBIGUOUS_UNDER_LOCK',
           requestId: lockedPreview.requestId,
           candidateCustomerIds: lockedCandidates.map(function (candidate) { return candidate.customerId; }),
           liveWriteExecuted: false,
@@ -6625,19 +6704,25 @@ CF.StandaloneLocationCreateV5128=(function(){
   function norm_(v){return upper_(v).replace(/[^A-Z0-9]/g,'');}
   function postal_(v){var x=norm_(v);return x.length===6?x.slice(0,3)+' '+x.slice(3):clean_(v);}
   function province_(v){var x=upper_(v);return x==='ONTARIO'||x==='ONT'?'ON':clean_(v);}
-  function country_(v){var x=upper_(v);return x==='CA'||x==='CAN'||x==='CANADA'?'Canada':(clean_(v)||'Canada');}
+  /* CF_SERVICEOPS_LOCATION_COUNTRY_CONTRACT_CA_R1
+   * Verified Striven customer-location create contract requires ISO country
+   * code CA. Do not send Ca or Canada to this endpoint.
+   */
+  function country_(v){var x=upper_(v);return x==='CA'||x==='CAN'||x==='CANADA'?'CA':(clean_(v)||'CA');}
   function deterministicCountryValidationReject_(errorText){
     var text=clean_(errorText);
     return /^HTTP 400:/i.test(text)&&(/country code .* could not be read/i.test(text)||/country_Invalid/i.test(text));
   }
   function safeCorrectedCountryRetry_(journal,nextPayload){
     journal=journal||{};nextPayload=nextPayload||{};
-    if(Number(journal.postAttempts||0)<1||Number(journal.correctedValidationRetryAttempts||0)>=1)return false;
+    if(Number(journal.postAttempts||0)<1)return false;
     if(!deterministicCountryValidationReject_(journal.error))return false;
     var prior=journal.payload&&journal.payload.Address?journal.payload.Address:{};
     var next=nextPayload.Address||{};
     var priorCountry=clean_(prior.Country),nextCountry=clean_(next.Country);
-    return !!priorCountry&&!!nextCountry&&upper_(priorCountry)!==upper_(nextCountry);
+    if(!priorCountry||!nextCountry||upper_(priorCountry)===upper_(nextCountry))return false;
+    if(Number(journal.correctedValidationRetryAttempts||0)<1)return true;
+    return upper_(nextCountry)==='CA'&&upper_(priorCountry)!=='CA'&&Number(journal.countryContractMigrationRetryAttempts||0)<1;
   }
   function request_(id){return CF.Util.findRecord('SERVICE_REQUESTS','Request ID',clean_(id));}
   function resolved_(r,a,b){return clean_(r[a]||r[b]);}
@@ -6748,12 +6833,18 @@ CF.StandaloneLocationCreateV5128=(function(){
     }
     var fingerprint=CF.Util.canonicalHash({requestId:clean_(requestId),customerId:customerId,endpoint:endpoint,payload:payload});
     if(correctedCountryRetry){
+      var priorRejectedCountry=clean_(j&&j.payload&&j.payload.Address&&j.payload.Address.Country);
+      var verifiedCountry=clean_(payload&&payload.Address&&payload.Address.Country);
+      var contractMigration=Number(j.correctedValidationRetryAttempts||0)>=1&&upper_(verifiedCountry)==='CA'&&upper_(priorRejectedCountry)!=='CA';
       j.previousRejectedPayload=j.payload||null;
       j.previousValidationError=clean_(j.error);
-      j.status='CORRECTED_VALIDATION_RETRY_INTENT_RECORDED';
+      j.status=contractMigration?'COUNTRY_CONTRACT_MIGRATION_RETRY_INTENT_RECORDED':'CORRECTED_VALIDATION_RETRY_INTENT_RECORDED';
       j.postAttempts=Number(j.postAttempts||0)+1;
-      j.correctedValidationRetryAttempts=Number(j.correctedValidationRetryAttempts||0)+1;
-      j.correctedRetryReason='HTTP 400 country validation rejected prior payload before creation; targeted Customer Location search returned no exact match and Country was canonicalized.';
+      if(contractMigration)j.countryContractMigrationRetryAttempts=Number(j.countryContractMigrationRetryAttempts||0)+1;
+      else j.correctedValidationRetryAttempts=Number(j.correctedValidationRetryAttempts||0)+1;
+      j.correctedRetryReason=contractMigration
+        ?'Verified Striven customer-location contract changed the previously rejected country value to CA; targeted Customer Location search returned no exact match. One migration retry only.'
+        :'HTTP 400 country validation rejected prior payload before creation; targeted Customer Location search returned no exact match and Country was corrected.';
       j.postStartedAt=CF.Util.nowString();
       j.writeFingerprint=fingerprint;
       j.endpoint=endpoint;
