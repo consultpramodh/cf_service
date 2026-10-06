@@ -5527,8 +5527,21 @@ checks.statusMatchesCreateContract = true;
 
 var issues=[];
     Object.keys(checks).forEach(function(key){if(checks[key]!==true)issues.push(key);});
-    var repairableIssues=issues.filter(function(key){return key==='customFields';});
-    var blockingIssues=issues.filter(function(key){return key!=='customFields';});
+    /* CF_SERVICEOPS_V5_14_2_SALES_ORDER_LOCATION_REPRESENTATION_R1
+     * Exact nonzero Location mismatches remain blocking. When the Sales Order
+     * GET returns BOTH BillToLocation and ShipToLocation as blank/0 while the
+     * durable request Location is known and Customer + Contact identity already
+     * certify, treat the missing location representation as repairable metadata.
+     * This never accepts a different nonzero Location ID.
+     */
+    var expectedLocationId=clean_(locationId_(record));
+    var billMissing=!clean_(bill)||clean_(bill)==='0';
+    var shipMissing=!clean_(ship)||clean_(ship)==='0';
+    var missingLocationRepresentation=!!expectedLocationId&&billMissing&&shipMissing&&checks.customer===true&&checks.contact===true;
+    var repairableIssues=issues.filter(function(key){
+      return key==='customFields'||(missingLocationRepresentation&&(key==='billToLocation'||key==='shipToLocation'));
+    });
+    var blockingIssues=issues.filter(function(key){return repairableIssues.indexOf(key)===-1;});
     var canProceed=blockingIssues.length===0;
     return{
       ok:canProceed,
@@ -5554,6 +5567,13 @@ var issues=[];
       issues:issues,
       blockingIssues:blockingIssues,
       repairableIssues:repairableIssues,
+      locationRepresentation:{
+        expectedLocationId:expectedLocationId,
+        billToLocationId:bill,
+        shipToLocationId:ship,
+        bothMissingOrZero:billMissing&&shipMissing,
+        treatedAsRepairable:missingLocationRepresentation
+      },
       customFieldChecks:customFieldChecks,
       internalNotesConfirmed:notesConfirmed,
       automaticPostRetry:false,
