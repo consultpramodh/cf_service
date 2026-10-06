@@ -4740,14 +4740,27 @@ function fetchAllGravityEntries_() {
         candidates.push({submissionId:id,status:'LOCAL_DUPLICATE_CONFLICT'});
         return;
       }
-      if (wf.length && sr.length && !localPairNeedsHydration_(wf[0], sr[0])) return;
+      if (wf.length && sr.length && !localPairNeedsHydration_(wf[0], sr[0])) {
+        if (upper_(sr[0]['Current Stage']) === 'NEW INTAKE' && clean_(sr[0]['Request ID'])) {
+          candidates.push({
+            submissionId:id,
+            status:'LOCAL_REQUEST_PENDING',
+            entry:entry,
+            webformRow:wf[0],
+            serviceRow:sr[0],
+            requestId:clean_(sr[0]['Request ID'])
+          });
+        }
+        return;
+      }
       candidates.push({
         submissionId:id,
         status: wf.length && sr.length ? 'INCOMPLETE_LOCAL_DATA'
           : (!wf.length && !sr.length ? 'MISSING_BOTH'
             : (!wf.length ? 'MISSING_WEBFORM' : 'MISSING_SERVICE')),
         entry:entry,
-        webformRow:wf.length ? wf[0] : null
+        webformRow:wf.length ? wf[0] : null,
+        serviceRow:sr.length ? sr[0] : null
       });
     });
 
@@ -4759,6 +4772,21 @@ function fetchAllGravityEntries_() {
         continue;
       }
       try {
+        if (item.status === 'LOCAL_REQUEST_PENDING') {
+          var pendingKick = CF.EventDrivenServiceAutomation && typeof CF.EventDrivenServiceAutomation.kick === 'function'
+            ? CF.EventDrivenServiceAutomation.kick(item.requestId)
+            : {ok:false,status:'CANONICAL_AUTOMATION_KICK_UNAVAILABLE',scheduled:false};
+          results.push({
+            ok:pendingKick && pendingKick.ok !== false,
+            submissionId:item.submissionId,
+            priorStatus:item.status,
+            requestId:item.requestId,
+            resultStatus:'EXISTING_NEW_INTAKE_KICKED',
+            automationKickStatus:clean_(pendingKick && pendingKick.status)
+          });
+          continue;
+        }
+
         var mapped = null;
         var localPayload = localWebformPayload_(item.webformRow);
         if (localPayload &&
@@ -4788,13 +4816,19 @@ function fetchAllGravityEntries_() {
               receivedAt:gfUtcToLocalString_(item.entry.date_created)
             });
 
+        var recoveredRequestId=clean_(out && out.requestId);
+        var automationKick = recoveredRequestId && CF.EventDrivenServiceAutomation && typeof CF.EventDrivenServiceAutomation.kick === 'function'
+          ? CF.EventDrivenServiceAutomation.kick(recoveredRequestId)
+          : {ok:false,status:recoveredRequestId?'CANONICAL_AUTOMATION_KICK_UNAVAILABLE':'REQUEST_ID_UNAVAILABLE',scheduled:false};
+
         results.push({
           ok:true,
           submissionId:item.submissionId,
           priorStatus:item.status,
           mappingSource:mapped.source,
-          requestId:clean_(out && out.requestId),
-          resultStatus:clean_(out && out.status)
+          requestId:recoveredRequestId,
+          resultStatus:clean_(out && out.status),
+          automationKickStatus:clean_(automationKick && automationKick.status)
         });
       } catch (error) {
         results.push({
