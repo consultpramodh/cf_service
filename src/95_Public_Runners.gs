@@ -856,6 +856,52 @@ function doGet(e) {
       finalOutcome:String(row['Final Outcome']||'')
     })).setMimeType(ContentService.MimeType.JSON);
   }
+  /* CF_SERVICEOPS_RECENT10_ACCEPTANCE_RUNNER_20261006 — TEMPORARY */
+  if(ops==='recent10-acceptance-step'||ops==='recent10-acceptance-snapshot'){
+    var acceptanceId=e&&e.parameter?String(e.parameter.id||''):'';
+    var acceptanceAllowed={
+      'SR-20261006104413-7346':true,
+      'SR-20261005182859-2159':true,
+      'SR-20261005121227-9352':true,
+      'SR-20261005084731-2148':true,
+      'SR-20261004220141-5643':true,
+      'SR-20261004203633-9340':true,
+      'SR-20261004115129-2627':true,
+      'SR-20261004104029-7927':true,
+      'SR-20261003160054-7269':true,
+      'SR-20261003120429-6643':true
+    };
+    if(!acceptanceAllowed[acceptanceId]){
+      return ContentService.createTextOutput(JSON.stringify({ok:false,status:'RECENT10_REQUEST_NOT_ALLOWED'})).setMimeType(ContentService.MimeType.JSON);
+    }
+    var acceptanceKick=null,acceptanceRun=null;
+    if(ops==='recent10-acceptance-step'){
+      acceptanceKick=CF.EventDrivenServiceAutomation.kick(acceptanceId);
+      acceptanceRun=CF.EventDrivenServiceAutomation.worker({});
+    }
+    var acceptanceRow=CF.Util.findRecord('SERVICE_REQUESTS','Request ID',acceptanceId)||{};
+    return ContentService.createTextOutput(JSON.stringify({
+      ok:!acceptanceRun||acceptanceRun.ok!==false,
+      status:ops==='recent10-acceptance-step'?'RECENT10_STEP_EXECUTED':'RECENT10_SNAPSHOT',
+      requestId:acceptanceId,
+      kickStatus:acceptanceKick&&acceptanceKick.status||'',
+      workerStatus:acceptanceRun&&acceptanceRun.status||'',
+      liveWriteExecuted:!!(acceptanceRun&&acceptanceRun.liveWriteExecuted===true),
+      currentStage:String(acceptanceRow['Current Stage']||''),
+      requestStatus:String(acceptanceRow['Request Status']||''),
+      manualReview:String(acceptanceRow['Manual Review?']||''),
+      nextAction:String(acceptanceRow['Next Action']||''),
+      customerId:String(acceptanceRow['Matched Customer ID']||acceptanceRow['Created Customer ID']||''),
+      contactId:String(acceptanceRow['Matched Contact ID']||acceptanceRow['Created Contact ID']||''),
+      locationId:String(acceptanceRow['Matched Location ID']||acceptanceRow['Created Location ID']||''),
+      workOrderId:String(acceptanceRow['Work Order ID']||''),
+      workOrderNumber:String(acceptanceRow['Work Order Number']||''),
+      reconciliationStatus:String(acceptanceRow['Reconciliation Status']||''),
+      finalOutcome:String(acceptanceRow['Final Outcome']||''),
+      queuedRequestIds:CF.EventDrivenServiceAutomation&&typeof CF.EventDrivenServiceAutomation.queuedRequestIds==='function'?CF.EventDrivenServiceAutomation.queuedRequestIds().slice(0,20):[]
+    })).setMimeType(ContentService.MimeType.JSON);
+  }
+
   /* CF_SERVICEOPS_V5_14_1_PUBLIC_HEALTH_R1 */
   var todayBatch=null;
   try { todayBatch=CF_20260930_queueTodayEndToEndOnce_(); }
