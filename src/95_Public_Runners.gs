@@ -904,6 +904,17 @@ function doGet(e) {
     })).setMimeType(ContentService.MimeType.JSON);
   }
 
+  /* CF_SERVICEOPS_V5_14_3_STATUS_WARNING_RECONCILIATION_RUNNER_R1 */
+  if(ops==='status-warning-reconcile-step'||ops==='status-warning-reconcile-snapshot'){
+    if(!CF.StatusWarningReconciler){
+      return ContentService.createTextOutput(JSON.stringify({ok:false,status:'STATUS_WARNING_RECONCILER_UNAVAILABLE'})).setMimeType(ContentService.MimeType.JSON);
+    }
+    var warningResult=ops==='status-warning-reconcile-step'
+      ?CF.StatusWarningReconciler.step({limit:Math.max(1,Math.min(8,Number(e&&e.parameter&&e.parameter.limit||4)))})
+      :CF.StatusWarningReconciler.snapshot();
+    return ContentService.createTextOutput(JSON.stringify(warningResult)).setMimeType(ContentService.MimeType.JSON);
+  }
+
   /* CF_SERVICEOPS_V5_14_1_PUBLIC_HEALTH_R1 */
   var todayBatch=null;
   try { todayBatch=CF_20260930_queueTodayEndToEndOnce_(); }
