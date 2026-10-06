@@ -904,6 +904,15 @@ function doGet(e) {
     })).setMimeType(ContentService.MimeType.JSON);
   }
 
+  /* CF_SERVICEOPS_V5_14_4_RECENT_GF_BACKSTOP_RUNNER_R1 */
+  if(ops==='intake-backstop-run'){
+    if(!CF.Intake||typeof CF.Intake.reconcileRecentGravityForms!=='function'){
+      return ContentService.createTextOutput(JSON.stringify({ok:false,status:'RECENT_GF_BACKSTOP_UNAVAILABLE'})).setMimeType(ContentService.MimeType.JSON);
+    }
+    var intakeBackstop=CF.Intake.reconcileRecentGravityForms({maxWrites:5,pageSize:25,runtimeLimitMs:60000});
+    return ContentService.createTextOutput(JSON.stringify(intakeBackstop)).setMimeType(ContentService.MimeType.JSON);
+  }
+
   /* CF_SERVICEOPS_V5_14_3_STATUS_WARNING_RECONCILIATION_RUNNER_R1 */
   if(ops==='status-warning-reconcile-step'||ops==='status-warning-reconcile-one'||ops==='status-warning-reconcile-snapshot'||ops==='status-warning-reconcile-refresh'){
     if(!CF.StatusWarningReconciler){
