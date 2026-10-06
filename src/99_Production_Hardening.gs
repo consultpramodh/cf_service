@@ -18,6 +18,7 @@ var CFH_QUEUE_PROP = 'CF_EVENT_DRIVEN_SERVICE_REQUEST_IDS';
 var CFH_STANDARD_ITEM_PROP = 'STRIVEN_STANDARD_SERVICE_ITEM_ID';
 var CFH_STANDARD_ITEM_ID = '41481';
 var CFH_OPERATIONAL_HANDLER = 'CFH_refreshOperationalCacheIfIdle';
+var CFH_INTAKE_BACKSTOP_HANDLER = 'AUTO_00_GF_Intake_Backstop';
 var CFH_OPERATIONAL_REFRESH_MIN_AGE_MS = 18 * 60 * 1000;
 
 function CFH_clean_(v) {
@@ -63,6 +64,20 @@ function CFH_installOperationalMaintenanceTrigger_() {
   });
   ScriptApp.newTrigger(CFH_OPERATIONAL_HANDLER).timeBased().everyMinutes(10).create();
   return {removedExisting: removed, installed: true, cadenceMinutes: 10};
+}
+
+function CFH_installIntakeBackstopTrigger_() {
+  var removed = 0;
+  ScriptApp.getProjectTriggers().forEach(function (t) {
+    try {
+      if (CFH_clean_(t.getHandlerFunction && t.getHandlerFunction()) === CFH_INTAKE_BACKSTOP_HANDLER) {
+        ScriptApp.deleteTrigger(t);
+        removed += 1;
+      }
+    } catch (ignored) {}
+  });
+  ScriptApp.newTrigger(CFH_INTAKE_BACKSTOP_HANDLER).timeBased().everyMinutes(5).create();
+  return {removedExisting: removed, installed: true, cadenceMinutes: 5};
 }
 
 function CFH_operationalCacheAgeMs_() {
@@ -153,6 +168,7 @@ function CFH_installProductionHardening() {
     standardServiceItemId: props.getProperty(CFH_STANDARD_ITEM_PROP),
     removedObsoleteBatchMatchingTriggers: CFH_removeObsoleteBatchMatchingTriggers_(),
     operationalMaintenance: CFH_installOperationalMaintenanceTrigger_(),
+    intakeBackstop: CFH_installIntakeBackstopTrigger_(),
     workflowMonkeyPatches: false
   };
 }
@@ -160,11 +176,13 @@ function CFH_installProductionHardening() {
 function CFH_selfTestProductionHardening() {
   var props = PropertiesService.getScriptProperties();
   var maintenance = 0;
+  var intakeBackstop = 0;
   var legacyBatch = 0;
   ScriptApp.getProjectTriggers().forEach(function (t) {
     try {
       var h = CFH_clean_(t.getHandlerFunction && t.getHandlerFunction());
       if (h === CFH_OPERATIONAL_HANDLER) maintenance += 1;
+      if (h === CFH_INTAKE_BACKSTOP_HANDLER) intakeBackstop += 1;
       if (h === 'MATCH_processAll') legacyBatch += 1;
     } catch (ignored) {}
   });
@@ -172,10 +190,12 @@ function CFH_selfTestProductionHardening() {
     ok:
       props.getProperty(CFH_STANDARD_ITEM_PROP) === CFH_STANDARD_ITEM_ID &&
       legacyBatch === 0 &&
-      maintenance === 1,
+      maintenance === 1 &&
+      intakeBackstop === 1,
     version: CFH_VERSION,
     standardServiceItemId: props.getProperty(CFH_STANDARD_ITEM_PROP),
     operationalMaintenanceTriggers: maintenance,
+    intakeBackstopTriggers: intakeBackstop,
     legacyBatchMatchingTriggers: legacyBatch,
     operationalCacheAgeMinutes: Math.round(CFH_operationalCacheAgeMs_() / 60000),
     queuedRequestIds: CFH_queue_(),
