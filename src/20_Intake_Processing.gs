@@ -4698,6 +4698,144 @@ function fetchAllGravityEntries_() {
   }
 
   /*******************************************************
+   * RECENT GRAVITY FORMS BACKSTOP
+   *
+   * Lightweight production safety net for a missed webhook.
+   * Reads only the newest Gravity Forms page and writes only
+   * genuinely missing/incomplete local submissions.
+   *******************************************************/
+  function reconcileRecentGravityForms(options) {
+    options = options || {};
+    var d = deps_();
+    var started = Date.now();
+    var maxWrites = Math.max(1, Math.min(10, Number(options.maxWrites || 5)));
+    var pageSize = Math.max(10, Math.min(50, Number(options.pageSize || 25)));
+    var runtimeLimitMs = Math.max(15000, Math.min(90000, Number(options.runtimeLimitMs || 60000)));
+    var cfg = gfConfig_();
+
+    var body = gfGetJson_(
+      'forms/' + encodeURIComponent(cfg.formId) + '/entries',
+      {
+        '_labels': 1,
+        'paging[page_size]': pageSize,
+        'paging[current_page]': 1,
+        'sorting[key]': 'date_created',
+        'sorting[direction]': 'DESC',
+        'sorting[is_numeric]': 'false'
+      }
+    );
+
+    var entries = Array.isArray(body.entries) ? body.entries : [];
+    var webforms = localSubmissionIndex_('WEBFORM_REQUESTS');
+    var services = localSubmissionIndex_('SERVICE_REQUESTS');
+    var candidates = [];
+    var results = [];
+
+    entries.forEach(function(entry) {
+      var id = clean_(entry && entry.id);
+      if (!id) return;
+      var wf = webforms[id] || [];
+      var sr = services[id] || [];
+      if (wf.length > 1 || sr.length > 1) {
+        candidates.push({submissionId:id,status:'LOCAL_DUPLICATE_CONFLICT'});
+        return;
+      }
+      if (wf.length && sr.length && !localPairNeedsHydration_(wf[0], sr[0])) return;
+      candidates.push({
+        submissionId:id,
+        status: wf.length && sr.length ? 'INCOMPLETE_LOCAL_DATA'
+          : (!wf.length && !sr.length ? 'MISSING_BOTH'
+            : (!wf.length ? 'MISSING_WEBFORM' : 'MISSING_SERVICE')),
+        entry:entry,
+        webformRow:wf.length ? wf[0] : null
+      });
+    });
+
+    for (var i = 0; i < candidates.length; i++) {
+      if (results.length >= maxWrites || Date.now() - started >= runtimeLimitMs) break;
+      var item = candidates[i];
+      if (item.status === 'LOCAL_DUPLICATE_CONFLICT') {
+        results.push({ok:false,submissionId:item.submissionId,status:item.status,error:'Duplicate local Submission ID; automatic recovery blocked.'});
+        continue;
+      }
+      try {
+        var mapped = null;
+        var localPayload = localWebformPayload_(item.webformRow);
+        if (localPayload &&
+            clean_(localPayload.submission_id) === item.submissionId &&
+            gravityPayloadContentScore_(localPayload) >= 2) {
+          mapped = {payload:localPayload,source:'LOCAL_WEBFORM_PAYLOAD'};
+        } else {
+          var payload = gravityEntryToPayload_(item.entry);
+          if (gravityPayloadContentScore_(payload) < 2) {
+            throw new Error('RECENT_GF_MAPPING_INSUFFICIENT | fewer than two request fields mapped.');
+          }
+          mapped = {payload:payload,source:'GRAVITY_FORMS_RECENT_PAGE'};
+        }
+
+        var out = item.status === 'INCOMPLETE_LOCAL_DATA'
+          ? rehydrateExistingSubmission_({
+              submissionId:item.submissionId,
+              status:item.status,
+              payload:mapped.payload,
+              receivedAt:gfUtcToLocalString_(item.entry.date_created)
+            })
+          : receivePayload(mapped.payload, {
+              raw:d.util.safeJson(mapped.payload),
+              sourceSystem:'WEBFORM',
+              reconciliation:true,
+              fast:true,
+              receivedAt:gfUtcToLocalString_(item.entry.date_created)
+            });
+
+        results.push({
+          ok:true,
+          submissionId:item.submissionId,
+          priorStatus:item.status,
+          mappingSource:mapped.source,
+          requestId:clean_(out && out.requestId),
+          resultStatus:clean_(out && out.status)
+        });
+      } catch (error) {
+        results.push({
+          ok:false,
+          submissionId:item.submissionId,
+          priorStatus:item.status,
+          error:error && error.message ? error.message : String(error)
+        });
+      }
+    }
+
+    var recoveredRequestIds = results.filter(function(x){return x.ok && x.requestId;}).map(function(x){return x.requestId;});
+    var summary = {
+      ok:results.every(function(x){return x.ok;}),
+      version:VERSION,
+      status:results.length ? 'RECENT_GF_BACKSTOP_PROCESSED' : 'RECENT_GF_BACKSTOP_NO_GAPS',
+      newestRemoteSubmissionId:entries.length ? clean_(entries[0].id) : '',
+      recentEntriesChecked:entries.length,
+      candidateCount:candidates.length,
+      processed:results.length,
+      recoveredRequestIds:recoveredRequestIds,
+      results:results,
+      durationMs:Date.now()-started,
+      liveStrivenWriteExecuted:false
+    };
+
+    try {
+      if (results.length) d.util.logEvent({
+        module:MODULE_NAME,
+        action:'RECENT_GF_BACKSTOP',
+        status:summary.ok ? 'COMPLETE' : 'PARTIAL',
+        details:summary,
+        durationMs:summary.durationMs,
+        version:VERSION
+      });
+    } catch (ignored) {}
+
+    return summary;
+  }
+
+  /*******************************************************
    * MODULE API
    *******************************************************/
 
@@ -4720,7 +4858,10 @@ function fetchAllGravityEntries_() {
       previewGravityFormsReconciliation,
 
     reconcileGravityForms:
-      reconcileGravityForms
+      reconcileGravityForms,
+
+    reconcileRecentGravityForms:
+      reconcileRecentGravityForms
   };
 })();
 
@@ -4934,3 +5075,12 @@ function queryString_(params) {
  * The webhook's existing CF.EventDrivenServiceAutomation.kick(requestId) call
  * hands the durable request to AUTO_FINAL_ServiceOps.
  */
+
+
+/* CF_SERVICEOPS_V5_14_4_RECENT_GF_BACKSTOP_R1 */
+function AUTO_00_GF_Intake_Backstop() {
+  if (!CF || !CF.Intake || typeof CF.Intake.reconcileRecentGravityForms !== 'function') {
+    throw new Error('RECENT_GF_BACKSTOP_UNAVAILABLE');
+  }
+  return CF.Intake.reconcileRecentGravityForms({maxWrites:5,pageSize:25,runtimeLimitMs:60000});
+}
