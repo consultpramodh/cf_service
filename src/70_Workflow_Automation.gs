@@ -849,6 +849,136 @@ CF.EventDrivenServiceAutomation = (function () {
   function normalizeTopology_(currentUid){var removed=cleanLegacyTriggers_();var finals=triggersBy_(FINAL_HANDLER),current=clean_(currentUid),kept=false,removedFinal=0;finals.forEach(function(t){var id='';try{id=clean_(t.getUniqueId&&t.getUniqueId());}catch(e){}if(current&&id===current){kept=true;return;}if(!kept){kept=true;return;}if(deleteTriggerSafe_(t))removedFinal++;});return{removedLegacyTriggers:removed,removedDuplicateFinalTriggers:removedFinal,watchdog:ensureWatchdog_()};}
   function falsePreflightPark_(r){if(!r)return false;if(upper_(r['Current Stage'])!=='NEEDS REVIEW'||upper_(r['Request Status'])!=='BLOCKED'||upper_(r['Manual Review?'])!=='YES')return false;var reason=[r['Manual Review Reason'],r['Blocking Issue'],r['Reconciliation Status']].map(clean_).join(' ');if(!/(PREFLIGHT_BLOCKED|PRE-WRITE CUSTOMER CANDIDATE FOUND)/i.test(reason))return false;if(upper_(r['Duplicate Risk Status'])!=='NONE')return false;if(upper_(r['Customer Match Status'])!=='NOT FOUND'||upper_(r['Customer Action'])!=='CREATE')return false;if(upper_(r['Contact Action'])!=='CREATE'||upper_(r['Location Action'])!=='CREATE'||upper_(r['Work Order Action'])!=='CREATE')return false;if(clean_(r['Matched Customer ID']||r['Created Customer ID']||r['Matched Contact ID']||r['Created Contact ID']||r['Matched Location ID']||r['Created Location ID']||r['Work Order ID']))return false;var root=parse_(r['Write Journal JSON']),keys=['customerCreate','contactCreate','standaloneLocationCreate','salesOrderCreate'];for(var i=0;i<keys.length;i++){var x=root&&root[keys[i]]||{};if(Number(x.postAttempts||0)>0||x.remoteWriteMayHaveSucceeded===true)return false;}return true;}
   function recoverFalsePreflightPark_(r){if(!falsePreflightPark_(r))return r;if(typeof CF.Util.clearRowDataValidations==='function')CF.Util.clearRowDataValidations('SERVICE_REQUESTS',r.__rowNumber);CF.Util.patchRow('SERVICE_REQUESTS',r.__rowNumber,{'Updated At':now_(),'Current Stage':'READY FOR CUSTOMER CREATE','Request Status':'OPEN','Manual Review?':'NO','Manual Review Reason':'','Blocking Issue':'','Next Action':'CREATE CUSTOMER','Striven Sync Status':'PARTIAL','Striven Sync Error':'','Reconciliation Status':'AUTO-RECOVERED DETERMINISTIC PREWRITE PARK'});SpreadsheetApp.flush();log_('FALSE_PREFLIGHT_PARK_RECOVERY','RESTORED',r['Request ID'],{},'No Striven write had occurred; deterministic pre-write park returned to the Customer resolution stage.');return request_(r['Request ID'])||r;}
+  /* CF_SERVICEOPS_V5_14_2_DETERMINISTIC_REVIEW_RECOVERY_R1 */
+  function scopedContactReviewEvidence_(r){
+    if(!r||upper_(r['Current Stage'])!=='NEEDS REVIEW'||upper_(r['Manual Review?'])!=='YES')return null;
+    if(upper_(r['Duplicate Risk Status'])!=='NONE')return null;
+    var reason=[r['Manual Review Reason'],r['Blocking Issue'],r['Reconciliation Status']].map(clean_).join(' ');
+    if(!/CONTACT DIRECT IDENTITY CONFLICT|DID NOT PASS DIRECT IDENTITY VERIFICATION/i.test(reason))return null;
+    var root=parse_(r['Write Journal JSON']),identity=root&&root.contactIdentity||{},rec=root&&root.contactCreate&&root.contactCreate.reconciliation||{};
+    var customerId=clean_(r['Matched Customer ID']||r['Created Customer ID']);
+    var contactId=clean_(identity.customerScopedContactId||rec.customerScopedContactId);
+    var identityCustomerId=clean_(identity.customerId||rec.customerId);
+    if(upper_(identity.scope)!=='CUSTOMER'||identity.identityVerified!==true||!customerId||!contactId||identityCustomerId!==customerId)return null;
+    if(clean_(rec.customerScopedContactId)&&clean_(rec.customerScopedContactId)!==contactId)return null;
+    if(rec.customerScopedContactVerified!==true)return null;
+    return{customerId:customerId,contactId:contactId,identity:identity,reconciliation:rec};
+  }
+  function falseContactReview_(r){return !!scopedContactReviewEvidence_(r);}
+  function recoverFalseContactReview_(r){
+    var ev=scopedContactReviewEvidence_(r);
+    if(!ev)return r;
+    if(!clean_(r['Matched Location ID']||r['Created Location ID']))return r;
+    if(typeof CF.Util.clearRowDataValidations==='function')CF.Util.clearRowDataValidations('SERVICE_REQUESTS',r.__rowNumber);
+    CF.Util.patchRow('SERVICE_REQUESTS',r.__rowNumber,{
+      'Updated At':now_(),
+      'Current Stage':'CUSTOMER STRUCTURE COMPLETE',
+      'Request Status':'OPEN',
+      'Manual Review?':'NO',
+      'Manual Review Reason':'',
+      'Blocking Issue':'',
+      'Next Action':'CONTINUE TO WORK ORDER',
+      'Contact Match Status':'MATCHED',
+      'Matched Contact ID':ev.contactId,
+      'Matched Contact Name':clean_(r['Full Name']),
+      'Contact Action':'LINK EXISTING',
+      'Contact Association Status':'ASSOCIATED',
+      'Customer Structure Status':'COMPLETE',
+      'Striven Sync Status':'PARTIAL',
+      'Striven Sync Error':'',
+      'Reconciliation Status':'CUSTOMER-SCOPED CONTACT IDENTITY RECOVERED'
+    });
+    SpreadsheetApp.flush();
+    log_('CUSTOMER_SCOPED_CONTACT_REVIEW_RECOVERY','RESTORED',r['Request ID'],{customerId:ev.customerId,contactId:ev.contactId,source:clean_(ev.identity.source),matchSignals:ev.identity.matchSignals||[]},'Verified customer-scoped Contact evidence overrode a non-authoritative global Contact identity conflict.');
+    return request_(r['Request ID'])||r;
+  }
+  function legacySalesOrderReviewEvidence_(r){
+    if(!r||upper_(r['Current Stage'])!=='NEEDS REVIEW'||upper_(r['Manual Review?'])!=='YES')return null;
+    if(upper_(r['Duplicate Risk Status'])!=='NONE'||!knownOrderId_(r))return null;
+    if(upper_(r['Reconciliation Status'])!=='SALES ORDER VERIFICATION REVIEW REQUIRED')return null;
+    var root=parse_(r['Write Journal JSON']),so=root&&root.salesOrderCreate||{},cert=so&&so.certification&&so.certification.result||{};
+    var issues=Array.isArray(cert.issues)?cert.issues.map(clean_).filter(Boolean):[];
+    if(!issues.length)return null;
+    var allowed={customFields:true,contact:true,billToLocation:true,shipToLocation:true};
+    if(issues.some(function(x){return !allowed[x];}))return null;
+    var orderId=knownOrderId_(r),customerId=clean_(r['Matched Customer ID']||r['Created Customer ID']);
+    if(clean_(cert.salesOrderId)!==orderId||!customerId||clean_(cert.customerId)!==customerId)return null;
+    var contactId=clean_(r['Matched Contact ID']||r['Created Contact ID']),certContactId=clean_(cert.contactId);
+    if(issues.indexOf('contact')!==-1){
+      var identity=root&&root.contactIdentity||{};
+      if(upper_(identity.scope)!=='CUSTOMER'||identity.identityVerified!==true||clean_(identity.customerId)!==customerId||clean_(identity.customerScopedContactId)!==certContactId)return null;
+      if(contactId&&contactId!==certContactId)return null;
+      contactId=certContactId;
+    }else if(certContactId&&contactId&&certContactId!==contactId)return null;
+    var certBill=clean_(cert.billToLocationId),certShip=clean_(cert.shipToLocationId);
+    if((issues.indexOf('billToLocation')!==-1||issues.indexOf('shipToLocation')!==-1)&&(!certBill||certBill!==certShip))return null;
+    return{root:root,cert:cert,issues:issues,orderId:orderId,customerId:customerId,contactId:contactId||certContactId,locationId:clean_(r['Matched Location ID']||r['Created Location ID']),certLocationId:certBill&&certBill===certShip?certBill:''};
+  }
+  function legacySalesOrderReviewEligible_(r){return !!legacySalesOrderReviewEvidence_(r);}
+  function recoverLegacySalesOrderReview_(r){
+    var ev=legacySalesOrderReviewEvidence_(r);
+    if(!ev)return r;
+    var locationId=ev.locationId,locationAddress=clean_(r['Matched Location Address']);
+    if(ev.certLocationId){
+      if(locationId&&locationId!==ev.certLocationId)return r;
+      if(!locationId){
+        if(!CF.StandaloneLocationCreateV5128||typeof CF.StandaloneLocationCreateV5128.findExisting!=='function')return r;
+        var createdByThisRequest=clean_(ev.root.responseCustomerId)===ev.customerId&&
+          (upper_(ev.root.postOutcome)==='SUCCESS'||Number(ev.root.postAttempts||0)>0)&&ev.root.primaryLocationIncludedInCustomerCreate===true;
+        var targeted;
+        try{targeted=CF.StandaloneLocationCreateV5128.findExisting(r,ev.customerId,{allowUniquePrimaryFallback:createdByThisRequest});}
+        catch(locationError){log_('LEGACY_SALES_ORDER_REVIEW_RECOVERY','LOCATION_READ_FAILED',r['Request ID'],{error:String(locationError&&locationError.message||locationError)},'Could not prove legacy Sales Order Location identity.');return r;}
+        var matches=targeted&&Array.isArray(targeted.matches)?targeted.matches:[];
+        if(matches.length!==1||clean_(matches[0]['Location ID'])!==ev.certLocationId)return r;
+        locationId=ev.certLocationId;
+        locationAddress=clean_(matches[0]['Full Address'])||clean_(r['Full Address']);
+      }
+    }
+    if(!ev.contactId||!locationId)return r;
+    ev.root.salesOrderReviewRecovery={
+      status:'DETERMINISTIC_ROW_IDS_RESTORED_RERUN_CERTIFICATION',
+      recoveredAt:now_(),
+      salesOrderId:ev.orderId,
+      contactId:ev.contactId,
+      locationId:locationId,
+      priorIssues:ev.issues
+    };
+    if(typeof CF.Util.clearRowDataValidations==='function')CF.Util.clearRowDataValidations('SERVICE_REQUESTS',r.__rowNumber);
+    CF.Util.patchRow('SERVICE_REQUESTS',r.__rowNumber,{
+      'Updated At':now_(),
+      'Current Stage':'CUSTOMER STRUCTURE COMPLETE',
+      'Request Status':'OPEN',
+      'Manual Review?':'NO',
+      'Manual Review Reason':'',
+      'Blocking Issue':'',
+      'Next Action':'RERUN SALES ORDER CERTIFICATION',
+      'Contact Match Status':'MATCHED',
+      'Matched Contact ID':ev.contactId,
+      'Matched Contact Name':clean_(r['Matched Contact Name']||r['Full Name']),
+      'Location Match Status':'MATCHED',
+      'Matched Location ID':locationId,
+      'Matched Location Address':locationAddress,
+      'Customer Action':'LINK EXISTING',
+      'Contact Action':'LINK EXISTING',
+      'Location Action':'LINK EXISTING',
+      'Work Order Action':'LINK EXISTING',
+      'Contact Association Status':'ASSOCIATED',
+      'Customer Structure Status':'COMPLETE',
+      'Write Journal JSON':JSON.stringify(ev.root),
+      'Striven Sync Status':'PARTIAL',
+      'Striven Sync Error':'',
+      'Reconciliation Status':'AUTO-RECOVERED LEGACY SALES ORDER REVIEW'
+    });
+    SpreadsheetApp.flush();
+    log_('LEGACY_SALES_ORDER_REVIEW_RECOVERY','RESTORED',r['Request ID'],{salesOrderId:ev.orderId,contactId:ev.contactId,locationId:locationId,priorIssues:ev.issues},'Durable identity evidence restored missing row IDs; existing Sales Order will be re-certified, never recreated.');
+    return request_(r['Request ID'])||r;
+  }
+  function recoverDeterministicReview_(r){
+    r=recoverFalsePreflightPark_(r);
+    r=recoverFalseContactReview_(r);
+    r=recoverLegacySalesOrderReview_(r);
+    return r;
+  }
   function technicalRecoverable_(r){if(!r||terminal_(r))return false;if(upper_(r['Manual Review?'])==='YES')return false;var risk=upper_(r['Duplicate Risk Status']);if(risk&&risk!=='NONE')return false;var stage=upper_(r['Current Stage']);if(['READY FOR CUSTOMER CREATE','READY FOR LOCATION CREATE','READY FOR CONTACT CREATE','CREATING CUSTOMER STRUCTURE','CUSTOMER RESOLVED','CUSTOMER STRUCTURE COMPLETE','SALES ORDER CREATED'].indexOf(stage)===-1)return false;var text=[r['Next Action'],r['Reconciliation Status'],r['Blocking Issue']].map(clean_).join(' ');if(/AMBIGUOUS|MULTIPLE|OWNERSHIP CONFLICT|IDENTITY CONFLICT/i.test(text))return false;return /RECONCILE|GET-ONLY|TECHNICAL FIX|AUTO RECONCILE|RERUN CERTIFICATION|CONTINUE TO WORK ORDER/i.test(text)||upper_(r['Request Status'])==='ERROR';}
   function genuineReview_(r){if(!r)return true;if(falsePreflightPark_(r)||technicalRecoverable_(r))return false;var risk=upper_(r['Duplicate Risk Status']);if(risk&&risk!=='NONE')return true;return upper_(r['Manual Review?'])==='YES'||['BLOCKED','DUPLICATE','CANCELLED','CANCELED','ERROR'].indexOf(upper_(r['Request Status']))!==-1||upper_(r['Current Stage'])==='NEEDS REVIEW';}
   function structureComplete_(r){return !!r&&upper_(r['Customer Structure Status'])==='COMPLETE'&&!!clean_(r['Matched Customer ID']||r['Created Customer ID'])&&!!clean_(r['Matched Contact ID']||r['Created Contact ID'])&&!!clean_(r['Matched Location ID']||r['Created Location ID']);}
@@ -890,10 +1020,10 @@ CF.EventDrivenServiceAutomation = (function () {
 
   function workOrderStep_(requestId){var r=request_(requestId);if(!r)return{ok:false,version:VERSION,status:'REQUEST_NOT_FOUND',requestId:requestId,liveWriteExecuted:false};var known=knownOrderId_(r);if(known)return certifyKnownOrder_(requestId,r,known);reconcileOperationalLinks_();r=request_(requestId)||r;known=knownOrderId_(r);if(known)return certifyKnownOrder_(requestId,r,known);if(!CF.OrderPreflight||typeof CF.OrderPreflight.previewRequest!=='function'||typeof CF.OrderPreflight.approveRequest!=='function'||typeof CF.OrderPreflight.executeApproved!=='function')return review_(r,'WORK_ORDER_WRITER_MODULE_MISSING','Guarded Service Work Order writer is unavailable.');var preview=CF.OrderPreflight.previewRequest(requestId);if(!preview||preview.readyForApproval!==true){var blockers=(preview&&preview.blockers||[]),codes=blockers.map(function(x){return clean_(x.code);});if(codes.indexOf('OPERATIONAL_EVIDENCE_FAILED')!==-1&&CF.StrivenData&&typeof CF.StrivenData.refreshOperationalData==='function'){var refresh=CF.StrivenData.refreshOperationalData({});reconcileOperationalLinks_();return{ok:true,version:VERSION,status:'OPERATIONAL_CACHE_REFRESHED_RERUN_REQUIRED',requestId:requestId,refresh:refresh,liveWriteExecuted:false};}reconcileOperationalLinks_();r=request_(requestId)||r;known=knownOrderId_(r);if(known)return certifyKnownOrder_(requestId,r,known);var text=blockers.map(function(x){return clean_(x.code)+': '+clean_(x.message);}).join(' | ')||'Guarded Service Work Order preflight did not pass.';return review_(r,'WORK_ORDER_PREFLIGHT_BLOCKED',text);}var approval;try{approval=CF.OrderPreflight.approveRequest(requestId);}catch(e){reconcileOperationalLinks_();r=request_(requestId)||r;known=knownOrderId_(r);if(known)return certifyKnownOrder_(requestId,r,known);return review_(r,'WORK_ORDER_APPROVAL_BLOCKED',String(e&&e.message||e));}reconcileOperationalLinks_();r=request_(requestId)||r;known=knownOrderId_(r);if(known)return certifyKnownOrder_(requestId,r,known);var execution=CF.OrderPreflight.executeApproved(requestId,{executionToken:CF.OrderPreflight.executionToken});if(execution&&execution.status==='OPERATIONAL_CACHE_REFRESHED_RERUN_REQUIRED')return{ok:true,version:VERSION,status:'OPERATIONAL_CACHE_REFRESHED_RERUN_REQUIRED',requestId:requestId,approval:approval,execution:execution,liveWriteExecuted:false};if(execution&&execution.status==='SALES_ORDER_CERTIFICATION_GET_RETRY_REQUIRED')return{ok:true,version:VERSION,status:'WORK_ORDER_READ_ONLY_RECONCILIATION_PENDING',requestId:requestId,approval:approval,execution:execution,automaticPostRetry:false,liveWriteExecuted:!!execution.liveWriteExecuted};if(!execution||execution.ok!==true){if(execution&&execution.remoteWriteMayHaveSucceeded===true)return{ok:true,version:VERSION,status:'WORK_ORDER_READ_ONLY_RECONCILIATION_PENDING',requestId:requestId,approval:approval,execution:execution,automaticPostRetry:false,liveWriteExecuted:!!execution.liveWriteExecuted};return review_(request_(requestId)||r,clean_(execution&&execution.status)||'WORK_ORDER_EXECUTION_FAILED',clean_(execution&&execution.error)||'Service Work Order execution failed.');}return execution;}
   function stepLabel_(r){if(!r)return'UNKNOWN';if(knownOrderId_(r))return'WORK_ORDER_CERTIFICATION';if(!structureComplete_(r)){var st=upper_(r['Current Stage']);if(st==='NEW INTAKE')return'MATCHING';if(st==='READY FOR CUSTOMER CREATE')return'CUSTOMER_CREATE_OR_RECONCILE';if(st==='READY FOR LOCATION CREATE')return'LOCATION_CREATE_OR_RECONCILE';if(st==='READY FOR CONTACT CREATE')return'CONTACT_CREATE_OR_RECONCILE';return'CUSTOMER_STRUCTURE';}if(!infoConfirmed_(r))return'CUSTOMER_CONTACT_INFO_SYNC';return'WORK_ORDER_CREATE_OR_CERTIFY';}
-  function step_(requestId){var r=request_(requestId);if(!r)return{ok:false,version:VERSION,status:'REQUEST_NOT_FOUND',requestId:requestId,liveWriteExecuted:false};r=recoverFalsePreflightPark_(r);if(terminal_(r))return{ok:true,version:VERSION,status:'REQUEST_TERMINAL',requestId:requestId,liveWriteExecuted:false};var known=knownOrderId_(r);if(known)return assertRequestScoped_(requestId,workOrderStep_(requestId));if(genuineReview_(r))return{ok:true,version:VERSION,status:'GENUINE_REVIEW_WAIT',requestId:requestId,liveWriteExecuted:false,manualReviewRequired:true};if(!structureComplete_(r)){if(!CF.CustomerStructureEngine||typeof CF.CustomerStructureEngine.step!=='function')return review_(r,'CUSTOMER_STRUCTURE_ENGINE_MISSING','Customer Structure Engine is unavailable.');return assertRequestScoped_(requestId,CF.CustomerStructureEngine.step(requestId));}if(!infoConfirmed_(r)){if(!CF.CustomerContactInfoSync||typeof CF.CustomerContactInfoSync.reconcile!=='function')return review_(r,'CUSTOMER_INFO_SYNC_MODULE_MISSING','Customer/contact information reconciliation module is unavailable.');return assertRequestScoped_(requestId,CF.CustomerContactInfoSync.reconcile(requestId,{autoMode:true}));}return assertRequestScoped_(requestId,workOrderStep_(requestId));}
+  function step_(requestId){var r=request_(requestId);if(!r)return{ok:false,version:VERSION,status:'REQUEST_NOT_FOUND',requestId:requestId,liveWriteExecuted:false};r=recoverDeterministicReview_(r);if(terminal_(r))return{ok:true,version:VERSION,status:'REQUEST_TERMINAL',requestId:requestId,liveWriteExecuted:false};var known=knownOrderId_(r);if(known)return assertRequestScoped_(requestId,workOrderStep_(requestId));if(genuineReview_(r))return{ok:true,version:VERSION,status:'GENUINE_REVIEW_WAIT',requestId:requestId,liveWriteExecuted:false,manualReviewRequired:true};if(!structureComplete_(r)){if(!CF.CustomerStructureEngine||typeof CF.CustomerStructureEngine.step!=='function')return review_(r,'CUSTOMER_STRUCTURE_ENGINE_MISSING','Customer Structure Engine is unavailable.');return assertRequestScoped_(requestId,CF.CustomerStructureEngine.step(requestId));}if(!infoConfirmed_(r)){if(!CF.CustomerContactInfoSync||typeof CF.CustomerContactInfoSync.reconcile!=='function')return review_(r,'CUSTOMER_INFO_SYNC_MODULE_MISSING','Customer/contact information reconciliation module is unavailable.');return assertRequestScoped_(requestId,CF.CustomerContactInfoSync.reconcile(requestId,{autoMode:true}));}return assertRequestScoped_(requestId,workOrderStep_(requestId));}
   function refreshQueue_(){try{if(CF.OperatorQueue&&typeof CF.OperatorQueue.refresh==='function')return CF.OperatorQueue.refresh();}catch(e){return{ok:false,status:'QUEUE_REFRESH_FAILED',error:String(e&&e.message||e)};}return{ok:false,status:'QUEUE_REFRESH_UNAVAILABLE'};}
   function kick(requestId){requestId=clean_(requestId);if(!requestId)return{ok:false,version:VERSION,status:'REQUEST_ID_REQUIRED',scheduled:false,liveWriteExecuted:false};props_().setProperty(ENABLED,'true');props_().setProperty(AUTO_SO,'true');props_().setProperty(PREPARATION_ONLY,'false');prioritize_(requestId);props_().setProperty(LAST_KICK,new Date().toISOString());props_().setProperty(LAST_REQUEST,requestId);var topology=normalizeTopology_('');triggersBy_(FINAL_HANDLER).forEach(deleteTriggerSafe_);var worker=ensureWorker_(1000,'');return{ok:true,version:VERSION,status:'CANONICAL_REQUEST_PRIORITY_QUEUED_IMMEDIATE',requestId:requestId,queuedRequestIds:queue_(),worker:worker,topology:topology,liveWriteExecuted:false};}
-  function worker(e){e=e||{};if(upper_(props_().getProperty(ENABLED))!=='TRUE')return{ok:true,version:VERSION,status:'AUTOMATION_DISABLED',liveWriteExecuted:false};var started=Date.now(),history=[],last=null,currentUid=clean_(e.triggerUid),noProgressYielded={};normalizeTopology_(currentUid);for(var i=0;i<MAX_STEPS&&Date.now()-started<WORKER_BUDGET_MS;i++){var q=queue_();if(!q.length)break;var id=q[0],before=request_(id);if(!before){dequeue_(id);continue;}before=recoverFalsePreflightPark_(before);if(terminal_(before)){dequeue_(id);continue;}if(genuineReview_(before)){dequeue_(id);last={ok:true,version:VERSION,status:'GENUINE_REVIEW_DEQUEUED',requestId:id,liveWriteExecuted:false};continue;}var beforeSig=signature_(before),result,stepStarted=Date.now(),stepLabel=stepLabel_(before),beforeUpdatedMs=dateMs_(before['Updated At']),beforeCreatedMs=dateMs_(before['Created At']||before['Submitted At']);try{result=step_(id);}catch(error){var failedMs=Date.now()-stepStarted;log_('CANONICAL_STEP_TIMING','ERROR',id,{stepLabel:stepLabel,stepIndex:i+1,fromStage:clean_(before['Current Stage']),fromRequestStatus:clean_(before['Request Status']),fromNextAction:clean_(before['Next Action']),waitSinceLastUpdateMs:beforeUpdatedMs?Math.max(0,stepStarted-beforeUpdatedMs):'',requestAgeAtStepStartMs:beforeCreatedMs?Math.max(0,stepStarted-beforeCreatedMs):'',error:String(error&&error.message||error)},String(error&&error.stack||error),failedMs);log_('FINAL_WORKER','ERROR',id,{error:String(error&&error.message||error)},String(error&&error.stack||error),failedMs);ensureWorker_(WORKER_DELAY_MS,currentUid);throw error;}result=assertRequestScoped_(id,result);history.push({requestId:id,status:clean_(result&&result.status),liveWriteExecuted:!!(result&&result.liveWriteExecuted)});last=result;var after=request_(id),stepDurationMs=Date.now()-stepStarted;log_('CANONICAL_STEP_TIMING','COMPLETE',id,{stepLabel:stepLabel,stepIndex:i+1,resultStatus:clean_(result&&result.status),liveWriteExecuted:!!(result&&result.liveWriteExecuted),fromStage:clean_(before['Current Stage']),toStage:clean_(after&&after['Current Stage']),fromRequestStatus:clean_(before['Request Status']),toRequestStatus:clean_(after&&after['Request Status']),fromNextAction:clean_(before['Next Action']),toNextAction:clean_(after&&after['Next Action']),waitSinceLastUpdateMs:beforeUpdatedMs?Math.max(0,stepStarted-beforeUpdatedMs):'',requestAgeAtStepStartMs:beforeCreatedMs?Math.max(0,stepStarted-beforeCreatedMs):'',requestAgeAtStepEndMs:beforeCreatedMs?Math.max(0,Date.now()-beforeCreatedMs):'',queueDepthAtStepStart:q.length,queueDepthAfterStep:queue_().length},'',stepDurationMs);if(after&&(terminal_(after)||(knownOrderId_(after)&&upper_(after['Current Stage'])==='COMPLETED'))){dequeue_(id);refreshQueue_();continue;}if(after&&genuineReview_(after)){dequeue_(id);refreshQueue_();continue;}if(result&&result.status==='CROSS_REQUEST_RESULT_REJECTED'){ensureWorker_(WORKER_DELAY_MS,currentUid);break;}if(result&&result.liveWriteExecuted===true){ensureWorker_(WORKER_DELAY_MS,currentUid);break;}var afterSig=signature_(after);if(beforeSig===afterSig){
+  function worker(e){e=e||{};if(upper_(props_().getProperty(ENABLED))!=='TRUE')return{ok:true,version:VERSION,status:'AUTOMATION_DISABLED',liveWriteExecuted:false};var started=Date.now(),history=[],last=null,currentUid=clean_(e.triggerUid),noProgressYielded={};normalizeTopology_(currentUid);for(var i=0;i<MAX_STEPS&&Date.now()-started<WORKER_BUDGET_MS;i++){var q=queue_();if(!q.length)break;var id=q[0],before=request_(id);if(!before){dequeue_(id);continue;}before=recoverDeterministicReview_(before);if(terminal_(before)){dequeue_(id);continue;}if(genuineReview_(before)){dequeue_(id);last={ok:true,version:VERSION,status:'GENUINE_REVIEW_DEQUEUED',requestId:id,liveWriteExecuted:false};continue;}var beforeSig=signature_(before),result,stepStarted=Date.now(),stepLabel=stepLabel_(before),beforeUpdatedMs=dateMs_(before['Updated At']),beforeCreatedMs=dateMs_(before['Created At']||before['Submitted At']);try{result=step_(id);}catch(error){var failedMs=Date.now()-stepStarted;log_('CANONICAL_STEP_TIMING','ERROR',id,{stepLabel:stepLabel,stepIndex:i+1,fromStage:clean_(before['Current Stage']),fromRequestStatus:clean_(before['Request Status']),fromNextAction:clean_(before['Next Action']),waitSinceLastUpdateMs:beforeUpdatedMs?Math.max(0,stepStarted-beforeUpdatedMs):'',requestAgeAtStepStartMs:beforeCreatedMs?Math.max(0,stepStarted-beforeCreatedMs):'',error:String(error&&error.message||error)},String(error&&error.stack||error),failedMs);log_('FINAL_WORKER','ERROR',id,{error:String(error&&error.message||error)},String(error&&error.stack||error),failedMs);ensureWorker_(WORKER_DELAY_MS,currentUid);throw error;}result=assertRequestScoped_(id,result);history.push({requestId:id,status:clean_(result&&result.status),liveWriteExecuted:!!(result&&result.liveWriteExecuted)});last=result;var after=request_(id),stepDurationMs=Date.now()-stepStarted;log_('CANONICAL_STEP_TIMING','COMPLETE',id,{stepLabel:stepLabel,stepIndex:i+1,resultStatus:clean_(result&&result.status),liveWriteExecuted:!!(result&&result.liveWriteExecuted),fromStage:clean_(before['Current Stage']),toStage:clean_(after&&after['Current Stage']),fromRequestStatus:clean_(before['Request Status']),toRequestStatus:clean_(after&&after['Request Status']),fromNextAction:clean_(before['Next Action']),toNextAction:clean_(after&&after['Next Action']),waitSinceLastUpdateMs:beforeUpdatedMs?Math.max(0,stepStarted-beforeUpdatedMs):'',requestAgeAtStepStartMs:beforeCreatedMs?Math.max(0,stepStarted-beforeCreatedMs):'',requestAgeAtStepEndMs:beforeCreatedMs?Math.max(0,Date.now()-beforeCreatedMs):'',queueDepthAtStepStart:q.length,queueDepthAfterStep:queue_().length},'',stepDurationMs);if(after&&(terminal_(after)||(knownOrderId_(after)&&upper_(after['Current Stage'])==='COMPLETED'))){dequeue_(id);refreshQueue_();continue;}if(after&&genuineReview_(after)){dequeue_(id);refreshQueue_();continue;}if(result&&result.status==='CROSS_REQUEST_RESULT_REJECTED'){ensureWorker_(WORKER_DELAY_MS,currentUid);break;}if(result&&result.liveWriteExecuted===true){ensureWorker_(WORKER_DELAY_MS,currentUid);break;}var afterSig=signature_(after);if(beforeSig===afterSig){
       noProgressYielded[id]=true;
       var rotated=rotateToBack_(id);
       log_('NO_PROGRESS_QUEUE_YIELD','YIELDED',id,{resultStatus:clean_(result&&result.status),signature:afterSig,queuedRequestIds:rotated.slice(0,10)},'Request made no durable state progress and yielded its queue position so other requests can continue.');
@@ -904,7 +1034,7 @@ CF.EventDrivenServiceAutomation = (function () {
     }}
     if(queue_().length)ensureWorker_(WORKER_DELAY_MS,currentUid);else refreshQueue_();
     return{ok:!last||last.ok!==false,version:VERSION,status:last&&last.status?last.status:'IDLE_NO_QUEUED_REQUESTS',requestId:last&&last.requestId||'',lastResult:last,history:history,queuedRequestIds:queue_(),durationMs:Date.now()-started,liveWriteExecuted:!!(last&&last.liveWriteExecuted===true)};}
-  function recentRecoverable_(){var now=Date.now(),rows=CF.Util.readRecords('SERVICE_REQUESTS').filter(function(r){if(!r||terminal_(r))return false;var created=dateMs_(r['Submitted At']||r['Created At']||r['Updated At']);if(created&&now-created>RECOVERY_LOOKBACK_MS)return false;if(falsePreflightPark_(r))return true;if(genuineReview_(r))return false;if(knownOrderId_(r))return true;var stage=upper_(r['Current Stage']);return['NEW INTAKE','READY FOR CUSTOMER CREATE','READY FOR LOCATION CREATE','READY FOR CONTACT CREATE','CREATING CUSTOMER STRUCTURE','CUSTOMER RESOLVED','CUSTOMER STRUCTURE COMPLETE','SALES ORDER CREATED'].indexOf(stage)!==-1;});rows.sort(function(a,b){return dateMs_(b['Submitted At']||b['Created At'])-dateMs_(a['Submitted At']||a['Created At']);});return rows;}
+  function recentRecoverable_(){var now=Date.now(),rows=CF.Util.readRecords('SERVICE_REQUESTS').filter(function(r){if(!r||terminal_(r))return false;var created=dateMs_(r['Submitted At']||r['Created At']||r['Updated At']);if(created&&now-created>RECOVERY_LOOKBACK_MS)return false;if(falsePreflightPark_(r)||falseContactReview_(r)||legacySalesOrderReviewEligible_(r))return true;if(genuineReview_(r))return false;if(knownOrderId_(r))return true;var stage=upper_(r['Current Stage']);return['NEW INTAKE','READY FOR CUSTOMER CREATE','READY FOR LOCATION CREATE','READY FOR CONTACT CREATE','CREATING CUSTOMER STRUCTURE','CUSTOMER RESOLVED','CUSTOMER STRUCTURE COMPLETE','SALES ORDER CREATED'].indexOf(stage)!==-1;});rows.sort(function(a,b){return dateMs_(b['Submitted At']||b['Created At'])-dateMs_(a['Submitted At']||a['Created At']);});return rows;}
   function idleMaintenance_(){
     var scopedContacts=null,manualWorkOrderNotes=null;
     try{
