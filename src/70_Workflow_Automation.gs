@@ -1155,7 +1155,8 @@ CF.EventDrivenServiceAutomation = (function () {
       finalWorkerTriggers:finalCount,
       watchdogTriggers:handlers.filter(function(h){return h===WATCHDOG_HANDLER;}).length,
       legacyAutomationTriggerCount:handlers.filter(isLegacyAutomationHandler_).length,
-      singleModel:handlers.filter(isLegacyAutomationHandler_).length===0&&handlers.filter(function(h){return h===WATCHDOG_HANDLER;}).length===1,
+      handlerFunctionsPresent:typeof AUTO_FINAL_ServiceOps==='function'&&typeof AUTO_98_E2E_Recovery_Watchdog==='function',
+      singleModel:handlers.filter(isLegacyAutomationHandler_).length===0&&handlers.filter(function(h){return h===WATCHDOG_HANDLER;}).length===1&&typeof AUTO_FINAL_ServiceOps==='function'&&typeof AUTO_98_E2E_Recovery_Watchdog==='function',
       nextWorkerScheduledAt:nextAt,
       workerStale:queued.length>0&&finalCount>0&&nextAtMs>0&&(Date.now()-nextAtMs)>WORKER_STALE_MS
     };
@@ -1193,6 +1194,26 @@ CF.EventDrivenServiceAutomation = (function () {
   }
   return{version:VERSION,kick:kick,worker:worker,acceptanceStep:acceptanceStep,recoveryWatchdog:recoveryWatchdog,activate:activate,disable:disable,inspect:inspect,queuedRequestIds:queue_,allHandlerNames:function(){return[FINAL_HANDLER,WATCHDOG_HANDLER];}};
 })();
+
+/* CF_SERVICEOPS_V5_14_4_CANONICAL_TRIGGER_HANDLERS_R1
+ * Apps Script installable triggers require globally callable handler functions.
+ * Keep these wrappers intentionally tiny; all logic remains inside the single
+ * canonical EventDrivenServiceAutomation object.
+ */
+function AUTO_FINAL_ServiceOps(e) {
+  if (!CF || !CF.EventDrivenServiceAutomation || typeof CF.EventDrivenServiceAutomation.worker !== 'function') {
+    throw new Error('CANONICAL_SERVICEOPS_WORKER_UNAVAILABLE');
+  }
+  return CF.EventDrivenServiceAutomation.worker(e || {});
+}
+
+function AUTO_98_E2E_Recovery_Watchdog(e) {
+  if (!CF || !CF.EventDrivenServiceAutomation || typeof CF.EventDrivenServiceAutomation.recoveryWatchdog !== 'function') {
+    throw new Error('CANONICAL_SERVICEOPS_WATCHDOG_UNAVAILABLE');
+  }
+  return CF.EventDrivenServiceAutomation.recoveryWatchdog(e || {});
+}
+
 
 /* CF_SERVICEOPS_V5_14_3_STATUS_WARNING_RECONCILIATION_R1
  * Reconciles stale Operator Queue warning states from EXISTING Striven evidence.

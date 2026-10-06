@@ -968,7 +968,8 @@ function doGet(e) {
     enabled: false,
     finalWorkerTriggers: 0,
     watchdogTriggers: 0,
-    legacyAutomationTriggerCount: -1
+    legacyAutomationTriggerCount: -1,
+    handlerFunctionsPresent: false
   };
   try {
     if (CF.EventDrivenServiceAutomation &&
@@ -978,8 +979,10 @@ function doGet(e) {
       verification.finalWorkerTriggers = Number(state.finalWorkerTriggers || 0);
       verification.watchdogTriggers = Number(state.watchdogTriggers || 0);
       verification.legacyAutomationTriggerCount = Number(state.legacyAutomationTriggerCount || 0);
+      verification.handlerFunctionsPresent = state.handlerFunctionsPresent === true;
       verification.singleModel =
         state.singleModel === true &&
+        verification.handlerFunctionsPresent === true &&
         verification.legacyAutomationTriggerCount === 0 &&
         verification.watchdogTriggers === 1 &&
         verification.finalWorkerTriggers <= 1;
@@ -997,6 +1000,7 @@ function doGet(e) {
     finalWorkerTriggers: verification.finalWorkerTriggers,
     watchdogTriggers: verification.watchdogTriggers,
     legacyAutomationTriggerCount: verification.legacyAutomationTriggerCount,
+    handlerFunctionsPresent: verification.handlerFunctionsPresent,
     todayEndToEndBatch: todayBatch,
     status: verification.singleModel
       ? 'SINGLE_SERVICEOPS_MODEL_VERIFIED'
