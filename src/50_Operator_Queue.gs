@@ -5090,3 +5090,102 @@ function TESTING_CF_V5131_RELEASE_ACCEPTANCE(){
   console.log(JSON.stringify(out));if(!taxContractOk)throw new Error('TAX_CONTRACT_SAMPLE_FAILED');if(!parity.ok)throw new Error('QUEUE_PARITY_FAILED | '+JSON.stringify(parity));return out;
 }
 /* END CF_SERVICEOPS_V5_13_1_QUEUE_TIMING_HARDENING_R1 */
+
+
+/* CF_SERVICEOPS_V5_14_3_DASHBOARD_LIVE_PROJECTION_R1 */
+/************************************************************
+ * CF ServiceOps — Dashboard Live Projection
+ * Version: 5.14.3
+ *
+ * Restores 00 Dashboard refresh AFTER the lean queue/timing
+ * wrappers intentionally stopped rebuilding it.
+ *
+ * - Full Operator Queue refresh -> one Dashboard refresh.
+ * - Coalesced dirty-row sync -> one Dashboard refresh.
+ * - Individual request projection stays lean.
+ * - No Striven write.
+ ************************************************************/
+(function CF_SERVICEOPS_INSTALL_DASHBOARD_LIVE_PROJECTION_V5143_R1_(){
+  'use strict';
+  if(typeof CF==='undefined'||!CF.OperatorQueue||typeof CF.OperatorQueue.refresh!=='function'){
+    throw new Error('DASHBOARD_LIVE_PROJECTION_SETUP_REQUIRED');
+  }
+  if(CF.OperatorQueue.__dashboardLiveProjectionV5143R1===true)return;
+
+  var VERSION='5.14.3';
+  var baseRefresh=CF.OperatorQueue.refresh;
+  var baseFlush=typeof CF.OperatorQueue.flushPendingMutationSync==='function'
+    ?CF.OperatorQueue.flushPendingMutationSync:null;
+
+  function refreshDashboardSafe_(){
+    try{
+      if(typeof CF.OperatorQueue.refreshDashboard!=='function'){
+        return{ok:false,status:'DASHBOARD_REFRESH_UNAVAILABLE',version:VERSION};
+      }
+      var dashboard=CF.OperatorQueue.refreshDashboard();
+      return{ok:true,status:'DASHBOARD_REFRESHED',version:VERSION,dashboard:dashboard||null};
+    }catch(error){
+      var warning={ok:false,status:'DASHBOARD_REFRESH_FAILED',version:VERSION,error:String(error&&error.message||error)};
+      try{
+        if(CF.Util&&typeof CF.Util.logEvent==='function')CF.Util.logEvent({
+          module:'50_Operator_Queue',
+          action:'DASHBOARD_LIVE_PROJECTION',
+          status:'WARNING',
+          message:warning.error,
+          details:warning,
+          version:VERSION
+        });
+      }catch(ignored){}
+      return warning;
+    }
+  }
+
+  CF.OperatorQueue.refresh=function(){
+    var out=baseRefresh.apply(CF.OperatorQueue,arguments);
+    var dashboard=refreshDashboardSafe_();
+    if(out&&typeof out==='object'){
+      out.dashboardLiveProjection=dashboard;
+      out.dashboardRefreshed=dashboard.ok===true;
+    }
+    return out||dashboard;
+  };
+
+  if(baseFlush){
+    CF.OperatorQueue.flushPendingMutationSync=function(){
+      var out=baseFlush.apply(CF.OperatorQueue,arguments);
+      var status=String(out&&out.status||'').toUpperCase();
+      if(status!=='NO_DIRTY_ROWS'){
+        var dashboard=refreshDashboardSafe_();
+        if(out&&typeof out==='object'){
+          out.dashboardLiveProjection=dashboard;
+          out.dashboardRefreshed=dashboard.ok===true;
+        }
+      }
+      return out;
+    };
+  }
+
+  CF.OperatorQueue.__dashboardLiveProjectionV5143R1=true;
+  CF.OperatorQueue.__dashboardLiveProjectionConfigV5143R1={
+    version:VERSION,
+    fullQueueRefresh:true,
+    coalescedMutationRefresh:true,
+    perRequestRefresh:false,
+    strivenMutationExecuted:false
+  };
+})();
+
+function FIX_20261006_refreshDashboardLive(){
+  if(!CF||!CF.OperatorQueue||typeof CF.OperatorQueue.refresh!=='function'){
+    throw new Error('Operator Queue unavailable.');
+  }
+  var result=CF.OperatorQueue.refresh();
+  return{
+    ok:!result||result.ok!==false,
+    version:'5.14.3',
+    status:'QUEUE_AND_DASHBOARD_REFRESHED',
+    queueRefresh:result||null,
+    liveWriteExecuted:false,
+    liveStrivenWriteExecuted:false
+  };
+}
