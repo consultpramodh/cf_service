@@ -874,18 +874,20 @@ function doGet(e) {
     if(!acceptanceAllowed[acceptanceId]){
       return ContentService.createTextOutput(JSON.stringify({ok:false,status:'RECENT10_REQUEST_NOT_ALLOWED'})).setMimeType(ContentService.MimeType.JSON);
     }
-    var acceptanceKick=null,acceptanceRun=null;
+    var acceptanceRun=null;
     if(ops==='recent10-acceptance-step'){
-      acceptanceKick=CF.EventDrivenServiceAutomation.kick(acceptanceId);
-      acceptanceRun=CF.EventDrivenServiceAutomation.worker({});
+      if(!CF.EventDrivenServiceAutomation||typeof CF.EventDrivenServiceAutomation.acceptanceStep!=='function'){
+        return ContentService.createTextOutput(JSON.stringify({ok:false,status:'REQUEST_SCOPED_ACCEPTANCE_UNAVAILABLE',requestId:acceptanceId})).setMimeType(ContentService.MimeType.JSON);
+      }
+      acceptanceRun=CF.EventDrivenServiceAutomation.acceptanceStep(acceptanceId);
     }
     var acceptanceRow=CF.Util.findRecord('SERVICE_REQUESTS','Request ID',acceptanceId)||{};
     return ContentService.createTextOutput(JSON.stringify({
       ok:!acceptanceRun||acceptanceRun.ok!==false,
-      status:ops==='recent10-acceptance-step'?'RECENT10_STEP_EXECUTED':'RECENT10_SNAPSHOT',
+      status:ops==='recent10-acceptance-step'?'RECENT10_REQUEST_SCOPED_STEP_EXECUTED':'RECENT10_SNAPSHOT',
       requestId:acceptanceId,
-      kickStatus:acceptanceKick&&acceptanceKick.status||'',
-      workerStatus:acceptanceRun&&acceptanceRun.status||'',
+      stepStatus:acceptanceRun&&acceptanceRun.stepStatus||acceptanceRun&&acceptanceRun.status||'',
+      stateChanged:!!(acceptanceRun&&acceptanceRun.stateChanged===true),
       liveWriteExecuted:!!(acceptanceRun&&acceptanceRun.liveWriteExecuted===true),
       currentStage:String(acceptanceRow['Current Stage']||''),
       requestStatus:String(acceptanceRow['Request Status']||''),
