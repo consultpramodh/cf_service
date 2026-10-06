@@ -2874,10 +2874,29 @@ var CF_SERVICEOPS_OPERATIONAL_LINK_RECONCILIATION_V51016_R1_ = (function () {
     out.operationalCacheAgeMinutesAfter=operationalAgeMinutes_();
     return out;
   }
+  /* CF_SERVICEOPS_REQUEST_SCOPED_OPERATIONAL_RECONCILIATION_R1
+   * Same proven candidate scoring, but for exactly one Service Request.
+   * No Striven call and no all-request scan. The operational cache remains the
+   * evidence source; stale-cache refresh policy stays owned by Sales Order preflight.
+   */
+  function reconcileRequest(requestId,options){
+    options=options||{};
+    requestId=clean_(requestId);
+    var request=CF.Util.findRecord('SERVICE_REQUESTS','Request ID',requestId);
+    if(!request)return{ok:false,version:VERSION,status:'REQUEST_NOT_FOUND',requestId:requestId,liveStrivenWriteExecuted:false,sheetWritesExecuted:false};
+    var operational=CF.Util.readRecords('STRIVEN_OPERATIONAL_DATA');
+    var out=run_([request],operational,{persist:options.persist!==false});
+    out.mode='REQUEST_SCOPED_SAFE_OPERATIONAL_LINK';
+    out.requestId=requestId;
+    out.operationalCacheAgeMinutes=operationalAgeMinutes_();
+    out.liveStrivenWriteExecuted=false;
+    return out;
+  }
   return{
     version:VERSION,
     previewAll:previewAll,
-    reconcileAll:reconcileAll
+    reconcileAll:reconcileAll,
+    reconcileRequest:reconcileRequest
   };
 })();
 
