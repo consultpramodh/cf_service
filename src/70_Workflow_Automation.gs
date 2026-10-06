@@ -973,10 +973,36 @@ CF.EventDrivenServiceAutomation = (function () {
     log_('LEGACY_SALES_ORDER_REVIEW_RECOVERY','RESTORED',r['Request ID'],{salesOrderId:ev.orderId,contactId:ev.contactId,locationId:locationId,priorIssues:ev.issues},'Durable identity evidence restored missing row IDs; existing Sales Order will be re-certified, never recreated.');
     return request_(r['Request ID'])||r;
   }
+  function recoverTechnicalValidationState_(r){
+    if(!r||upper_(r['Request Status'])!=='ERROR'||upper_(r['Manual Review?'])==='YES'||upper_(r['Duplicate Risk Status'])!=='NONE')return r;
+    if(upper_(r['Current Stage'])!=='READY FOR LOCATION CREATE')return r;
+    if(upper_(r['Reconciliation Status'])!=='LOCATION POST REJECTED — TECHNICAL FIX REQUIRED')return r;
+    var root=parse_(r['Write Journal JSON']),j=root&&root.standaloneLocationCreate||{};
+    var errorText=clean_(j.error||r['Striven Sync Error']);
+    var priorCountry=clean_(j&&j.payload&&j.payload.Address&&j.payload.Address.Country);
+    if(!/^HTTP 400:/i.test(errorText)||!(/country code .* could not be read/i.test(errorText)||/country_Invalid/i.test(errorText)))return r;
+    if(!priorCountry||upper_(priorCountry)==='CA')return r;
+    if(typeof CF.Util.clearRowDataValidations==='function')CF.Util.clearRowDataValidations('SERVICE_REQUESTS',r.__rowNumber);
+    CF.Util.patchRow('SERVICE_REQUESTS',r.__rowNumber,{
+      'Updated At':now_(),
+      'Request Status':'OPEN',
+      'Manual Review?':'NO',
+      'Manual Review Reason':'',
+      'Blocking Issue':'',
+      'Next Action':'RECONCILE LOCATION CREATE — SAFE CORRECTED VALIDATION RETRY',
+      'Striven Sync Status':'PARTIAL',
+      'Striven Sync Error':'',
+      'Reconciliation Status':'LOCATION VALIDATION FIX READY — GUARDED RETRY'
+    });
+    SpreadsheetApp.flush();
+    log_('TECHNICAL_VALIDATION_STATE_RECOVERY','RESTORED',r['Request ID'],{priorCountry:priorCountry,nextCountry:'CA',postAttempts:Number(j.postAttempts||0),correctedValidationRetryAttempts:Number(j.correctedValidationRetryAttempts||0),countryContractMigrationRetryAttempts:Number(j.countryContractMigrationRetryAttempts||0)},'Deterministic Location country validation error returned to an executable state; the Location writer still owns the search-first single-retry guard.');
+    return request_(r['Request ID'])||r;
+  }
   function recoverDeterministicReview_(r){
     r=recoverFalsePreflightPark_(r);
     r=recoverFalseContactReview_(r);
     r=recoverLegacySalesOrderReview_(r);
+    r=recoverTechnicalValidationState_(r);
     return r;
   }
   function technicalRecoverable_(r){if(!r||terminal_(r))return false;if(upper_(r['Manual Review?'])==='YES')return false;var risk=upper_(r['Duplicate Risk Status']);if(risk&&risk!=='NONE')return false;var stage=upper_(r['Current Stage']);if(['READY FOR CUSTOMER CREATE','READY FOR LOCATION CREATE','READY FOR CONTACT CREATE','CREATING CUSTOMER STRUCTURE','CUSTOMER RESOLVED','CUSTOMER STRUCTURE COMPLETE','SALES ORDER CREATED'].indexOf(stage)===-1)return false;var text=[r['Next Action'],r['Reconciliation Status'],r['Blocking Issue']].map(clean_).join(' ');if(/AMBIGUOUS|MULTIPLE|OWNERSHIP CONFLICT|IDENTITY CONFLICT/i.test(text))return false;return /RECONCILE|GET-ONLY|TECHNICAL FIX|AUTO RECONCILE|RERUN CERTIFICATION|CONTINUE TO WORK ORDER/i.test(text)||upper_(r['Request Status'])==='ERROR';}
