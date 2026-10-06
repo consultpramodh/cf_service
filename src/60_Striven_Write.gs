@@ -2672,6 +2672,44 @@ CF.StrivenControlledCustomerCreate = (function () {
       });
       return{ok:false,status:'UNIQUE_CUSTOMER_LOCATION_AMBIGUOUS',requestId:clean_(record['Request ID']),matchedCustomerId:customerId,locationCandidates:locations.map(function(x){return clean_(x['Location ID']);}),liveWriteExecuted:false};
     }
+    if(!locations.length&&targeted&&targeted.ok===false&&clean_(targeted.status)!=='TARGETED_LOCATION_MODULE_UNAVAILABLE'){
+      var failedRoot=parseJson_(record['Write Journal JSON'],{})||{};
+      failedRoot.prewriteUniqueCustomerLink={
+        status:'AUTO_LINKED_CUSTOMER_LOCATION_READ_RETRY_REQUIRED',
+        linkedAt:d.util.nowString(),
+        customerId:customerId,
+        reasons:(candidate.reasons||[]).slice(),
+        source:reason||'PREWRITE_EXACT_PHONE_EMAIL_GUARD',
+        targetedLocationStatus:clean_(targeted.status),
+        targetedLocationError:clean_(targeted.error)
+      };
+      patchRequest_(record,{
+        'Updated At':d.util.nowString(),
+        'Current Stage':'READY FOR LOCATION CREATE',
+        'Request Status':'OPEN',
+        'Manual Review?':'NO',
+        'Manual Review Reason':'',
+        'Blocking Issue':'Targeted Location read failed. Do not create until the Location writer repeats its search-first guard.',
+        'Next Action':'RECONCILE LOCATION LOOKUP BEFORE CREATE',
+        'Customer Match Status':'MATCHED',
+        'Matched Customer ID':customerId,
+        'Matched Customer Name':clean_(candidate.customerName)||clean_(record['Full Name']),
+        'Customer Action':'LINK EXISTING',
+        'Contact Match Status':'NOT FOUND',
+        'Matched Contact ID':'',
+        'Contact Action':'CREATE',
+        'Location Match Status':'NOT FOUND',
+        'Matched Location ID':'',
+        'Location Action':'CREATE',
+        'Customer Structure Status':'CUSTOMER CONFIRMED — LOCATION READ RETRY REQUIRED',
+        'Write Journal JSON':safeJson_(failedRoot),
+        'Striven Sync Status':'PARTIAL',
+        'Striven Sync Error':clean_(targeted.error),
+        'Last Striven Sync':d.util.nowString(),
+        'Reconciliation Status':'TARGETED LOCATION READ FAILED — SEARCH-FIRST RETRY REQUIRED'
+      });
+      return{ok:true,status:'PREWRITE_UNIQUE_CUSTOMER_AUTO_LINKED_LOCATION_READ_RETRY_REQUIRED',requestId:clean_(record['Request ID']),matchedCustomerId:customerId,targetedLocationReadExecuted:true,targetedLocationStatus:clean_(targeted.status),liveWriteExecuted:false};
+    }
     var root=parseJson_(record['Write Journal JSON'],{})||{};
     root.prewriteUniqueCustomerLink={
       status:'AUTO_LINKED_EXACT_SINGLE_CANDIDATE',
