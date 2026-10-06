@@ -919,6 +919,26 @@ function doGet(e) {
     return ContentService.createTextOutput(JSON.stringify(warningResult)).setMimeType(ContentService.MimeType.JSON);
   }
 
+  if(ops==='status-warning-request-snapshot'){
+    var snapshotId=String(e&&e.parameter&&e.parameter.id||'');
+    var snapshotRow=CF.Util&&typeof CF.Util.findRecord==='function'?CF.Util.findRecord('SERVICE_REQUESTS','Request ID',snapshotId):null;
+    return ContentService.createTextOutput(JSON.stringify(snapshotRow?{
+      ok:true,
+      status:'STATUS_WARNING_REQUEST_SNAPSHOT',
+      requestId:snapshotId,
+      currentStage:String(snapshotRow['Current Stage']||''),
+      requestStatus:String(snapshotRow['Request Status']||''),
+      manualReview:String(snapshotRow['Manual Review?']||''),
+      nextAction:String(snapshotRow['Next Action']||''),
+      updatedAt:String(snapshotRow['Updated At']||''),
+      workOrderId:String(snapshotRow['Work Order ID']||''),
+      workOrderNumber:String(snapshotRow['Work Order Number']||''),
+      reconciliationStatus:String(snapshotRow['Reconciliation Status']||''),
+      finalOutcome:String(snapshotRow['Final Outcome']||''),
+      liveWriteExecuted:false
+    }:{ok:false,status:'REQUEST_NOT_FOUND',requestId:snapshotId,liveWriteExecuted:false})).setMimeType(ContentService.MimeType.JSON);
+  }
+
   /* CF_SERVICEOPS_V5_14_3_DASHBOARD_REFRESH_RUNNER_R1 */
   if(ops==='dashboard-refresh'){
     if(!CF.OperatorQueue||typeof CF.OperatorQueue.refreshDashboard!=='function'){
