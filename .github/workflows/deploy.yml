@@ -107,14 +107,29 @@ jobs:
           )
           : > recent10-acceptance.jsonl
           for id in "${IDS[@]}"; do
-            BODY="$(curl -fsSL --retry 2 --max-time 240 --get               --data-urlencode "ops=recent10-acceptance-step"               --data-urlencode "id=$id" "$ACCEPTANCE_URL")"
-            printf '%s\n' "$BODY" | tee -a recent10-acceptance.jsonl
-            node -e '
-              const x=JSON.parse(process.argv[1]);
-              if(!x || x.requestId!==process.argv[2]) process.exit(2);
-            ' "$BODY" "$id"
+            completed=0
+            for round in $(seq 1 8); do
+              BODY="$(curl -fsSL --retry 2 --max-time 120 --get \
+                --data-urlencode "ops=recent10-acceptance-step" \
+                --data-urlencode "id=$id" "$ACCEPTANCE_URL")"
+              printf '%s\n' "$BODY" | tee -a recent10-acceptance.jsonl
+              if node -e '
+                const x=JSON.parse(process.argv[1]);
+                if(!x || x.requestId!==process.argv[2]) process.exit(2);
+                const done=x.currentStage==="COMPLETED" && x.requestStatus==="COMPLETED" && String(x.manualReview||"").toUpperCase()!=="YES";
+                process.exit(done ? 0 : 1);
+              ' "$BODY" "$id"; then
+                completed=1
+                break
+              fi
+              sleep 2
+            done
+            if [ "$completed" -ne 1 ]; then
+              echo "RECENT10_REQUEST_FAILED_TO_COMPLETE=$id"
+              exit 3
+            fi
           done
-          echo "RECENT10_ACCEPTANCE_EXECUTION_PASS"
+          echo "RECENT10_ACCEPTANCE_PASS_ALL_10"
 
       - name: Upload recent-10 acceptance evidence
         if: always()
