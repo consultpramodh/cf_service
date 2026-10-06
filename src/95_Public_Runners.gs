@@ -904,6 +904,21 @@ function doGet(e) {
     })).setMimeType(ContentService.MimeType.JSON);
   }
 
+  /* CF_SERVICEOPS_V5_14_4_INTAKE_BACKSTOP_INSTALL_R1 */
+  if(ops==='install-intake-backstop'){
+    if(typeof CFH_installAndVerifyProductionHardening!=='function'){
+      return ContentService.createTextOutput(JSON.stringify({ok:false,status:'PRODUCTION_HARDENING_UNAVAILABLE'})).setMimeType(ContentService.MimeType.JSON);
+    }
+    var intakeInstall=CFH_installAndVerifyProductionHardening();
+    return ContentService.createTextOutput(JSON.stringify({
+      ok:intakeInstall&&intakeInstall.ok!==false,
+      status:'INTAKE_BACKSTOP_INSTALLED',
+      result:intakeInstall,
+      liveWriteExecuted:false,
+      liveStrivenWriteExecuted:false
+    })).setMimeType(ContentService.MimeType.JSON);
+  }
+
   /* CF_SERVICEOPS_V5_14_4_RECENT_GF_BACKSTOP_RUNNER_R1 */
   if(ops==='intake-backstop-run'){
     if(!CF.Intake||typeof CF.Intake.reconcileRecentGravityForms!=='function'){
