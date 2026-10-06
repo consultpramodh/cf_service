@@ -1472,6 +1472,43 @@ CF.StatusWarningReconciler=(function(){
     var snap=snapshot();
     return{ok:true,version:VERSION,status:'STATUS_WARNING_RECONCILIATION_STEP_COMPLETE',considered:considered,processed:processed,skippedUnproven:skippedUnproven,progressed:progressed,writeBoundaryReached:writeBoundary,recoverableCandidateCount:snap.recoverableCandidateCount,otherReviewCount:snap.otherReviewCount,results:results,queueRefreshDeferred:true,liveWriteExecuted:writeBoundary};
   }
+  function stepRequest(requestId){
+    requestId=clean_(requestId);
+    if(!requestId)return{ok:false,version:VERSION,status:'REQUEST_ID_REQUIRED',liveWriteExecuted:false};
+    var r=req_(requestId);
+    if(!r)return{ok:false,version:VERSION,status:'REQUEST_NOT_FOUND',requestId:requestId,liveWriteExecuted:false};
+    if(!candidate_(r))return{ok:true,version:VERSION,status:'REQUEST_NOT_RECONCILIATION_CANDIDATE',requestId:requestId,currentStage:clean_(r['Current Stage']),requestStatus:clean_(r['Request Status']),manualReview:clean_(r['Manual Review?']),liveWriteExecuted:false};
+    var ctx=operational_(),hydrated=hydrate_(r,ctx),afterHydrate=req_(requestId)||r,run=null;
+    if(cid_(afterHydrate)&&contact_(afterHydrate)&&location_(afterHydrate)&&oid_(afterHydrate)&&CF.EventDrivenServiceAutomation&&typeof CF.EventDrivenServiceAutomation.acceptanceStep==='function'){
+      run=CF.EventDrivenServiceAutomation.acceptanceStep(requestId);
+    }
+    var after=req_(requestId)||afterHydrate;
+    var out={
+      ok:true,
+      version:VERSION,
+      status:'STATUS_WARNING_REQUEST_RECONCILIATION_COMPLETE',
+      requestId:requestId,
+      hydrateStatus:clean_(hydrated&&hydrated.status),
+      taskIds:hydrated&&hydrated.taskIds||[],
+      stepStatus:clean_(run&&run.stepStatus||run&&run.status),
+      currentStage:clean_(after['Current Stage']),
+      requestStatus:clean_(after['Request Status']),
+      manualReview:clean_(after['Manual Review?']),
+      nextAction:clean_(after['Next Action']),
+      customerId:cid_(after),
+      contactId:contact_(after),
+      locationId:location_(after),
+      workOrderId:oid_(after),
+      workOrderNumber:onum_(after),
+      reconciliationStatus:clean_(after['Reconciliation Status']),
+      finalOutcome:clean_(after['Final Outcome']),
+      stateChanged:!!(hydrated&&hydrated.stateChanged===true)||!!(run&&run.stateChanged===true),
+      liveWriteExecuted:!!(run&&run.liveWriteExecuted===true)
+    };
+    log_('REQUEST_SCOPED_RECONCILIATION',requestId,out,'');
+    return out;
+  }
+
   function refreshQueue(){
     try{
       if(CF.OperatorQueue&&typeof CF.OperatorQueue.refresh==='function'){
@@ -1481,7 +1518,7 @@ CF.StatusWarningReconciler=(function(){
     }catch(e){return{ok:false,version:VERSION,status:'STATUS_WARNING_QUEUE_REFRESH_FAILED',error:String(e&&e.message||e),liveWriteExecuted:false};}
     return{ok:false,version:VERSION,status:'STATUS_WARNING_QUEUE_REFRESH_UNAVAILABLE',liveWriteExecuted:false};
   }
-  return{version:VERSION,snapshot:snapshot,step:step,refreshQueue:refreshQueue};
+  return{version:VERSION,snapshot:snapshot,step:step,stepRequest:stepRequest,refreshQueue:refreshQueue};
 })();
 
 
