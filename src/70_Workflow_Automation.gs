@@ -1345,22 +1345,26 @@ CF.StatusWarningReconciler=(function(){
     }
 
     var existingLocation=location_(r),targeted=null,matches=[];
-    if(CF.StandaloneLocationCreateV5128&&typeof CF.StandaloneLocationCreateV5128.findExisting==='function'){
-      try{targeted=CF.StandaloneLocationCreateV5128.findExisting(r,existingCustomer,{});matches=targeted&&Array.isArray(targeted.matches)?targeted.matches:[];}catch(eLoc){targeted={ok:false,status:'LOCATION_TARGETED_READ_FAILED',error:String(eLoc&&eLoc.message||eLoc)};}
+    var billNonZero=remoteBill&&remoteBill!=='0'?remoteBill:'',shipNonZero=remoteShip&&remoteShip!=='0'?remoteShip:'';
+    if(billNonZero&&shipNonZero&&billNonZero!==shipNonZero){
+      return{ok:false,status:'WORK_ORDER_BILL_SHIP_LOCATION_CONFLICT_RETAINED',requestId:clean_(r['Request ID']),billToLocationId:remoteBill,shipToLocationId:remoteShip,stateChanged:true,liveWriteExecuted:false};
     }
-    if(matches.length===1){
-      var targetLocation=clean_(matches[0]['Location ID']);
-      var remoteNonZero=(remoteBill&&remoteBill!=='0')?remoteBill:((remoteShip&&remoteShip!=='0')?remoteShip:'');
-      if(remoteBill&&remoteBill!=='0'&&remoteShip&&remoteShip!=='0'&&remoteBill!==remoteShip){
-        return{ok:false,status:'WORK_ORDER_BILL_SHIP_LOCATION_CONFLICT_RETAINED',requestId:clean_(r['Request ID']),billToLocationId:remoteBill,shipToLocationId:remoteShip,stateChanged:true,liveWriteExecuted:false};
+    var remoteNonZero=billNonZero||shipNonZero;
+    if(existingLocation){
+      // Existing CRM Location is already durable. Avoid another Customer Location
+      // API search; only reject a different nonzero Location from the Work Order.
+      if(remoteNonZero&&remoteNonZero!==existingLocation){
+        return{ok:false,status:'PROVEN_LOCATION_CONFLICT_RETAINED',requestId:clean_(r['Request ID']),requestLocationId:existingLocation,orderLocationId:remoteNonZero,stateChanged:true,liveWriteExecuted:false};
       }
-      if(remoteNonZero&&remoteNonZero!==targetLocation){
-        return{ok:false,status:'PROVEN_LOCATION_CONFLICT_RETAINED',requestId:clean_(r['Request ID']),targetedLocationId:targetLocation,orderLocationId:remoteNonZero,stateChanged:true,liveWriteExecuted:false};
+    }else{
+      if(CF.StandaloneLocationCreateV5128&&typeof CF.StandaloneLocationCreateV5128.findExisting==='function'){
+        try{targeted=CF.StandaloneLocationCreateV5128.findExisting(r,existingCustomer,{});matches=targeted&&Array.isArray(targeted.matches)?targeted.matches:[];}catch(eLoc){targeted={ok:false,status:'LOCATION_TARGETED_READ_FAILED',error:String(eLoc&&eLoc.message||eLoc)};}
       }
-      if(existingLocation&&existingLocation!==targetLocation&&upper_(r['Location Match Status'])!=='AMBIGUOUS'&&!/LOCATION MATCH|LOCATION RESOLUTION|VERIFY POSTAL/i.test(clean_(r['Next Action'])+' '+clean_(r['Manual Review Reason']))){
-        return{ok:false,status:'REQUEST_LOCATION_CONFLICT_RETAINED',requestId:clean_(r['Request ID']),requestLocationId:existingLocation,targetedLocationId:targetLocation,stateChanged:true,liveWriteExecuted:false};
-      }
-      if(!existingLocation||existingLocation!==targetLocation){
+      if(matches.length===1){
+        var targetLocation=clean_(matches[0]['Location ID']);
+        if(remoteNonZero&&remoteNonZero!==targetLocation){
+          return{ok:false,status:'PROVEN_LOCATION_CONFLICT_RETAINED',requestId:clean_(r['Request ID']),targetedLocationId:targetLocation,orderLocationId:remoteNonZero,stateChanged:true,liveWriteExecuted:false};
+        }
         patch_(r,{
           'Updated At':CF.Util.nowString(),
           'Location Match Status':'MATCHED',
@@ -1373,9 +1377,9 @@ CF.StatusWarningReconciler=(function(){
           'Reconciliation Status':'EXISTING WORK ORDER + TARGETED CRM LOCATION RESOLVED WARNING'
         });
         existingLocation=targetLocation;
+      }else{
+        return{ok:false,status:matches.length>1?'TARGETED_LOCATION_AMBIGUOUS_RETAINED':'TARGETED_LOCATION_NOT_PROVEN',requestId:clean_(r['Request ID']),workOrder:w,taskIds:te.taskIds,stateChanged:true,liveWriteExecuted:false};
       }
-    }else if(!existingLocation){
-      return{ok:false,status:matches.length>1?'TARGETED_LOCATION_AMBIGUOUS_RETAINED':'TARGETED_LOCATION_NOT_PROVEN',requestId:clean_(r['Request ID']),workOrder:w,taskIds:te.taskIds,stateChanged:true,liveWriteExecuted:false};
     }
 
     r=req_(r['Request ID'])||r;
@@ -1443,11 +1447,19 @@ CF.StatusWarningReconciler=(function(){
       log_('REQUEST_PROCESSED',id,results[results.length-1],'');
       if(writeBoundary)break;
     }
-    try{if(CF.OperatorQueue&&typeof CF.OperatorQueue.refresh==='function')CF.OperatorQueue.refresh();}catch(refreshError){log_('QUEUE_REFRESH_WARNING','',{error:String(refreshError&&refreshError.message||refreshError)},'');}
     var snap=snapshot();
-    return{ok:true,version:VERSION,status:'STATUS_WARNING_RECONCILIATION_STEP_COMPLETE',considered:considered,processed:processed,skippedUnproven:skippedUnproven,progressed:progressed,writeBoundaryReached:writeBoundary,recoverableCandidateCount:snap.recoverableCandidateCount,otherReviewCount:snap.otherReviewCount,results:results,liveWriteExecuted:writeBoundary};
+    return{ok:true,version:VERSION,status:'STATUS_WARNING_RECONCILIATION_STEP_COMPLETE',considered:considered,processed:processed,skippedUnproven:skippedUnproven,progressed:progressed,writeBoundaryReached:writeBoundary,recoverableCandidateCount:snap.recoverableCandidateCount,otherReviewCount:snap.otherReviewCount,results:results,queueRefreshDeferred:true,liveWriteExecuted:writeBoundary};
   }
-  return{version:VERSION,snapshot:snapshot,step:step};
+  function refreshQueue(){
+    try{
+      if(CF.OperatorQueue&&typeof CF.OperatorQueue.refresh==='function'){
+        var result=CF.OperatorQueue.refresh();
+        return{ok:!result||result.ok!==false,version:VERSION,status:'STATUS_WARNING_QUEUE_REFRESH_COMPLETE',refresh:result,liveWriteExecuted:false};
+      }
+    }catch(e){return{ok:false,version:VERSION,status:'STATUS_WARNING_QUEUE_REFRESH_FAILED',error:String(e&&e.message||e),liveWriteExecuted:false};}
+    return{ok:false,version:VERSION,status:'STATUS_WARNING_QUEUE_REFRESH_UNAVAILABLE',liveWriteExecuted:false};
+  }
+  return{version:VERSION,snapshot:snapshot,step:step,refreshQueue:refreshQueue};
 })();
 
 

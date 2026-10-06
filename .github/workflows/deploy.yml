@@ -142,9 +142,9 @@ jobs:
           : > status-warning-reconciliation.jsonl
           stalled=0
           for round in $(seq 1 40); do
-            BODY="$(curl -fsSL --retry 2 --max-time 150 --get \
+            BODY="$(curl -fsSL --max-time 120 --get \
               --data-urlencode "ops=status-warning-reconcile-step" \
-              --data-urlencode "limit=6" "$RECONCILE_URL")"
+              --data-urlencode "limit=2" "$RECONCILE_URL")"
             printf '%s\n' "$BODY" | tee -a status-warning-reconciliation.jsonl
             RECOVERABLE="$(node -e 'const x=JSON.parse(process.argv[1]); process.stdout.write(String(Number(x.recoverableCandidateCount||0)))' "$BODY")"
             PROGRESSED="$(node -e 'const x=JSON.parse(process.argv[1]); process.stdout.write(String(Number(x.progressed||0)))' "$BODY")"
@@ -161,9 +161,12 @@ jobs:
               echo "STATUS_WARNING_RECONCILIATION_STALLED_WITH_GENUINE_OR_UNPROVEN_ROWS=$RECOVERABLE"
               break
             fi
-            sleep 2
+            sleep 1
           done
-          SNAP="$(curl -fsSL --retry 2 --max-time 60 --get \
+          REFRESH="$(curl -fsSL --max-time 120 --get \
+            --data-urlencode "ops=status-warning-reconcile-refresh" "$RECONCILE_URL")"
+          printf '%s\n' "$REFRESH" | tee -a status-warning-reconciliation.jsonl
+          SNAP="$(curl -fsSL --max-time 60 --get \
             --data-urlencode "ops=status-warning-reconcile-snapshot" "$RECONCILE_URL")"
           printf '%s\n' "$SNAP" | tee -a status-warning-reconciliation.jsonl
           echo "STATUS_WARNING_FINAL_SNAPSHOT=$SNAP"
