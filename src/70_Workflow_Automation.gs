@@ -1414,12 +1414,25 @@ CF.StatusWarningReconciler=(function(){
     rows.forEach(function(r){if(candidate_(r))candidates.push(clean_(r['Request ID']));else if(!terminal_(r)&&upper_(r['Current Stage'])==='NEEDS REVIEW')genuine.push(clean_(r['Request ID']));});
     return{ok:true,version:VERSION,status:'STATUS_WARNING_RECONCILIATION_SNAPSHOT',recoverableCandidateCount:candidates.length,recoverableRequestIds:candidates.slice(0,50),otherReviewCount:genuine.length,otherReviewRequestIds:genuine.slice(0,50),liveWriteExecuted:false};
   }
+  function priority_(r){
+    if(oid_(r)||onum_(r))return 0;
+    var text=upper_(clean_(r['Next Action'])+' '+clean_(r['Manual Review Reason'])+' '+clean_(r['Reconciliation Status']));
+    if(/VERIFY EXISTING SALES ORDER|MANUAL REVIEW SALES ORDER|REVIEW EXISTING SALES ORDER|SALES ORDER VERIFICATION/.test(text))return 1;
+    if(/GET-ONLY VERIFY CONTACT/.test(text))return 2;
+    return 3;
+  }
   function step(options){
-    options=options||{};var limit=Math.max(1,Math.min(8,Number(options.limit||4))),ctx=operational_(),rows=CF.Util.readRecords('SERVICE_REQUESTS')||[],results=[],processed=0,progressed=0,writeBoundary=false;
-    rows.sort(function(a,b){var av=new Date(a['Submitted At']||a['Created At']||0).getTime()||0,bv=new Date(b['Submitted At']||b['Created At']||0).getTime()||0;return bv-av;});
+    options=options||{};var limit=Math.max(1,Math.min(8,Number(options.limit||4))),ctx=operational_(),rows=CF.Util.readRecords('SERVICE_REQUESTS')||[],results=[],processed=0,considered=0,skippedUnproven=0,progressed=0,writeBoundary=false;
+    rows.sort(function(a,b){var p=priority_(a)-priority_(b);if(p)return p;var av=new Date(a['Submitted At']||a['Created At']||0).getTime()||0,bv=new Date(b['Submitted At']||b['Created At']||0).getTime()||0;return bv-av;});
     for(var i=0;i<rows.length&&processed<limit;i++){
-      var r=rows[i];if(!candidate_(r))continue;processed++;
-      var id=clean_(r['Request ID']),hydrated=hydrate_(r,ctx),afterHydrate=req_(id)||r,run=null;
+      var r=rows[i];if(!candidate_(r))continue;considered++;
+      var id=clean_(r['Request ID']),hydrated=hydrate_(r,ctx);
+      if(hydrated.stateChanged!==true&&/^(NO_|CUSTOMER_CONFLICT_NOT_PROVEN|PROVEN_.*CONFLICT|REQUEST_LOCATION_CONFLICT|TARGETED_LOCATION_(?:AMBIGUOUS|NOT_PROVEN)|WORK_ORDER_.*CONFLICT|OPERATIONAL_WORK_ORDER_IDENTITY_INCOMPLETE)/.test(clean_(hydrated.status))){
+        skippedUnproven++;
+        continue;
+      }
+      processed++;
+      var afterHydrate=req_(id)||r,run=null;
       if(hydrated.stateChanged===true)progressed++;
       if(cid_(afterHydrate)&&contact_(afterHydrate)&&location_(afterHydrate)&&oid_(afterHydrate)&&CF.EventDrivenServiceAutomation&&typeof CF.EventDrivenServiceAutomation.acceptanceStep==='function'){
         run=CF.EventDrivenServiceAutomation.acceptanceStep(id);
@@ -1432,7 +1445,7 @@ CF.StatusWarningReconciler=(function(){
     }
     try{if(CF.OperatorQueue&&typeof CF.OperatorQueue.refresh==='function')CF.OperatorQueue.refresh();}catch(refreshError){log_('QUEUE_REFRESH_WARNING','',{error:String(refreshError&&refreshError.message||refreshError)},'');}
     var snap=snapshot();
-    return{ok:true,version:VERSION,status:'STATUS_WARNING_RECONCILIATION_STEP_COMPLETE',processed:processed,progressed:progressed,writeBoundaryReached:writeBoundary,recoverableCandidateCount:snap.recoverableCandidateCount,otherReviewCount:snap.otherReviewCount,results:results,liveWriteExecuted:writeBoundary};
+    return{ok:true,version:VERSION,status:'STATUS_WARNING_RECONCILIATION_STEP_COMPLETE',considered:considered,processed:processed,skippedUnproven:skippedUnproven,progressed:progressed,writeBoundaryReached:writeBoundary,recoverableCandidateCount:snap.recoverableCandidateCount,otherReviewCount:snap.otherReviewCount,results:results,liveWriteExecuted:writeBoundary};
   }
   return{version:VERSION,snapshot:snapshot,step:step};
 })();
