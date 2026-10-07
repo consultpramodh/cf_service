@@ -110,7 +110,10 @@ function normalizeReleaseMetadataText(text) {
     .replace(/(\*\s*Version:\s*)\d+\.\d+\.\d+/g, '$1' + RELEASE)
     .replace(/(\bvar\s+VERSION\s*=\s*['"])\d+\.\d+\.\d+(['"]\s*;?)/g, '$1' + RELEASE + '$2')
     .replace(/(\bVERSION:\s*['"])\d+\.\d+\.\d+(['"])/g, '$1' + RELEASE + '$2')
-    .replace(/(\bvar\s+CFH_VERSION\s*=\s*['"])\d+\.\d+\.\d+(['"]\s*;?)/g, '$1' + RELEASE + '$2');
+    .replace(/(\bvar\s+CFH_VERSION\s*=\s*['"])\d+\.\d+\.\d+(['"]\s*;?)/g, '$1' + RELEASE + '$2')
+    .replace(/(\bversion\s*:\s*['"])\d+\.\d+\.\d+(['"])/g, '$1' + RELEASE + '$2')
+    .replace(/(Final ServiceOps v)\d+\.\d+\.\d+/g, '$1' + RELEASE)
+    .replace(/(Activate final ServiceOps v)\d+\.\d+\.\d+/g, '$1' + RELEASE);
 }
 function normalizeLiveVersionMetadata(dir) {
   const touched = [];
