@@ -1980,7 +1980,7 @@ function buildRecords_(
     if (
       serviceLastRow > 2 &&
       serviceHeaderMap[
-        'Created At'
+        'Submitted At'
       ]
     ) {
       serviceSheet
@@ -1993,7 +1993,7 @@ function buildRecords_(
         .sort({
           column:
             serviceHeaderMap[
-              'Created At'
+              'Submitted At'
             ],
           ascending: false
         });
