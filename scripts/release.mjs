@@ -206,14 +206,14 @@ const beforeInv = inventory(before);
 writeFileSync(resolve(work, 'before.sha256.json'), JSON.stringify(Object.fromEntries(beforeInv), null, 2) + '\n');
 console.log('Checkpoint: ' + before);
 
-console.log('\n=== 4/10 Normalize live version metadata + replace finalized modules + remove obsolete V2 shadow generation ===');
-const normalizedVersionBases = normalizeLiveVersionMetadata(live);
+console.log('\n=== 4/10 Replace finalized modules + normalize live version metadata + remove obsolete V2 shadow generation ===');
 for (const base of PATCH_BASES) {
   const src = resolve(root, 'src', base + '.gs');
   const target = findTarget(base, live);
   cpSync(src, target);
   console.log(base + ' -> ' + basename(target));
 }
+const normalizedVersionBases = normalizeLiveVersionMetadata(live);
 const removedV2 = [];
 for (const base of OBSOLETE_V2_BASES) {
   const entry = beforeInv.get(base);
