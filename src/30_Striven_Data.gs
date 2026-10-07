@@ -3,13 +3,13 @@
 /************************************************************
  * APPS SCRIPT — 30_Striven_Data.gs
  * CF ServiceOps — Striven Read Caches
- * Version: 5.7.1
+ * Version: 5.14.4
  ************************************************************/
 var CF = CF || {};
 
 CF.StrivenHttp = (function () {
   'use strict';
-  var VERSION = '5.7.1';
+  var VERSION = '5.14.4';
 
   function deps_() {
     if (!CF.Config || !CF.Util) throw new Error('CF.Config and CF.Util are required.');
@@ -127,7 +127,7 @@ CF.StrivenData = (function () {
   'use strict';
 
   var MODULE_NAME = '30_Striven_Data';
-  var VERSION = '5.7.1';
+  var VERSION = '5.14.4';
 
   function deps_() {
     if (!CF.Config || !CF.Util || !CF.StrivenHttp) throw new Error('CF.Config, CF.Util and CF.StrivenHttp are required.');
