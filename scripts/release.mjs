@@ -107,15 +107,15 @@ function requireMarker(path, marker) {
 }
 function normalizeReleaseMetadataText(text) {
   return String(text)
-    .replace(/(\\*\\s*Version:\\s*)\\d+\\.\\d+\\.\\d+/g, '$1' + RELEASE)
-    .replace(/(\\bvar\\s+VERSION\\s*=\\s*['"])\\d+\\.\\d+\\.\\d+(['"]\\s*;?)/g, '$1' + RELEASE + '$2')
-    .replace(/(\\bVERSION:\\s*['"])\\d+\\.\\d+\\.\\d+(['"])/g, '$1' + RELEASE + '$2')
-    .replace(/(\\bvar\\s+CFH_VERSION\\s*=\\s*['"])\\d+\\.\\d+\\.\\d+(['"]\\s*;?)/g, '$1' + RELEASE + '$2');
+    .replace(/(\*\s*Version:\s*)\d+\.\d+\.\d+/g, '$1' + RELEASE)
+    .replace(/(\bvar\s+VERSION\s*=\s*['"])\d+\.\d+\.\d+(['"]\s*;?)/g, '$1' + RELEASE + '$2')
+    .replace(/(\bVERSION:\s*['"])\d+\.\d+\.\d+(['"])/g, '$1' + RELEASE + '$2')
+    .replace(/(\bvar\s+CFH_VERSION\s*=\s*['"])\d+\.\d+\.\d+(['"]\s*;?)/g, '$1' + RELEASE + '$2');
 }
 function normalizeLiveVersionMetadata(dir) {
   const touched = [];
   for (const name of files(dir)) {
-    if (!/\\.(?:js|gs)$/.test(name)) continue;
+    if (!/\.(?:js|gs)$/.test(name)) continue;
     const path = resolve(dir, name);
     const beforeText = readFileSync(path, 'utf8');
     const afterText = normalizeReleaseMetadataText(beforeText);
@@ -129,7 +129,7 @@ function normalizeLiveVersionMetadata(dir) {
 function assertUniformReleaseMetadata(dir) {
   const findings = [];
   for (const name of files(dir)) {
-    if (!/\\.(?:js|gs)$/.test(name)) continue;
+    if (!/\.(?:js|gs)$/.test(name)) continue;
     const path = resolve(dir, name);
     const text = readFileSync(path, 'utf8');
     if (normalizeReleaseMetadataText(text) !== text) findings.push(name);
