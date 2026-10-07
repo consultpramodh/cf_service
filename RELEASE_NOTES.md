@@ -1,3 +1,16 @@
+# Release Notes — v5.14.4
+
+## Version metadata normalization
+
+v5.14.4 establishes one canonical ServiceOps product release number across runtime modules, the production deployment gate, release tooling, repository metadata, and operator-facing documentation.
+
+- No ServiceOps business rules are intentionally changed by this release.
+- Historical patch provenance markers such as `CF_SERVICEOPS_V5_13_x_...` are preserved.
+- Historical verification records remain historical evidence and are not rewritten as if they were produced by v5.14.4.
+- The production workflow must still verify the live deployed runtime before this release is considered live-verified.
+
+---
+
 # Release Notes — v5.14.1
 
 ## Single ServiceOps production model
