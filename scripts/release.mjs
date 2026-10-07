@@ -105,6 +105,38 @@ function normalizedText(path) {
 function requireMarker(path, marker) {
   if (!readFileSync(path, 'utf8').includes(marker)) throw new Error('Missing marker ' + marker + ' in ' + basename(path));
 }
+function normalizeReleaseMetadataText(text) {
+  return String(text)
+    .replace(/(\\*\\s*Version:\\s*)\\d+\\.\\d+\\.\\d+/g, '$1' + RELEASE)
+    .replace(/(\\bvar\\s+VERSION\\s*=\\s*['"])\\d+\\.\\d+\\.\\d+(['"]\\s*;?)/g, '$1' + RELEASE + '$2')
+    .replace(/(\\bVERSION:\\s*['"])\\d+\\.\\d+\\.\\d+(['"])/g, '$1' + RELEASE + '$2')
+    .replace(/(\\bvar\\s+CFH_VERSION\\s*=\\s*['"])\\d+\\.\\d+\\.\\d+(['"]\\s*;?)/g, '$1' + RELEASE + '$2');
+}
+function normalizeLiveVersionMetadata(dir) {
+  const touched = [];
+  for (const name of files(dir)) {
+    if (!/\\.(?:js|gs)$/.test(name)) continue;
+    const path = resolve(dir, name);
+    const beforeText = readFileSync(path, 'utf8');
+    const afterText = normalizeReleaseMetadataText(beforeText);
+    if (afterText === beforeText) continue;
+    writeFileSync(path, afterText);
+    touched.push(logicalName(name));
+    console.log('NORMALIZE VERSION -> ' + name + ' => ' + RELEASE);
+  }
+  return touched.sort();
+}
+function assertUniformReleaseMetadata(dir) {
+  const findings = [];
+  for (const name of files(dir)) {
+    if (!/\\.(?:js|gs)$/.test(name)) continue;
+    const path = resolve(dir, name);
+    const text = readFileSync(path, 'utf8');
+    if (normalizeReleaseMetadataText(text) !== text) findings.push(name);
+  }
+  if (findings.length) throw new Error('VERSION_METADATA_MISMATCH: ' + findings.join(', '));
+  console.log('VERSION_METADATA_UNIFORM_PASS: ' + RELEASE);
+}
 function assertNoLegacyAutomation(dir) {
   const findings = [];
   for (const name of files(dir)) {
@@ -171,7 +203,8 @@ const beforeInv = inventory(before);
 writeFileSync(resolve(work, 'before.sha256.json'), JSON.stringify(Object.fromEntries(beforeInv), null, 2) + '\n');
 console.log('Checkpoint: ' + before);
 
-console.log('\n=== 4/10 Replace finalized modules + remove obsolete V2 shadow generation ===');
+console.log('\n=== 4/10 Normalize live version metadata + replace finalized modules + remove obsolete V2 shadow generation ===');
+const normalizedVersionBases = normalizeLiveVersionMetadata(live);
 for (const base of PATCH_BASES) {
   const src = resolve(root, 'src', base + '.gs');
   const target = findTarget(base, live);
@@ -201,9 +234,16 @@ if (JSON.stringify(afterKeys) !== JSON.stringify(expectedAfterKeys)) {
   throw new Error('Live file inventory changed outside approved V2 cleanup; refusing push.');
 }
 const changed = expectedAfterKeys.filter(k => beforeInv.get(k).sha !== afterInv.get(k).sha).sort();
-const unexpectedChanged = changed.filter(k => !PATCH_BASES.includes(k));
+const unexpectedChanged = changed.filter(k => !PATCH_BASES.includes(k) && !normalizedVersionBases.includes(k));
 if (unexpectedChanged.length) {
-  throw new Error('Unexpected patch scope outside finalized modules: ' + unexpectedChanged.join(', '));
+  throw new Error('Unexpected patch scope outside finalized modules/version normalization: ' + unexpectedChanged.join(', '));
+}
+for (const base of normalizedVersionBases.filter(k => !PATCH_BASES.includes(k))) {
+  const beforeEntry = beforeInv.get(base);
+  if (!beforeEntry) throw new Error('VERSION_NORMALIZATION_SOURCE_MISSING: ' + base);
+  const expected = normalizeReleaseMetadataText(normalizedText(resolve(before, beforeEntry.name)));
+  const actual = normalizedText(findTarget(base, live));
+  if (expected !== actual) throw new Error('VERSION_NORMALIZATION_SCOPE_FAILED: ' + base);
 }
 for (const base of PATCH_BASES) {
   const expectedPath = resolve(root, 'src', base + '.gs');
@@ -224,6 +264,7 @@ requireMarker(findTarget('95_Public_Runners', live), 'CF_SERVICEOPS_V5_14_1_SING
 requireMarker(findTarget('99_Production_Hardening', live), 'Version: 5.14.4');
 assertNoLegacyAutomation(live);
 assertNoV2GenerationSource(live);
+assertUniformReleaseMetadata(live);
 console.log('SELF_TEST_PASS');
 
 console.log('\n=== 7/10 Push complete project to SAME Script ID ===');
@@ -239,6 +280,12 @@ for (const base of PATCH_BASES) {
   if (normalizedText(expectedPath) !== normalizedText(remotePath)) throw new Error('REMOTE_CONTENT_MISMATCH: ' + base);
   console.log('REMOTE_CONTENT_PASS: ' + base);
 }
+for (const base of normalizedVersionBases) {
+  const livePath = findTarget(base, live);
+  const remotePath = findTarget(base, verify);
+  if (normalizedText(livePath) !== normalizedText(remotePath)) throw new Error('REMOTE_VERSION_METADATA_MISMATCH: ' + base);
+}
+assertUniformReleaseMetadata(verify);
 const remoteInv = inventory(verify);
 const remoteObsoleteV2 = OBSOLETE_V2_BASES.filter(base => remoteInv.has(base));
 if (remoteObsoleteV2.length) {
