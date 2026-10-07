@@ -1,7 +1,7 @@
 /************************************************************
  * APPS SCRIPT — 10_Setup_Admin.gs
  * CF ServiceOps — Safe Operator UX Migration
- * Version: 5.8.0
+ * Version: 5.14.4
  *
  * SAFETY CONTRACT
  * - Never deletes a sheet.
@@ -16,7 +16,7 @@ var CF = CF || {};
 CF.Setup = (function () {
   'use strict';
 
-  var VERSION = '5.8.0';
+  var VERSION = '5.14.4';
   var STATE_PROPERTY = 'CF_OPERATOR_UX_MIGRATION_V580';
 
   var LEGACY_NAMES = {
