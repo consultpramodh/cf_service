@@ -1,7 +1,7 @@
 /************************************************************
  * APPS SCRIPT — 75_Customer_360_AI.gs
  * CF ServiceOps — Optional Customer 360 OpenAI Enrichment
- * Version: 1.0.0
+ * Version: 5.14.4
  *
  * SAFETY
  * - Runs only after deterministic Customer 360 creation.
@@ -17,7 +17,7 @@ CF.Customer360AI = (function () {
   'use strict';
 
   var MODULE_NAME = '75_Customer_360_AI';
-  var VERSION = '1.0.0';
+  var VERSION = '5.14.4';
   var API_URL = 'https://api.openai.com/v1/responses';
   var EXPECTED_KEYS = [
     'customerOverview',
