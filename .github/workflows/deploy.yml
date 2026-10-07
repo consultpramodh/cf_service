@@ -1,4 +1,4 @@
-name: Deploy CF ServiceOps v5.14.2
+name: Deploy CF ServiceOps v5.14.4
 # RECENT10_REDEPLOY_TRIGGER_20261006
 
 on:
@@ -72,7 +72,7 @@ jobs:
                 const x = JSON.parse(process.argv[1]);
                 const ok =
                   x &&
-                  x.version === "5.14.2" &&
+                  x.version === "5.14.4" &&
                   x.singleModelVerified === true &&
                   x.automationEnabled === true &&
                   Number(x.legacyAutomationTriggerCount) === 0 &&
@@ -192,10 +192,10 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: cf-serviceops-live-before-v5.14.2
+          name: cf-serviceops-live-before-v5.14.4
           path: |
-            .release-v5.14.2/before/**
-            .release-v5.14.2/before.sha256.json
+            .release-v5.14.4/before/**
+            .release-v5.14.4/before.sha256.json
           retention-days: 30
           if-no-files-found: warn
 
@@ -203,9 +203,9 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: cf-serviceops-v5.14.2-deploy-verification
+          name: cf-serviceops-v5.14.4-deploy-verification
           path: |
-            .release-v5.14.2/verify/**
-            .release-v5.14.2/deployed-version.txt
+            .release-v5.14.4/verify/**
+            .release-v5.14.4/deployed-version.txt
           retention-days: 30
           if-no-files-found: warn
