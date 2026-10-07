@@ -7,7 +7,7 @@ import {
 import { basename, resolve } from 'node:path';
 import { createHash } from 'node:crypto';
 
-const RELEASE = '5.14.2';
+const RELEASE = '5.14.4';
 const SCRIPT_ID = '1QZp4NAFeA8LmWBN31ylJYdK4XFepBX1h2lP_APaR-d1lTAC-d8LA9x3g';
 const DEPLOYMENT_ID = 'AKfycbwebnCvczGthe6Z_mvYmukLqFLB-9nk8hjNtNP3lR87CE1m_fEx2d9Bn_vpXMPCLUnPbA';
 const PATCH_BASES = [
@@ -55,7 +55,7 @@ const FORBIDDEN_AUTOMATION_NAMES = [
 const args = process.argv.slice(2);
 const execute = args.includes('--execute');
 const root = resolve(new URL('..', import.meta.url).pathname);
-const work = resolve(root, '.release-v5.14.2');
+const work = resolve(root, '.release-v5.14.4');
 const live = resolve(work, 'live');
 const before = resolve(work, 'before');
 const verify = resolve(work, 'verify');
@@ -131,7 +131,7 @@ function assertNoV2GenerationSource(dir) {
 }
 
 console.log('======================================================================');
-console.log(' CF ServiceOps v5.14.2 — SINGLE AUTOMATION MODEL PRODUCTION RELEASE');
+console.log(' CF ServiceOps v5.14.4 — SINGLE AUTOMATION MODEL PRODUCTION RELEASE');
 console.log('======================================================================');
 console.log('Script ID:      ' + SCRIPT_ID);
 console.log('Deployment ID:  ' + DEPLOYMENT_ID);
@@ -150,7 +150,7 @@ for (const base of PATCH_BASES) {
 requireMarker(resolve(root, 'src', '20_Intake_Processing.gs'), 'CF_SERVICEOPS_V5_14_1_CANONICAL_INTAKE_R1');
 requireMarker(resolve(root, 'src', '70_Workflow_Automation.gs'), 'CF_SERVICEOPS_V5_14_1_SINGLE_AUTOMATION_MODEL_R1');
 requireMarker(resolve(root, 'src', '95_Public_Runners.gs'), 'CF_SERVICEOPS_V5_14_1_SINGLE_PUBLIC_AUTOMATION_R1');
-requireMarker(resolve(root, 'src', '99_Production_Hardening.gs'), 'Version: 5.14.2');
+requireMarker(resolve(root, 'src', '99_Production_Hardening.gs'), 'Version: 5.14.4');
 assertNoLegacyAutomation(resolve(root, 'src'));
 assertNoV2GenerationSource(resolve(root, 'src'));
 
@@ -221,7 +221,7 @@ for (const base of PATCH_BASES) run(process.execPath, ['--check', findTarget(bas
 requireMarker(findTarget('20_Intake_Processing', live), 'CF_SERVICEOPS_V5_14_1_CANONICAL_INTAKE_R1');
 requireMarker(findTarget('70_Workflow_Automation', live), 'CF_SERVICEOPS_V5_14_1_SINGLE_AUTOMATION_MODEL_R1');
 requireMarker(findTarget('95_Public_Runners', live), 'CF_SERVICEOPS_V5_14_1_SINGLE_PUBLIC_AUTOMATION_R1');
-requireMarker(findTarget('99_Production_Hardening', live), 'Version: 5.14.2');
+requireMarker(findTarget('99_Production_Hardening', live), 'Version: 5.14.4');
 assertNoLegacyAutomation(live);
 assertNoV2GenerationSource(live);
 console.log('SELF_TEST_PASS');
@@ -249,7 +249,7 @@ assertNoLegacyAutomation(verify);
 assertNoV2GenerationSource(verify);
 
 console.log('\n=== 9/10 Version and redeploy existing /exec ===');
-const description = 'CF ServiceOps v5.14.2 single automation model';
+const description = 'CF ServiceOps v5.14.4 single automation model';
 const versionResult = clasp(['version', description], {cwd: live, capture: true});
 const versionText = String(versionResult.stdout || '') + '\n' + String(versionResult.stderr || '');
 const match = versionText.match(/version\s+(\d+)/i);
