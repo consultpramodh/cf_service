@@ -1,10 +1,13 @@
 {
-  "release": "5.13.5",
+  "release": "5.14.4",
   "sourceAudit": "CF Service - July 2026 / Code Audit Source",
   "sourceAuditSpreadsheetId": "1m4cIZAkDMrN1lfm_Pash636xSIb4xS_TAKTfU73QsZs",
   "sourceAuditExportedAt": "2026-09-28",
   "projectFileCount": 17,
-  "modifiedModules": ["00_Config.gs", "60_Striven_Write.gs"],
+  "modifiedModules": [
+    "00_Config.gs",
+    "60_Striven_Write.gs"
+  ],
   "safety": {
     "customerLocationsAuthoritativeGet": "/v1/customers/{customerId}/locations",
     "contactAddressFallbackRequiresExactServiceAddressMatch": true,
@@ -13,5 +16,7 @@
     "customerCreatePrimaryLocationNoDuplicateFallback": true,
     "postWriteCustomerProfileReadbackRequired": true,
     "automaticLocationPostRetry": false
-  }
+  },
+  "releaseType": "VERSION_METADATA_NORMALIZATION",
+  "normalizedAt": "2026-10-07"
 }
