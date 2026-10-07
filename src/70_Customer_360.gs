@@ -1,7 +1,7 @@
 /************************************************************
  * APPS SCRIPT — 70_Customer_360.gs
  * CF ServiceOps — Deterministic Customer 360 Reporting Layer
- * Version: 4.3.8
+ * Version: 5.14.4
  *
  * AUTHORITY
  * - Source sheets and validated Striven report caches establish facts.
@@ -16,7 +16,7 @@ CF.Customer360 = (function () {
   'use strict';
 
   var MODULE_NAME = '70_Customer_360';
-  var VERSION = '4.3.8';
+  var VERSION = '5.14.4';
   var SHEET_KEY = 'CUSTOMER_360';
   var BACKUP_PREFIX = 'Backup - Customer 360 - ';
   var SOURCE_SHEET_KEYS = [
