@@ -2,7 +2,7 @@
 /*******************************************************
  * APPS SCRIPT — 20_Intake_Processing.gs
  * CF ServiceOps — Fast Webhook Intake + GF Reconciliation
- * Version: 5.8.0
+ * Version: 5.14.4
  *
  * DESIGN:
  * - Webhook path is intentionally short.
@@ -36,7 +36,7 @@ CF.Intake = (function () {
   'use strict';
 
   var MODULE_NAME = '20_Intake_Processing';
-  var VERSION = '5.10.0';
+  var VERSION = '5.14.4';
 
   var GF_DEFAULT_BASE_URL = 'https://www.classicfireplace.ca';
   var GF_DEFAULT_FORM_ID = '2';
