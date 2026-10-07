@@ -1,14 +1,14 @@
 /************************************************************
  * APPS SCRIPT — 01_Core_Utilities.gs
  * CF ServiceOps — Shared Infrastructure
- * Version: 5.8.0
+ * Version: 5.14.4
  ************************************************************/
 var CF = CF || {};
 
 CF.Util = (function () {
   'use strict';
 
-  var VERSION = '5.8.0';
+  var VERSION = '5.14.4';
 
   function config_() {
     if (!CF.Config) throw new Error('CF.Config is required.');
