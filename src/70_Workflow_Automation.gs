@@ -12,7 +12,7 @@
 
 /************************************************************
  * CF ServiceOps — Customer Structure Engine
- * Version: 5.14.2
+ * Version: 5.14.4
  *
  * Internal request-scoped helper only. It owns no triggers.
  ************************************************************/
@@ -20,7 +20,7 @@ var CF = CF || {};
 
 CF.CustomerStructureEngine = (function () {
   'use strict';
-  var VERSION='5.14.2';
+  var VERSION='5.14.4';
   function deps_(){if(!CF.Config||!CF.Util||!CF.Matching||!CF.StrivenControlledCustomerCreate||!CF.StrivenControlledContactCreate)throw new Error('CUSTOMER_STRUCTURE_SETUP_REQUIRED');return{config:CF.Config,util:CF.Util,matching:CF.Matching,customer:CF.StrivenControlledCustomerCreate,contact:CF.StrivenControlledContactCreate};}
   function clean_(v){return deps_().util.cleanText(v);}
   function upper_(v){return clean_(v).toUpperCase();}
@@ -103,7 +103,7 @@ var CF = CF || {};
 CF.SalesOrderDraft = (function () {
   'use strict';
 
-  var VERSION = '5.10.2';
+  var VERSION = '5.14.4';
   var CUSTOM_FIELD = {
     CUSTOMER_NOTES_PRINTABLE: '598',
     MANUFACTURER_MODEL: '651',
@@ -516,7 +516,7 @@ if (
 CF.StrivenCustomLists = (function () {
   'use strict';
 
-  var VERSION = '5.10.3';
+  var VERSION = '5.14.4';
   var CACHE_KEY = 'CF_V5103_STRIVEN_CUSTOM_LISTS';
   var CACHE_SECONDS = 1800;
   var DEFINITIONS = [
@@ -780,7 +780,7 @@ CF.StrivenCustomLists = (function () {
 /* CF_SERVICEOPS_V5_14_1_SINGLE_AUTOMATION_MODEL_R1 */
 CF.EventDrivenServiceAutomation = (function () {
   'use strict';
-  var VERSION='5.14.2';
+  var VERSION='5.14.4';
   var FINAL_HANDLER='AUTO_FINAL_ServiceOps';
   var WATCHDOG_HANDLER='AUTO_98_E2E_Recovery_Watchdog';
   var ENABLED='CF_EVENT_DRIVEN_SERVICE_AUTOMATION_ENABLED';
@@ -1226,7 +1226,7 @@ function AUTO_98_E2E_Recovery_Watchdog(e) {
  */
 CF.StatusWarningReconciler=(function(){
   'use strict';
-  var VERSION='5.14.3';
+  var VERSION='5.14.4';
   function clean_(v){return v===null||v===undefined?'':String(v).trim();}
   function upper_(v){return clean_(v).toUpperCase();}
   function parse_(v,f){try{return CF.Util&&CF.Util.parseJson?CF.Util.parseJson(v,f):JSON.parse(String(v||''));}catch(e){return f;}}
