@@ -1,7 +1,7 @@
 // /************************************************************
 //  * APPS SCRIPT — 60_Operator_Workflow.gs
 //  * CF ServiceOps — Operator Review, Approval and Completion
-//  * Version: 4.2.2
+//  * Version: 5.14.4
 //  ************************************************************/
 // var CF = CF || {};
 
@@ -9,7 +9,7 @@
 //   'use strict';
 
 //   var MODULE_NAME = '60_Operator_Workflow';
-//   var VERSION = '4.2.2';
+//   var VERSION = '5.14.4';
 
 //   function deps_() {
 //     if (!CF.Config || !CF.Util || !CF.ServiceRequestMatching || !CF.StrivenWrite) {
