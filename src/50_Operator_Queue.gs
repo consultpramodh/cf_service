@@ -1514,9 +1514,9 @@ function salesOrderText_(row,operationalIndex){
         module: MODULE_NAME, action: 'FAST_RESOLVE_AMBIGUOUS_CANDIDATE', status: 'COMPLETE',
         requestId: record['Request ID'], correlationId: record['Correlation ID'], actor: actor_(),
         details: { entityType: entityType, entityId: entityId, resolvedName: resolvedName, resultingStage: stage, queueRefreshDeferred: true, simpleTriggerSafe: true },
-        version: '5.11.8'
+        version: '5.14.4'
       });
-      return { ok: true, version: '5.11.8', requestId: record['Request ID'], selectedEntity: entityType.toUpperCase(), selectedId: entityId, stage: stage, queueRefreshDeferred: true, liveWritesAllowed: false };
+      return { ok: true, version: '5.14.4', requestId: record['Request ID'], selectedEntity: entityType.toUpperCase(), selectedId: entityId, stage: stage, queueRefreshDeferred: true, liveWritesAllowed: false };
     }, 3000);
   }
 
@@ -2059,7 +2059,7 @@ var CF_SERVICEOPS_OPERATIONAL_PROJECTION_V5100_R6_ = (function () {
     SpreadsheetApp.flush();
     return {
       ok: true,
-      version: '5.10.0',
+      version: '5.14.4',
       mode: 'OPERATIONAL_PROJECTION_R6',
       queueRows: queueRows,
       workOrdersInCache: workOrders.length,
@@ -2087,7 +2087,7 @@ var CF_SERVICEOPS_OPERATIONAL_PROJECTION_V5100_R6_ = (function () {
     } catch (error) {
       projection = {
         ok: false,
-        version: '5.10.0',
+        version: '5.14.4',
         mode: 'OPERATIONAL_PROJECTION_R6',
         error: error && error.message ? error.message : String(error)
       };
@@ -3810,7 +3810,7 @@ function FIX_20260903_reconcileAllExistingOperatorQueue() {
   var result = CF.OperatorQueue.refresh();
   return {
     ok: !result || result.ok !== false,
-    version:'5.12.2',
+    version:'5.14.4',
     status:'ALL_EXISTING_OPERATOR_QUEUE_RECONCILED',
     queueRefresh:result || null,
     liveWriteExecuted:false,
@@ -4854,7 +4854,7 @@ function FIX_20260903_reconcileAllExistingOperatorQueue() {
   var result = CF.OperatorQueue.refresh();
   return {
     ok:(!result || result.ok !== false) && backfill.ok !== false,
-    version:'5.12.4',
+    version:'5.14.4',
     status:'QUEUE_RECONCILED_AND_NEWSLETTER_TRACKING_BACKFILLED',
     queueRefresh:result || null,
     newsletterBackfill:backfill,
@@ -5107,10 +5107,10 @@ function FIX_20260903_reconcileAllExistingOperatorQueue() {
   /* CF_SERVICEOPS_V5_13_3_QUEUE_TRIGGER_HYGIENE_R1_HELPER */
   function CF_V5133_createDedupedOneShot_(handlerName,delayMs){
     handlerName=String(handlerName||'');var existing=[];try{existing=ScriptApp.getProjectTriggers().filter(function(t){try{return t.getEventType()===ScriptApp.EventType.CLOCK&&t.getHandlerFunction()===handlerName;}catch(e){return false;}});}catch(e){}
-    if(existing.length>1){for(var i=1;i<existing.length;i++){try{ScriptApp.deleteTrigger(existing[i]);}catch(ignored){}}try{if(CF.Util&&CF.Util.logEvent)CF.Util.logEvent({module:'50_Operator_Queue',action:'QUEUE_TRIGGER_DEDUPED',status:'COMPLETE',details:{handler:handlerName,removed:existing.length-1},version:'5.13.3'});}catch(logErr){}}
+    if(existing.length>1){for(var i=1;i<existing.length;i++){try{ScriptApp.deleteTrigger(existing[i]);}catch(ignored){}}try{if(CF.Util&&CF.Util.logEvent)CF.Util.logEvent({module:'50_Operator_Queue',action:'QUEUE_TRIGGER_DEDUPED',status:'COMPLETE',details:{handler:handlerName,removed:existing.length-1},version:'5.14.4'});}catch(logErr){}}
     if(existing.length)return existing[0];
     try{return ScriptApp.newTrigger(handlerName).timeBased().after(Math.max(1000,Number(delayMs)||5000)).create();}
-    catch(e){var msg=String(e&&e.message||e);if(/too many triggers|trigger.*quota|quota.*trigger/i.test(msg)){try{if(CF.Util&&CF.Util.logEvent)CF.Util.logEvent({module:'50_Operator_Queue',action:'QUEUE_TRIGGER_QUOTA_FAIL_SOFT',status:'SKIPPED',message:msg,details:{handler:handlerName,queueStatePreserved:true,businessWriteNotFailed:true},version:'5.13.3'});}catch(logErr2){}return{getUniqueId:function(){return'';},getHandlerFunction:function(){return handlerName;},getEventType:function(){return ScriptApp.EventType.CLOCK;},__cfV5133QuotaDeferred:true};}throw e;}
+    catch(e){var msg=String(e&&e.message||e);if(/too many triggers|trigger.*quota|quota.*trigger/i.test(msg)){try{if(CF.Util&&CF.Util.logEvent)CF.Util.logEvent({module:'50_Operator_Queue',action:'QUEUE_TRIGGER_QUOTA_FAIL_SOFT',status:'SKIPPED',message:msg,details:{handler:handlerName,queueStatePreserved:true,businessWriteNotFailed:true},version:'5.14.4'});}catch(logErr2){}return{getUniqueId:function(){return'';},getHandlerFunction:function(){return handlerName;},getEventType:function(){return ScriptApp.EventType.CLOCK;},__cfV5133QuotaDeferred:true};}throw e;}
   }
 function scheduleDirtyRow_(rowNumber){rowNumber=Number(rowNumber||0);if(!rowNumber)return;var lock=LockService.getScriptLock();if(!lock.tryLock(1000))return;try{var p=PropertiesService.getScriptProperties(),rows=[];try{rows=JSON.parse(p.getProperty(DIRTY_ROWS_PROP)||'[]');}catch(e){rows=[];}if(!Array.isArray(rows))rows=[];if(rows.indexOf(rowNumber)<0)rows.push(rowNumber);if(rows.length>100)rows=rows.slice(-100);p.setProperty(DIRTY_ROWS_PROP,JSON.stringify(rows));var scheduled=Number(p.getProperty(SCHEDULED_AT_PROP)||0),stale=!scheduled||(nowMs_()-scheduled>120000);if(stale){CF_V5133_createDedupedOneShot_(TRIGGER,5000);p.setProperty(SCHEDULED_AT_PROP,String(nowMs_()));}}finally{lock.releaseLock();}}
   function flushPending_(){var p=PropertiesService.getScriptProperties(),rows=[];try{rows=JSON.parse(p.getProperty(DIRTY_ROWS_PROP)||'[]');}catch(e){rows=[];}p.deleteProperty(DIRTY_ROWS_PROP);p.deleteProperty(SCHEDULED_AT_PROP);if(!Array.isArray(rows)||!rows.length)return{ok:true,status:'NO_DIRTY_ROWS',version:VERSION};SpreadsheetApp.flush();if(rows.length>8){var full=refreshAll_({verifyLimit:25});return{ok:!full||full.ok!==false,status:'COALESCED_FULL_REFRESH',dirtyRows:rows.length,fullRefresh:full,version:VERSION};}var sheet=CF.Util.requireSheet('SERVICE_REQUESTS'),headers=CF.Util.getActualHeaders(sheet),idCol=headers.indexOf('Request ID')+1,results=[];rows.forEach(function(row){if(row<2||row>sheet.getLastRow()||!idCol)return;var id=clean_(sheet.getRange(row,idCol).getDisplayValue());if(id)results.push(refreshRequest_(id,{fullFallback:true,verifyLimit:25}));});var ok=results.every(function(x){return x&&x.ok!==false;});return{ok:ok,status:ok?'DIRTY_ROWS_REFRESHED':'DIRTY_ROW_REFRESH_FAILED',dirtyRows:rows.length,results:results,version:VERSION};}
@@ -5132,7 +5132,7 @@ function AUTO_CF_QUEUE_SYNC_AFTER_SERVICE_REQUEST_MUTATION(e){return(typeof CF!=
 
 function TESTING_CF_QUEUE_VERIFY_RECENT_20(){
   if(typeof CF==='undefined'||!CF.OperatorQueue)throw new Error('CF.OperatorQueue unavailable.');
-  var refresh=CF.OperatorQueue.refresh(),parity=CF.OperatorQueue.verifyRecentParity(20),out={ok:parity.ok,version:'5.13.1',status:parity.ok?'RECENT_20_QUEUE_TIMING_PARITY_VERIFIED':'QUEUE_PARITY_FAILED',parity:parity,refresh:refresh,liveStrivenWriteExecuted:false};
+  var refresh=CF.OperatorQueue.refresh(),parity=CF.OperatorQueue.verifyRecentParity(20),out={ok:parity.ok,version:'5.14.4',status:parity.ok?'RECENT_20_QUEUE_TIMING_PARITY_VERIFIED':'QUEUE_PARITY_FAILED',parity:parity,refresh:refresh,liveStrivenWriteExecuted:false};
   console.log(JSON.stringify(out));if(!parity.ok)throw new Error('QUEUE_PARITY_FAILED | '+JSON.stringify(parity));return out;
 }
 
@@ -5143,7 +5143,7 @@ function TESTING_CF_V5131_RELEASE_ACCEPTANCE(){
   var taxContractOk=lines[0]&&lines[0].Taxable===true&&lines[1]&&lines[1].Taxable===true&&!Object.prototype.hasOwnProperty.call(lines[2]||{},'Taxable');
   var historicalTaxAudit=CF.ServiceOrderTaxContract.auditRecent(20);
   var refresh=CF.OperatorQueue.refresh(),parity=CF.OperatorQueue.verifyRecentParity(20);
-  var out={ok:taxContractOk&&parity.ok,version:'5.13.1',status:(taxContractOk&&parity.ok)?'RELEASE_ACCEPTANCE_CLEAR':'RELEASE_ACCEPTANCE_REVIEW_REQUIRED',taxContractSampleOk:taxContractOk,historicalTaxAudit:historicalTaxAudit,queueParity:parity,queueRefresh:refresh,liveStrivenWriteExecuted:false};
+  var out={ok:taxContractOk&&parity.ok,version:'5.14.4',status:(taxContractOk&&parity.ok)?'RELEASE_ACCEPTANCE_CLEAR':'RELEASE_ACCEPTANCE_REVIEW_REQUIRED',taxContractSampleOk:taxContractOk,historicalTaxAudit:historicalTaxAudit,queueParity:parity,queueRefresh:refresh,liveStrivenWriteExecuted:false};
   console.log(JSON.stringify(out));if(!taxContractOk)throw new Error('TAX_CONTRACT_SAMPLE_FAILED');if(!parity.ok)throw new Error('QUEUE_PARITY_FAILED | '+JSON.stringify(parity));return out;
 }
 /* END CF_SERVICEOPS_V5_13_1_QUEUE_TIMING_HARDENING_R1 */
@@ -5239,7 +5239,7 @@ function FIX_20261006_refreshDashboardLive(){
   var result=CF.OperatorQueue.refresh();
   return{
     ok:!result||result.ok!==false,
-    version:'5.14.3',
+    version:'5.14.4',
     status:'QUEUE_AND_DASHBOARD_REFRESHED',
     queueRefresh:result||null,
     liveWriteExecuted:false,
