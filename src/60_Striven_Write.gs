@@ -7,7 +7,7 @@
 /************************************************************
  * APPS SCRIPT — 60_Striven_Write.gs
  * CF ServiceOps — Phase 5A Transaction Planning
- * Version: 5.2.0
+ * Version: 5.14.4
  *
  * PURPOSE
  * - Builds deterministic Customer → Contact → Location plans.
@@ -22,7 +22,7 @@ CF.StrivenWrite = (function () {
   'use strict';
 
   var MODULE_NAME = '60_Striven_Write';
-  var VERSION = '5.2.0';
+  var VERSION = '5.14.4';
   var PLAN_VERSION = 'PHASE5A-CUSTOMER-STRUCTURE-V2-PRIMARY-LOCATION';
   var CUSTOMER_CREATE_PREVIEW_VERSION = 'PHASE5B-A-CUSTOMER-CREATE-PREVIEW-V1'; // PHASE5B_CUSTOMER_CREATE_PREVIEW_V1
   var CONTROLLED_TEST_REQUEST_ID = 'SR-20260818160541-7844'; // PHASE5B_CONTROLLED_CUSTOMER_PREFLIGHT_V1
@@ -2365,7 +2365,7 @@ CF.StrivenWrite = (function () {
 /************************************************************
  * APPS SCRIPT — 61_Striven_Controlled_Customer_Create.gs
  * CF ServiceOps — Guarded Phase 5B-C Customer Create
- * Version: 5.8.1
+ * Version: 5.14.4
  *
  * SAFETY CONTRACT
  * - Does not replace or modify CF.StrivenWrite.
@@ -2387,7 +2387,7 @@ CF.StrivenControlledCustomerCreate = (function () {
   'use strict';
 
   var MODULE_NAME = '61_Striven_Controlled_Customer_Create';
-  var VERSION = '5.8.4';
+  var VERSION = '5.14.4';
   var CONTROLLED_REQUEST_ID = 'SR-20260818160541-7844';
   var CONTROLLED_EXECUTION_TOKEN = 'PHASE5B-C-ONE-CUSTOMER';
   var AUTO_EXECUTION_TOKEN = 'CF-AUTO-CUSTOMER-STRUCTURE-V1';
@@ -3723,7 +3723,7 @@ CF.StrivenControlledCustomerCreate = (function () {
 /************************************************************
  * APPS SCRIPT — 62_Striven_Controlled_Contact_Create.gs
  * CF ServiceOps — Guarded Phase 5D Contact Create + Association
- * Version: 5.8.2
+ * Version: 5.14.4
  *
  * SAFETY CONTRACT
  * - Does not replace or modify CF.StrivenWrite or Phase 5B Customer module.
@@ -3744,7 +3744,7 @@ CF.StrivenControlledContactCreate = (function () {
   'use strict';
 
   var MODULE_NAME = '62_Striven_Controlled_Contact_Create';
-  var VERSION = '5.8.4';
+  var VERSION = '5.14.4';
   var CONTROLLED_REQUEST_ID = 'SR-20260818160541-7844';
   var CONTROLLED_EXECUTION_TOKEN = 'PHASE5D-ONE-CONTACT';
   var AUTO_EXECUTION_TOKEN = 'CF-AUTO-CUSTOMER-STRUCTURE-V1';
@@ -4846,7 +4846,7 @@ function executeControlledContactCreate(requestIdOrRow, options) {
 /************************************************************
  * CF_SERVICE_GUARDED_SALES_ORDER_CREATE_V5_9_8_FINAL_QUOTED_MANUAL_REVIEW
  * CF ServiceOps — Guarded Sales Order Create
- * Version: 5.9.8
+ * Version: 5.14.4
  *
  * CONTROLLED RELEASE CONTRACT
  * - Locked to SR-20260818160541-7844 for the first live create.
@@ -4869,7 +4869,7 @@ function executeControlledContactCreate(requestIdOrRow, options) {
 /* CF_SERVICEOPS_V5_11_9_REQUEST_FIDELITY_ITEM_MASTER_R2 */
 CF.OrderPreflight = (function () {
   'use strict';
-  var VERSION='5.11.9';
+  var VERSION='5.14.4';
   var MODULE_NAME='60_Striven_Write';
   var EXECUTION_TOKEN='PHASE6-MANUAL-SELECTED-SALES-ORDER';
   var ENDPOINT='/v1/sales-orders';
@@ -6020,7 +6020,7 @@ CF.SalesOrderInternalNotesApi = (function () {
    * top-level CustomFields in the documented write DTO shape, while all
    * top-level CustomFields are snapshot-verified unchanged after the write.
    */
-  var VERSION = '5.10.28';
+  var VERSION = '5.14.4';
 
   function clean_(value) { return value === null || value === undefined ? '' : String(value).trim(); }
   function clone_(value) { return JSON.parse(JSON.stringify(value)); }
@@ -6296,7 +6296,7 @@ CF.SalesOrderInternalNotesApi = (function () {
 CF.CustomerScopedContactIdentity = (function () {
   'use strict';
 
-  var VERSION='5.14.2';
+  var VERSION='5.14.4';
   var LAST_REPORT_REFRESH_PROP='CF_SCOPED_CONTACT_REPORT_REFRESH_AT_V5142';
   var LAST_MAINTENANCE_PROP='CF_SCOPED_CONTACT_MAINTENANCE_AT_V5142';
   var REPORT_REFRESH_TTL_MS=15*60*1000;
@@ -6518,7 +6518,7 @@ CF.CustomerScopedContactIdentity = (function () {
 CF.ManualWorkOrderInternalNotes = (function () {
   'use strict';
 
-  var VERSION='5.14.2';
+  var VERSION='5.14.4';
   function clean_(v){return CF.Util.cleanText(v);}
   function parse_(v,f){try{return CF.Util.parseJson(v,f);}catch(e){try{return JSON.parse(String(v||''));}catch(e2){return f;}}}
   function now_(){return CF.Util.nowString();}
@@ -6657,7 +6657,7 @@ CF.ManualWorkOrderInternalNotes = (function () {
 /* CF_SERVICEOPS_V5_10_34_CUSTOMER_CONTACT_INFO_SYNC_R2 */
 CF.CustomerContactInfoSync = (function () {
   'use strict';
-  var VERSION='5.11.5';
+  var VERSION='5.14.4';
   var SAFETY_MARK='CF_SERVICEOPS_V5_10_34_INFO_SYNC_JOURNAL_NO_AUTO_RETRY_R2';
   var CUSTOMER_GET='/v1/customers/{id}';
   var CUSTOMER_POST='/v1/customers';
@@ -6854,7 +6854,7 @@ function reconcile(requestId,options){options=options||{};var r=req_(requestId);
 /* CF_SERVICEOPS_V5_12_8_STANDALONE_LOCATION_GUARDED_CREATE_R1 */
 CF.StandaloneLocationCreateV5128=(function(){
   'use strict';
-  var VERSION='5.12.8';
+  var VERSION='5.14.4';
   function clean_(v){return v===null||v===undefined?'':String(v).trim();}
   function upper_(v){return clean_(v).toUpperCase();}
   function norm_(v){return upper_(v).replace(/[^A-Z0-9]/g,'');}
@@ -7048,7 +7048,7 @@ CF.StandaloneLocationCreateV5128=(function(){
   if(typeof CF==='undefined'||!CF.StrivenHttp||typeof CF.StrivenHttp.requestJson!=='function')throw new Error('SERVICE_ITEM_TAX_CONTRACT_SETUP_REQUIRED');
   if(CF.StrivenHttp.__serviceItemTaxContractV5130R1===true)return;
 
-  var VERSION='5.13.0';
+  var VERSION='5.14.4';
   var baseRequest=CF.StrivenHttp.requestJson;
   var TARGET_ITEMS={'41434':true,'41481':true};
 
