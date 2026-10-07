@@ -4,7 +4,7 @@
 /************************************************************
  * APPS SCRIPT — 95_Public_Runners.gs
  * CF ServiceOps — Public Entry Points
- * Version: 5.8.0
+ * Version: 5.14.4
  *
  * MENU DESIGN
  * Keep the daily operator menu intentionally small:
@@ -21,7 +21,7 @@ var CF = CF || {};
 CF.PublicRunners = (function () {
   'use strict';
 
-  var VERSION = '5.8.0';
+  var VERSION = '5.14.4';
 
   function util_() {
     if (!CF.Util || !CF.Config) throw new Error('CF.Util and CF.Config are required.');
@@ -354,7 +354,7 @@ function WRITE_processApproved() {
  */
 CF.OpenStatus = (function () {
   'use strict';
-  var VERSION = '5.10.9';
+  var VERSION = '5.14.4';
   function clean_(v) { return v === null || v === undefined ? '' : String(v).trim(); }
   function sheetName_(key, fallback) {
     try { var n=CF.Config && CF.Config.getSheetName ? clean_(CF.Config.getSheetName(key)) : ''; if(n)return n; } catch(ignored) {}
@@ -3840,7 +3840,7 @@ function TESTING_10_unsupportedSnapshotEqual_(beforeList, afterList) {
 /* CF_SERVICEOPS_V5_12_6_WORKFLOW_STABILITY_REPROCESS_RUNNER_R1 */
 function FIX_20260905_applyWorkflowStabilityAndResumeRecentIncomplete() {
   return CF.PublicRunners.run('FIX 20260905 - Workflow stability + resume recent incomplete', function () {
-    var VERSION = '5.12.6';
+    var VERSION = '5.14.4';
     var targets = [
       {
         requestId: 'SR-20260905061831-2571',
@@ -4083,7 +4083,7 @@ var CF = CF || {};
  */
 function FIX_20260905_applyAutonomousResolutionPolicyAndResume() {
   return CF.PublicRunners.run('FIX 20260905 - Autonomous resolution + minimal review', function () {
-    var VERSION = '5.12.7';
+    var VERSION = '5.14.4';
     var OLD_SO_REVIEW_REASON = 'Sales Order created and reconciled as Quoted. Manual operator review is required.';
     var successReviewIds = [
       'SR-20260905134007-9457', // Stephanie Kerr
@@ -4344,7 +4344,7 @@ function TESTING_CURRENT_runReadOnlyStatusCheck() {
 /* CF_SERVICEOPS_V5_12_9_ASSOCIATION_IDENTITY_RECOVERY_R1 */
 (function(){
   'use strict';
-  var VERSION='5.12.9';
+  var VERSION='5.14.4';
   var IDS=[
     'SR-20260908093552-3155', /* Hossein Masooly */
     'SR-20260907150227-9928', /* Philipp Klaussner */
