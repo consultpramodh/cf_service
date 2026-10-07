@@ -1,7 +1,7 @@
 /************************************************************
  * APPS SCRIPT — 00_Config.gs
  * CF ServiceOps — Lean Production Contract
- * Version: 5.8.0
+ * Version: 5.14.4
  *
  * ACTIVE WORKBOOK: 8 NUMBERED SHEETS
  * Visible operator sheets:
@@ -17,7 +17,7 @@ CF.Config = (function () {
 
   var APP = {
     NAME: 'CF ServiceOps',
-    VERSION: '5.8.0',
+    VERSION: '5.14.4',
     SCHEMA_VERSION: '2026-08-OPERATOR-UX-V6',
     TIMEZONE: 'America/Toronto',
     ENVIRONMENT: 'DEV'
