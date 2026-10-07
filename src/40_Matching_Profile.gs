@@ -2,7 +2,7 @@
 /************************************************************
  * APPS SCRIPT — 40_Matching_Profile.gs
  * CF ServiceOps — Automatic Customer / Contact / Location Resolution
- * Version: 5.7.1
+ * Version: 5.14.4
  *
  * PURPOSE
  * - Matches Service Requests against Striven customer/contact/location caches.
@@ -27,7 +27,7 @@ CF.Matching = (function () {
   'use strict';
 
   var MODULE_NAME = '40_Matching_Profile';
-  var VERSION = '5.10.5';
+  var VERSION = '5.14.4';
 
   function deps_() {
     if (!CF.Config || !CF.Util || !CF.StrivenData) {
