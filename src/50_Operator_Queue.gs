@@ -3,7 +3,7 @@
 /************************************************************
  * APPS SCRIPT — 50_Operator_Queue.gs
  * CF ServiceOps — Operator Queue + Service Snapshot
- * Version: 5.8.0
+ * Version: 5.14.4
  *
  * OPERATOR CONTRACT
  * - Dashboard is read-only and shows service-wide KPIs/snapshots.
@@ -18,7 +18,7 @@ CF.OperatorQueue = (function () {
   'use strict';
 
   var MODULE_NAME = '50_Operator_Queue';
-  var VERSION = '5.8.1';
+  var VERSION = '5.14.4';
 
   var STAGE_PRIORITY = {
     'NEEDS REVIEW': 1,
@@ -2111,7 +2111,7 @@ var CF_SERVICEOPS_OPERATIONAL_PROJECTION_V5100_R6_ = (function () {
 /************************************************************
  * CF_SERVICEOPS_V5_10_15_LEAN_QUEUE_SNAPSHOT_R1
  * CF ServiceOps — Authoritative Lean Operator Queue Snapshot
- * Version: 5.10.15
+ * Version: 5.14.4
  *
  * This block is intentionally appended AFTER all historical
  * Queue/projection wrappers. It supersedes the legacy refresh
@@ -2129,7 +2129,7 @@ var CF_SERVICEOPS_OPERATIONAL_PROJECTION_V5100_R6_ = (function () {
 var CF_SERVICEOPS_LEAN_QUEUE_V51015_R1_ = (function () {
   'use strict';
 
-  var VERSION='5.11.7';
+  var VERSION='5.14.4';
   var LAYOUT_PROPERTY='CF_OPERATOR_QUEUE_LAYOUT_V51015_R1';
 
   function clean_(v){return String(v===null||v===undefined?'':v).trim();}
@@ -2581,7 +2581,7 @@ var CF_SERVICEOPS_LEAN_QUEUE_V51015_R1_ = (function () {
 /************************************************************
  * CF_SERVICEOPS_V5_10_16_ALL_REQUEST_OPERATIONAL_RECONCILIATION_R1
  * CF ServiceOps — All-Request Operational Link Reconciliation
- * Version: 5.10.16
+ * Version: 5.14.4
  *
  * PURPOSE
  * Permanently link Service Requests to existing Striven
@@ -2599,7 +2599,7 @@ var CF_SERVICEOPS_LEAN_QUEUE_V51015_R1_ = (function () {
 var CF_SERVICEOPS_OPERATIONAL_LINK_RECONCILIATION_V51016_R1_ = (function () {
   'use strict';
 
-  var VERSION='5.10.16';
+  var VERSION='5.14.4';
   var DAY_MS=24*60*60*1000;
   var MAX_AFTER_DAYS=120;
   var MAX_BEFORE_MS=1*DAY_MS;
@@ -2941,7 +2941,7 @@ var CF_SERVICEOPS_OPERATIONAL_LINK_RECONCILIATION_V51016_R1_ = (function () {
 /************************************************************
  * CF_SERVICEOPS_V5_12_1_AUTO_SO_TASK_QUEUE_RECONCILIATION_R1
  * CF ServiceOps — Automatic Existing SO/Task Queue Reconciliation
- * Version: 5.12.1
+ * Version: 5.14.4
  *
  * PURPOSE
  * - After a successful Striven Operational Data refresh, automatically:
@@ -2966,7 +2966,7 @@ var CF_SERVICEOPS_OPERATIONAL_LINK_RECONCILIATION_V51016_R1_ = (function () {
 (function CF_SERVICEOPS_INSTALL_AUTO_SO_TASK_QUEUE_RECONCILIATION_V5121_R1_() {
   'use strict';
 
-  var VERSION = '5.12.1';
+  var VERSION = '5.14.4';
   var MODULE = '50_Operator_Queue';
   var HISTORICAL_CUTOFF_ISO = '2026-09-03T13:30:00-04:00';
   var HISTORICAL_CUTOFF_MS = new Date(HISTORICAL_CUTOFF_ISO).getTime();
@@ -3170,7 +3170,7 @@ var CF_SERVICEOPS_OPERATIONAL_LINK_RECONCILIATION_V51016_R1_ = (function () {
 /************************************************************
  * CF_SERVICEOPS_V5_12_2_ALL_EXISTING_QUEUE_RECONCILIATION_R1
  * CF ServiceOps — All Existing Operator Queue SO/Task Reconciliation
- * Version: 5.12.2
+ * Version: 5.14.4
  *
  * PURPOSE
  * - Ignore request dates for Operator Queue reconciliation.
@@ -3194,7 +3194,7 @@ var CF_SERVICEOPS_OPERATIONAL_LINK_RECONCILIATION_V51016_R1_ = (function () {
 var CF_SERVICEOPS_ALL_EXISTING_QUEUE_RECONCILIATION_V5122_R1_ = (function () {
   'use strict';
 
-  var VERSION = '5.12.2';
+  var VERSION = '5.14.4';
   var MODULE = '50_Operator_Queue';
   var ORDER_COLUMN = 8;
   var TASK_COLUMN = 9;
@@ -3712,7 +3712,7 @@ var CF_SERVICEOPS_ALL_EXISTING_QUEUE_RECONCILIATION_V5122_R1_ = (function () {
 
 (function CF_SERVICEOPS_INSTALL_ALL_EXISTING_QUEUE_RECONCILIATION_V5122_R1_() {
   'use strict';
-  var VERSION = '5.12.2';
+  var VERSION = '5.14.4';
 
   if (
     typeof CF === 'undefined' ||
@@ -3822,7 +3822,7 @@ function FIX_20260903_reconcileAllExistingOperatorQueue() {
 /************************************************************
  * CF_SERVICEOPS_V5_12_4_TEMPORAL_IDENTITY_TIEBREAK_R1
  * CF ServiceOps — Temporal Identity Tiebreak + Newsletter Tracking foundation
- * Version: 5.12.4
+ * Version: 5.14.4
  *
  * PURPOSE
  * - Keep every existing Operator Queue row in scope regardless of date.
@@ -3849,7 +3849,7 @@ function FIX_20260903_reconcileAllExistingOperatorQueue() {
 var CF_SERVICEOPS_ALL_EXISTING_QUEUE_RECONCILIATION_V5124_R1_ = (function () {
   'use strict';
 
-  var VERSION = '5.12.4';
+  var VERSION = '5.14.4';
   var MODULE = '50_Operator_Queue';
   var ORDER_COLUMN = 8;
   var TASK_COLUMN = 9;
@@ -4434,7 +4434,7 @@ var CF_SERVICEOPS_ALL_EXISTING_QUEUE_RECONCILIATION_V5124_R1_ = (function () {
 
 (function CF_SERVICEOPS_INSTALL_TEMPORAL_IDENTITY_TIEBREAK_V5124_R1_() {
   'use strict';
-  var VERSION = '5.12.4';
+  var VERSION = '5.14.4';
 
   if (
     typeof CF === 'undefined' || !CF.OperatorQueue || typeof CF.OperatorQueue.refresh !== 'function' ||
@@ -4470,7 +4470,7 @@ var CF_SERVICEOPS_ALL_EXISTING_QUEUE_RECONCILIATION_V5124_R1_ = (function () {
 /************************************************************
  * CF_SERVICEOPS_V5_12_4_NEWSLETTER_TRACKING_DASHBOARD_R1
  * CF ServiceOps — Early Bird newsletter attribution tracking
- * Version: 5.12.4
+ * Version: 5.14.4
  *
  * PURPOSE
  * - Preserve Newsletter 2's supplied tracking contract even when
@@ -4489,7 +4489,7 @@ var CF_SERVICEOPS_ALL_EXISTING_QUEUE_RECONCILIATION_V5124_R1_ = (function () {
 var CF_SERVICEOPS_NEWSLETTER_TRACKING_V5124_R1_ = (function () {
   'use strict';
 
-  var VERSION = '5.12.4';
+  var VERSION = '5.14.4';
   var MODULE = '50_Operator_Queue';
   var DASHBOARD_START_ROW = 36;
   var DASHBOARD_START_COL = 1;
@@ -4776,7 +4776,7 @@ var CF_SERVICEOPS_NEWSLETTER_TRACKING_V5124_R1_ = (function () {
 
 (function CF_SERVICEOPS_INSTALL_NEWSLETTER_TRACKING_V5124_R1_() {
   'use strict';
-  var VERSION = '5.12.4';
+  var VERSION = '5.14.4';
   if (typeof CF === 'undefined' || !CF.Util || !CF.OperatorQueue || typeof CF.OperatorQueue.refresh !== 'function') {
     throw new Error('NEWSLETTER_TRACKING_SETUP_REQUIRED | CF.Util and CF.OperatorQueue.refresh are required.');
   }
@@ -4879,7 +4879,7 @@ function FIX_20260903_reconcileAllExistingOperatorQueue() {
   if(typeof CF==='undefined'||!CF.OperatorQueue||!CF.Util) throw new Error('QUEUE_TIMING_HARDENING_SETUP_REQUIRED');
   if(CF.OperatorQueue.__queueTimingHardeningV5131R1===true) return;
 
-  var VERSION='5.13.1';
+  var VERSION='5.14.4';
   var baseRefresh=CF.OperatorQueue.refresh;
   var baseApply=CF.OperatorQueue.applyOperatorDecision;
   var basePatchRow=CF.Util.patchRow;
@@ -5152,7 +5152,7 @@ function TESTING_CF_V5131_RELEASE_ACCEPTANCE(){
 /* CF_SERVICEOPS_V5_14_3_DASHBOARD_LIVE_PROJECTION_R1 */
 /************************************************************
  * CF ServiceOps — Dashboard Live Projection
- * Version: 5.14.3
+ * Version: 5.14.4
  *
  * Restores 00 Dashboard refresh AFTER the lean queue/timing
  * wrappers intentionally stopped rebuilding it.
@@ -5169,7 +5169,7 @@ function TESTING_CF_V5131_RELEASE_ACCEPTANCE(){
   }
   if(CF.OperatorQueue.__dashboardLiveProjectionV5143R1===true)return;
 
-  var VERSION='5.14.3';
+  var VERSION='5.14.4';
   var baseRefresh=CF.OperatorQueue.refresh;
   var baseFlush=typeof CF.OperatorQueue.flushPendingMutationSync==='function'
     ?CF.OperatorQueue.flushPendingMutationSync:null;
