@@ -1,6 +1,6 @@
 /**
  * CF ServiceOps — Production Guard / Cache Maintenance
- * Version: 5.14.2
+ * Version: 5.14.4
  *
  * This file intentionally contains NO workflow monkey patches.
  * AUTO_FINAL_ServiceOps owns the request lifecycle.
@@ -13,7 +13,7 @@
  * - reports guard health.
  */
 
-var CFH_VERSION = '5.14.2';
+var CFH_VERSION = '5.14.4';
 var CFH_QUEUE_PROP = 'CF_EVENT_DRIVEN_SERVICE_REQUEST_IDS';
 var CFH_STANDARD_ITEM_PROP = 'STRIVEN_STANDARD_SERVICE_ITEM_ID';
 var CFH_STANDARD_ITEM_ID = '41481';
