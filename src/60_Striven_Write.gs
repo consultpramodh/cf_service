@@ -5654,7 +5654,7 @@ var issues=[];
     if(verified.transient===true)return verified;
 
     var root=rootJournal_(record),order=root.salesOrderCreate||{};
-    order.certification={attemptedAt:now_(),version:'5.11.0',result:verified};
+    order.certification={attemptedAt:now_(),version:'5.14.4',result:verified};
     if(verified.ok===true){
       var repairableDifferences=(verified.repairableIssues||[]).slice();
       order.status=repairableDifferences.length?'SALES_ORDER_VERIFIED_COMPLETE_WITH_REPAIRABLE_DIFFERENCES':'SALES_ORDER_VERIFIED_COMPLETE';
@@ -5729,7 +5729,7 @@ var issues=[];
     certified.remoteWriteMayHaveSucceeded=certified.remoteWriteMayHaveSucceeded===true||!!(base&&base.remoteWriteMayHaveSucceeded===true)||certified.liveWriteExecuted===true;
     return certified;
   }
-  return{version:'5.11.0',previewRequest:previewRequest,approveRequest:approveRequest,executeApproved:executeApprovedV511_,certifyExisting:certifyExisting,previewCertification:previewCertification,probeInternalNotesContract:resolveInternalNotesEncoding_,executionToken:EXECUTION_TOKEN,reliabilityMarker:'CF_SERVICEOPS_V5_11_0_END_TO_END_RELIABILITY_CONTROLLER_R2'};
+  return{version:'5.14.4',previewRequest:previewRequest,approveRequest:approveRequest,executeApproved:executeApprovedV511_,certifyExisting:certifyExisting,previewCertification:previewCertification,probeInternalNotesContract:resolveInternalNotesEncoding_,executionToken:EXECUTION_TOKEN,reliabilityMarker:'CF_SERVICEOPS_V5_11_0_END_TO_END_RELIABILITY_CONTROLLER_R2'};
 })();
 
 /* CF_SERVICEOPS_V5_10_14_RUNTIME_INTERNAL_NOTES_QUEUE_R1 — WRITER FAST READINESS + CONFIRMED INTERNAL NOTES */
@@ -7115,7 +7115,7 @@ function TESTING_CF_TAX_CONTRACT_INSTALLATION(){
   var out=CF.ServiceOrderTaxContract.applyPayload(sample),rows=out.payload.LineItems;
   if(rows[0].Taxable!==true)throw new Error('TAX_CONTRACT_SAMPLE_FAILED_41481');
   if(Object.prototype.hasOwnProperty.call(rows[1],'Taxable'))throw new Error('TAX_CONTRACT_TOUCHED_NON_TARGET_ITEM');
-  return{ok:true,version:'5.13.0',status:'SERVICE_ITEM_TAX_CONTRACT_VERIFIED',targetItemIds:CF.ServiceOrderTaxContract.targetItemIds,liveStrivenWriteExecuted:false};
+  return{ok:true,version:'5.14.4',status:'SERVICE_ITEM_TAX_CONTRACT_VERIFIED',targetItemIds:CF.ServiceOrderTaxContract.targetItemIds,liveStrivenWriteExecuted:false};
 }
 
 function TESTING_CF_TAX_AUDIT_RECENT_20(){
