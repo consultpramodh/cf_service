@@ -4920,7 +4920,7 @@ function fetchAllGravityEntries_() {
       var logSheet = logUtil.requireSheet('SYSTEM_LOG');
       var logHeaders = logUtil.getActualHeaders(logSheet);
       var logLastRow = logSheet.getLastRow();
-      var logStartRow = Math.max(2, logLastRow - 99);
+      var logStartRow = Math.max(2, logLastRow - 299);
       var logRows = logLastRow >= 2 ? logSheet.getRange(logStartRow, 1, logLastRow - logStartRow + 1, logHeaders.length).getValues().map(function(row){return logUtil.rowToRecord(logHeaders, row, 0);}) : [];
       var trace = logRows.filter(function(r){return requestIds.indexOf(clean_(r['Request ID'])) !== -1;}).slice(-12).map(function(r){
         var details = deps_().util.parseJson(r['Details JSON'], {}) || {};
@@ -4939,6 +4939,11 @@ function fetchAllGravityEntries_() {
         matchingReadiness:{ok:readiness.ok,counts:readiness.counts,fresh:readiness.fresh,requiredMissing:readiness.requiredMissing},
         automation:CF.EventDrivenServiceAutomation.inspect(),
         trace:trace,
+        cacheRecoveryTrace:logRows.filter(function(r){return /REFRESH_CUSTOMER|BULK_REFRESH|MATCHING_CACHE_RECOVERY/.test(clean_(r['Action']));}).slice(-12).map(function(r){
+          var d=logUtil.parseJson(r['Details JSON'],{})||{};var result=d.result||d;
+          return {at:clean_(r['Timestamp']),action:clean_(r['Action']),status:clean_(r['Status']),group:d.group||result.group||'',resultStatus:result.status||'',rowsPrepared:result.rowsPrepared,minutesSinceLastAttempt:result.minutesSinceLastAttempt,ttlMinutes:result.ttlMinutes};
+        }),
+        customerRefreshAttemptAgeMinutes:(function(){var last=Number(PropertiesService.getScriptProperties().getProperty('CF_SERVICEOPS_API_BRAKE_LAST_ATTEMPT_CUSTOMER_MS')||0);return last?Math.round((Date.now()-last)/6000)/10:null;})(),
         liveWriteExecuted:false
       };
     }
