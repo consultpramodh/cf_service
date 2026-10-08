@@ -1,12 +1,8 @@
 name: Emergency Intake Recovery
 
 on:
-  push:
-    branches:
-      - production
-    paths:
-      - .github/workflows/emergency-intake-recovery.yml
-      - src/20_Intake_Processing.gs
+  # Production deployment runs intake recovery after source and runtime verification.
+  # Keep this separate emergency runner manual to avoid executing old code during a deploy.
   workflow_dispatch:
 
 permissions:
