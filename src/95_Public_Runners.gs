@@ -920,6 +920,15 @@ function doGet(e) {
   }
 
   /* CF_SERVICEOPS_V5_14_4_RECENT_GF_BACKSTOP_RUNNER_R1 */
+  if(ops==='intake-mapping-snapshot'){
+    var mappingSnapshot;
+    try {
+      mappingSnapshot=CF.Intake.inspectGravityEntryMapping(String(e&&e.parameter&&e.parameter.id||''));
+    } catch(mappingError) {
+      mappingSnapshot={ok:false,status:'INTAKE_MAPPING_SNAPSHOT_FAILED',error:String(mappingError&&mappingError.message||mappingError),liveWriteExecuted:false};
+    }
+    return ContentService.createTextOutput(JSON.stringify(mappingSnapshot)).setMimeType(ContentService.MimeType.JSON);
+  }
   if(ops==='intake-backstop-run'){
     if(!CF.Intake||typeof CF.Intake.reconcileRecentGravityForms!=='function'){
       return ContentService.createTextOutput(JSON.stringify({ok:false,status:'RECENT_GF_BACKSTOP_UNAVAILABLE'})).setMimeType(ContentService.MimeType.JSON);
@@ -4423,3 +4432,4 @@ function TESTING_20261001_manualWorkOrderInternalNotesBacklogStep() {
   }
   return CF.ManualWorkOrderInternalNotes.backlogStep({maxChecks:12});
 }
+

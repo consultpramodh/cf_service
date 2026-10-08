@@ -4903,7 +4903,30 @@ function fetchAllGravityEntries_() {
       reconcileGravityForms,
 
     reconcileRecentGravityForms:
-      reconcileRecentGravityForms
+      reconcileRecentGravityForms,
+
+    inspectGravityEntryMapping: function(entryId) {
+      var id = clean_(entryId);
+      if (!/^\d+$/.test(id)) throw new Error('GRAVITY_FORMS_ENTRY_ID_REQUIRED');
+      var cfg = gfConfig_();
+      var entry = fetchGravityEntryById_(id);
+      if (clean_(entry.form_id) !== clean_(cfg.formId)) throw new Error('GRAVITY_FORMS_ENTRY_FORM_MISMATCH');
+      var payload = gravityEntryToPayload_(entry);
+      var webforms = localSubmissionIndex_('WEBFORM_REQUESTS');
+      var services = localSubmissionIndex_('SERVICE_REQUESTS');
+      return {
+        ok:true,
+        submissionId:id,
+        formId:clean_(entry.form_id),
+        mappedFieldCount:gravityPayloadContentScore_(payload),
+        labels:gravityLabelItems_(entry).map(function(x){return {key:x.key,label:x.label};}),
+        populatedInputIds:Object.keys(entry).filter(function(k){return /^\d+(\.\d+)?$/.test(k) && !!clean_(entry[k]);}),
+        populatedPayloadKeys:Object.keys(payload).filter(function(k){return !!clean_(payload[k]);}),
+        webformRowCount:(webforms[id]||[]).length,
+        serviceRows:(services[id]||[]).map(function(r){return {requestId:clean_(r['Request ID']),stage:clean_(r['Current Stage']),status:clean_(r['Request Status']),nextAction:clean_(r['Next Action'])};}),
+        liveWriteExecuted:false
+      };
+    }
   };
 })();
 
@@ -5126,3 +5149,4 @@ function AUTO_00_GF_Intake_Backstop() {
   }
   return CF.Intake.reconcileRecentGravityForms({maxWrites:5,pageSize:25,runtimeLimitMs:60000});
 }
+
