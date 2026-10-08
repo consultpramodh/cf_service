@@ -920,6 +920,12 @@ function doGet(e) {
   }
 
   /* CF_SERVICEOPS_V5_14_4_RECENT_GF_BACKSTOP_RUNNER_R1 */
+  if(ops==='intake-progress-snapshot'){
+    var progress;
+    try {progress=CF.Intake.inspectLocalIntakeProgress(String(e&&e.parameter&&e.parameter.ids||''));}
+    catch(progressError){progress={ok:false,status:'LOCAL_INTAKE_PROGRESS_FAILED',error:String(progressError&&progressError.message||progressError),liveWriteExecuted:false};}
+    return ContentService.createTextOutput(JSON.stringify(progress)).setMimeType(ContentService.MimeType.JSON);
+  }
   if(ops==='intake-mapping-snapshot'){
     var mappingSnapshot;
     try {

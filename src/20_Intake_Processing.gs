@@ -4905,6 +4905,25 @@ function fetchAllGravityEntries_() {
     reconcileRecentGravityForms:
       reconcileRecentGravityForms,
 
+    inspectLocalIntakeProgress: function(entryIds) {
+      var ids=clean_(entryIds||'3540,3541,3542,3543,3544,3545,3546').split(',').map(clean_).filter(Boolean);
+      if(!ids.length||ids.length>25||ids.some(function(id){return !/^\d+$/.test(id);}))throw new Error('NUMERIC_SUBMISSION_IDS_REQUIRED');
+      var services=localSubmissionIndex_('SERVICE_REQUESTS'),util=deps_().util;
+      var readiness=CF.StrivenData.inspectReadiness();
+      var logSheet=util.requireSheet('SYSTEM_LOG'),headers=util.getActualHeaders(logSheet),last=logSheet.getLastRow(),start=Math.max(2,last-19);
+      var logs=last>=2?logSheet.getRange(start,1,last-start+1,headers.length).getValues().map(function(row){return util.rowToRecord(headers,row,0);}):[];
+      var core=util.getSpreadsheet();
+      return {
+        ok:true,status:'LOCAL_INTAKE_PROGRESS_SNAPSHOT',liveWriteExecuted:false,
+        requests:ids.map(function(id){return {submissionId:id,rows:(services[id]||[]).map(function(r){return {requestId:clean_(r['Request ID']),stage:clean_(r['Current Stage']),status:clean_(r['Request Status']),nextAction:clean_(r['Next Action']),manualReview:clean_(r['Manual Review?']),workOrderId:clean_(r['Work Order ID']),reconciliationStatus:clean_(r['Reconciliation Status'])};})};}),
+        matchingReadiness:{ok:readiness.ok,counts:readiness.counts,fresh:readiness.fresh,requiredMissing:readiness.requiredMissing},
+        automation:CF.EventDrivenServiceAutomation.inspect(),
+        allocatedCoreCells:core.getSheets().reduce(function(n,sh){return n+sh.getMaxRows()*sh.getMaxColumns();},0),
+        systemLogSinkId:PropertiesService.getScriptProperties().getProperty('CF_SERVICEOPS_SYSTEM_LOG_SINK_ID')||'',
+        recentSteps:logs.map(function(r){var d=util.parseJson(r['Details JSON'],{})||{};var error=String(d.error||'');return {at:clean_(r['Timestamp']),requestId:clean_(r['Request ID']),action:clean_(r['Action']),status:clean_(r['Status']),durationMs:r['Duration Ms'],resultStatus:d.resultStatus||'',fromStage:d.fromStage||'',toStage:d.toStage||'',errorClass:/lock/i.test(error)?'LOCK_CONTENTION':(/tim(e|ed).*out|execution time/i.test(error)?'TIMEOUT':(/cells|grid/i.test(error)?'GRID_CAPACITY':(error?'OTHER_ERROR':'')))};})
+      };
+    },
+
     inspectGravityEntryMapping: function(entryId) {
       var id = clean_(entryId);
       if (!/^\d+$/.test(id)) throw new Error('GRAVITY_FORMS_ENTRY_ID_REQUIRED');

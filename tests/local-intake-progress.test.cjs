@@ -1,0 +1,12 @@
+const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict'),path=require('node:path');
+const src=fs.readFileSync(path.join(__dirname,'../src/20_Intake_Processing.gs'),'utf8');
+const block=src.slice(src.indexOf('    inspectLocalIntakeProgress: function'),src.indexOf('    inspectGravityEntryMapping: function'));
+let writes=0,indexReads=0;
+const util={requireSheet:()=>({getLastRow:()=>1}),getActualHeaders:()=>[],getSpreadsheet:()=>({getSheets:()=>[{getMaxRows:()=>10,getMaxColumns:()=>7}]}),parseJson:()=>({}),patchRow:()=>{writes++;throw new Error('unexpected write');}};
+const context={clean_:v=>String(v||'').trim(),deps_:()=>({util}),localSubmissionIndex_:key=>{assert.equal(key,'SERVICE_REQUESTS');indexReads++;return {'3540':[{'Request ID':'SR-test','Current Stage':'NEW INTAKE','Request Status':'NEW','Next Action':'RUN MATCHING'}]};},CF:{StrivenData:{inspectReadiness:()=>({ok:true,counts:{customers:68732}})},EventDrivenServiceAutomation:{inspect:()=>({queuedRequestIds:['SR-test']})}},PropertiesService:{getScriptProperties:()=>({getProperty:()=>''})}};
+vm.runInNewContext('var probe={'+block+'};',context);
+let result=context.probe.inspectLocalIntakeProgress('3540');assert.equal(result.status,'LOCAL_INTAKE_PROGRESS_SNAPSHOT');assert.equal(result.requests[0].rows[0].requestId,'SR-test');assert.equal(result.allocatedCoreCells,70);assert.equal(result.liveWriteExecuted,false);assert.equal(writes,0);assert.equal(indexReads,1);
+assert.throws(()=>context.probe.inspectLocalIntakeProgress('bad'),/NUMERIC_SUBMISSION_IDS_REQUIRED/);
+assert.throws(()=>context.probe.inspectLocalIntakeProgress(Array(26).fill('3540').join(',')),/NUMERIC_SUBMISSION_IDS_REQUIRED/);
+assert.equal(context.probe.inspectLocalIntakeProgress('').requests.length,7);
+console.log('PASS: bounded local progress projection; no external requests or writes; numeric input limits.');
