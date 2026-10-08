@@ -6282,7 +6282,60 @@ CF.SalesOrderInternalNotesApi = (function () {
     return result;
   }
 
-  return {version:VERSION,reconcile:reconcile,reconcileVerificationContext:reconcileVerificationContext};
+
+  // Fill only missing Request Source on an existing, certified WEBFORM order.
+  // Existing nonblank values and all other fields remain authoritative.
+  function fillMissingRequestSourceCore_(requestId) {
+    var r=CF.Util.findRecord('SERVICE_REQUESTS','Request ID',clean_(requestId));
+    if(!r||clean_(r['Source System']).toUpperCase()!=='WEBFORM')return {ok:false,status:'WEBFORM_REQUEST_REQUIRED',liveWriteExecuted:false};
+    var id=clean_(r['Work Order ID']),number=clean_(r['Work Order Number']),customer=clean_(r['Matched Customer ID']||r['Created Customer ID']);
+    var root=CF.Util.parseJson(r['Write Journal JSON'],{})||{},cert=root.salesOrderCreate&&root.salesOrderCreate.certification&&root.salesOrderCreate.certification.result||{};
+    if(!id||!number||!customer||cert.canProceed!==true||clean_(cert.salesOrderId)!==id||clean_(cert.customerId)!==customer)return {ok:false,status:'CERTIFIED_EXISTING_ORDER_REQUIRED',liveWriteExecuted:false};
+    var draft=CF.SalesOrderDraft.build(requestId),expected=draft&&draft.customFields&&draft.customFields['855'];
+    if(!expected||clean_(expected.status)!=='READY'||!/^\d+$/.test(clean_(expected.value))||clean_(expected.value)==='0')return {ok:false,status:'VERIFIED_WEBFORM_LIST_ITEM_REQUIRED',liveWriteExecuted:false};
+    var value=clean_(expected.value),before=body_(CF.StrivenHttp.requestJson('/v1/sales-orders/'+encodeURIComponent(id),{method:'get',attempts:1,idempotent:true}));
+    if(orderId_(before)!==id||orderNumber_(before)!==number||customerId_(before)!==customer)return {ok:false,status:'PREWRITE_IDENTITY_MISMATCH',liveWriteExecuted:false};
+    var fields=customFieldsSnapshot_(before),target=fields.filter(function(f){return cfId_(f)==='855';});
+    if(target.length!==1)return {ok:false,status:'REQUEST_SOURCE_FIELD_NOT_UNIQUE',liveWriteExecuted:false};
+    if(clean_(cfValue_(target[0]))===value||clean_(cfValueText_(target[0])).toUpperCase()==='WEBFORM'){
+      return {ok:true,status:'ALREADY_CORRECT',salesOrderId:id,liveWriteExecuted:false};
+    }
+    function blank(v){return v===null||v===undefined||clean_(v)===''||clean_(v)==='0';}
+    if(!blank(cfValue_(target[0]))||!blank(cfValueText_(target[0])))return {ok:true,status:'EXISTING_REQUEST_SOURCE_PRESERVED',salesOrderId:id,liveWriteExecuted:false};
+    var journal=root.requestSourceRepair||{};
+    if(Number(journal.postAttempts||0)>0)return {ok:false,status:'PRIOR_WRITE_REQUIRES_GET_RECONCILIATION_NO_RETRY',salesOrderId:id,liveWriteExecuted:false,automaticPostRetry:false};
+    var payload=clone_(before),plan;
+    try{plan=applyRequiredCustomFieldsDto_(payload,before);}catch(e){return {ok:false,status:'REQUIRED_CUSTOM_FIELD_PAYLOAD_BLOCKED_NO_WRITE',liveWriteExecuted:false};}
+    payload[plan.key]=payload[plan.key].filter(function(f){return cfId_(f)!=='855';}).concat([{Id:855,Value:value}]);
+    if(canonicalJson_(stripCustomFields_(payload))!==canonicalJson_(stripCustomFields_(before)))return {ok:false,status:'PAYLOAD_DELTA_GUARD_FAILED',liveWriteExecuted:false};
+    root.requestSourceRepair={salesOrderId:id,status:'POST_PENDING_RECONCILIATION',postAttempts:1,expectedValue:value,startedAt:CF.Util.nowString(),automaticPostRetry:false};
+    CF.Util.patchRow('SERVICE_REQUESTS',r.__rowNumber,{'Write Journal JSON':JSON.stringify(root)});
+    SpreadsheetApp.flush();
+    var postError=null;
+    try{CF.StrivenHttp.requestJson('/v1/sales-orders',{method:'post',payload:payload,idempotent:false,attempts:1});}catch(ePost){postError=ePost;}
+    var after;
+    try{after=body_(CF.StrivenHttp.requestJson('/v1/sales-orders/'+encodeURIComponent(id),{method:'get',attempts:1,idempotent:true}));}
+    catch(eGet){return {ok:false,status:'POST_OUTCOME_UNCERTAIN_DO_NOT_RETRY',salesOrderId:id,liveWriteExecuted:true,automaticPostRetry:false};}
+    var afterFields=customFieldsSnapshot_(after),afterTarget=afterFields.filter(function(f){return cfId_(f)==='855';});
+    var nonTargetBefore=fields.filter(function(f){return cfId_(f)!=='855';}),nonTargetAfter=afterFields.filter(function(f){return cfId_(f)!=='855';});
+    var preserved=orderId_(after)===id&&orderNumber_(after)===number&&customerId_(after)===customer&&
+      customFieldsEqual_(nonTargetBefore,nonTargetAfter)&&canonicalJson_(stripCustomFields_(before))===canonicalJson_(stripCustomFields_(after));
+    var matched=afterTarget.length===1&&(clean_(cfValue_(afterTarget[0]))===value||clean_(cfValueText_(afterTarget[0])).toUpperCase()==='WEBFORM');
+    root.requestSourceRepair.status=preserved&&matched?'VERIFIED':'POSTWRITE_RECONCILIATION_REQUIRED_NO_RETRY';
+    root.requestSourceRepair.finishedAt=CF.Util.nowString();root.requestSourceRepair.otherFieldsPreserved=preserved;
+    CF.Util.patchRow('SERVICE_REQUESTS',r.__rowNumber,{'Write Journal JSON':JSON.stringify(root)});
+    SpreadsheetApp.flush();
+    var result={ok:preserved&&matched,status:root.requestSourceRepair.status,salesOrderId:id,requestId:clean_(requestId),fieldId:'855',otherFieldsPreserved:preserved,liveWriteExecuted:true,automaticPostRetry:false};
+    CF.Util.logEvent({module:'60_Striven_Write',action:'FILL_MISSING_REQUEST_SOURCE',status:result.status,requestId:clean_(requestId),details:result,version:VERSION});
+    return result;
+  }
+
+  function fillMissingRequestSource(requestId) {
+    var lock=LockService.getScriptLock();
+    if(!lock.tryLock(1000))return {ok:false,status:'REQUEST_SOURCE_REPAIR_BUSY',liveWriteExecuted:false};
+    try{return fillMissingRequestSourceCore_(requestId);}finally{lock.releaseLock();}
+  }
+  return {version:VERSION,reconcile:reconcile,reconcileVerificationContext:reconcileVerificationContext,fillMissingRequestSource:fillMissingRequestSource};
 })();
 
 

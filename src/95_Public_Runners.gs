@@ -950,6 +950,13 @@ function doGet(e) {
   }
 
   /* CF_SERVICEOPS_V5_14_3_STATUS_WARNING_RECONCILIATION_RUNNER_R1 */
+  if(ops==='repair-missing-request-source'){
+    var sourceRepair=CF.SalesOrderInternalNotesApi.fillMissingRequestSource(String(e&&e.parameter&&e.parameter.id||''));
+    if(sourceRepair.ok===true&&(sourceRepair.status==='VERIFIED'||sourceRepair.status==='ALREADY_CORRECT')){
+      sourceRepair.certification=CF.OrderPreflight.certifyExisting(String(e&&e.parameter&&e.parameter.id||''),sourceRepair.salesOrderId);
+    }
+    return ContentService.createTextOutput(JSON.stringify(sourceRepair)).setMimeType(ContentService.MimeType.JSON);
+  }
   if(ops==='status-warning-reconcile-step'||ops==='status-warning-reconcile-one'||ops==='status-warning-reconcile-snapshot'||ops==='status-warning-reconcile-refresh'){
     if(!CF.StatusWarningReconciler){
       return ContentService.createTextOutput(JSON.stringify({ok:false,status:'STATUS_WARNING_RECONCILER_UNAVAILABLE'})).setMimeType(ContentService.MimeType.JSON);

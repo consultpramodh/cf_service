@@ -1118,6 +1118,11 @@ CF.EventDrivenServiceAutomation = (function () {
     }
     if(!CF.OrderPreflight||typeof CF.OrderPreflight.certifyExisting!=='function')return review_(r,'CERTIFICATION_MODULE_MISSING','Known Service Work Order cannot be certified because the certification module is unavailable.');
     var certified=CF.OrderPreflight.certifyExisting(requestId,known);
+    if(certified&&certified.ok===true&&CF.SalesOrderInternalNotesApi&&typeof CF.SalesOrderInternalNotesApi.fillMissingRequestSource==='function'){
+      var sourceRepair=CF.SalesOrderInternalNotesApi.fillMissingRequestSource(requestId);
+      if(sourceRepair&&sourceRepair.status==='VERIFIED')certified=CF.OrderPreflight.certifyExisting(requestId,known);
+      if(certified&&typeof certified==='object')certified.requestSourceRepair=sourceRepair;
+    }
     if(certified&&typeof certified==='object')certified.manualWorkOrderInternalNotes=noteResult;
     return certified;
   }
