@@ -1,0 +1,8 @@
+const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict'),path=require('node:path');
+const src=fs.readFileSync(path.join(__dirname,'../src/70_Workflow_Automation.gs'),'utf8');
+const fn=src.slice(src.indexOf('  function kick(requestId){'),src.indexOf('  function worker(e){'));
+function setup(initial){let q=initial.slice(),priorityCalls=0,ensures=0;const ctx={clean_:v=>String(v||'').trim(),VERSION:'test',ENABLED:'enabled',AUTO_SO:'auto',PREPARATION_ONLY:'prepare',LAST_KICK:'kick',LAST_REQUEST:'request',props_:()=>({setProperty:()=>{}}),queue_:()=>q.slice(),prioritize_:id=>{priorityCalls++;q=[id,...q.filter(x=>x!==id)];},cleanLegacyTriggers_:()=>[],ensureWatchdog_:()=>({count:1}),ensureWorker_:(delay,uid)=>{assert.equal(delay,1000);assert.equal(uid,'');ensures++;return{created:false,count:1};},normalizeTopology_:()=>{throw new Error('Do not delete existing worker triggers');},triggersBy_:()=>{throw new Error('Do not delete existing worker triggers');}};vm.runInNewContext(fn,ctx);return{kick:ctx.kick,queue:()=>q,counts:()=>({priorityCalls,ensures})};}
+let r=setup(['a','b']);assert.equal(r.kick('b').status,'CANONICAL_REQUEST_ALREADY_QUEUED');assert.deepEqual(r.queue(),['a','b']);assert.equal(r.counts().priorityCalls,0);assert.equal(r.counts().ensures,1);
+r=setup(['a']);assert.equal(r.kick('b').status,'CANONICAL_REQUEST_PRIORITY_QUEUED_IMMEDIATE');assert.deepEqual(r.queue(),['b','a']);assert.equal(r.counts().priorityCalls,1);
+r=setup([]);assert.equal(r.kick('').status,'REQUEST_ID_REQUIRED');assert.equal(r.counts().ensures,0);
+console.log('PASS: retry kicks preserve queue order and healthy triggers; new requests prioritized; empty IDs rejected.');

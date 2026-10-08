@@ -289,6 +289,16 @@ console.log('SELF_TEST_PASS');
 
 console.log('\n=== 7/10 Push complete project to SAME Script ID ===');
 clasp(['status'], {cwd: live});
+// Compare deployment-relevant source just before mutation. Documentation-only
+// commits do not invalidate an otherwise current immutable release checkout.
+if (process.env.GITHUB_ACTIONS === 'true') {
+  const triggerSha = String(process.env.GITHUB_SHA || '');
+  if (!/^[0-9a-f]{40}$/.test(triggerSha)) throw new Error('DEPLOYMENT_TRIGGER_SHA_REQUIRED');
+  run('git', ['fetch', '--no-tags', '--depth=1', 'origin', 'production']);
+  const current = spawnSync('git', ['diff', '--quiet', triggerSha, 'FETCH_HEAD', '--', 'src', 'scripts', 'tests', '.github/workflows/deploy.yml'], {cwd: root, encoding:'utf8', shell:false});
+  if (current.error || current.status !== 0) throw new Error('SUPERSEDED_SOURCE_RELEASE_REFUSED_BEFORE_PUSH');
+  console.log('PRODUCTION_SOURCE_CURRENT_BEFORE_PUSH: ' + triggerSha);
+}
 clasp(['push', '--force'], {cwd: live});
 
 console.log('\n=== 8/10 Pull remote source and verify exact parity ===');

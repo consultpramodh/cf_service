@@ -27,7 +27,32 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  production_source_check:
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/production'
+    outputs:
+      current: ${{ steps.source.outputs.current }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - id: source
+        name: Skip superseded source releases
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --depth=1 origin production
+          if git diff --quiet "$GITHUB_SHA" FETCH_HEAD -- src scripts tests .github/workflows/deploy.yml; then
+            echo "current=yes" >> "$GITHUB_OUTPUT"
+            echo "PRODUCTION_SOURCE_CURRENT"
+          else
+            echo "current=no" >> "$GITHUB_OUTPUT"
+            echo "SUPERSEDED_SOURCE_RELEASE_SKIPPED"
+          fi
+
   deploy-production:
+    needs: production_source_check
+    if: needs.production_source_check.outputs.current == 'yes'
     runs-on: ubuntu-latest
     env:
       CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
@@ -36,7 +61,7 @@ jobs:
       - name: Checkout canonical production source
         uses: actions/checkout@v4
         with:
-          ref: production
+          ref: ${{ github.sha }}
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -53,6 +78,7 @@ jobs:
           node tests/durable-log-sink.test.cjs
           node tests/core-utilities-patch.test.mjs
           node tests/local-intake-progress.test.cjs
+          node tests/queue-kick-liveness.test.cjs
 
       - name: Require existing clasp authorization
         shell: bash
