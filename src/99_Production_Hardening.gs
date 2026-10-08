@@ -204,6 +204,10 @@ function CFH_selfTestProductionHardening() {
 }
 
 function CFH_installAndVerifyProductionHardening() {
+  var existing = CFH_selfTestProductionHardening();
+  if (existing.ok === true) {
+    return {ok:true,version:CFH_VERSION,status:'PRODUCTION_GUARDS_INSTALLED_AND_VERIFIED',install:{ok:true,status:'PRODUCTION_GUARDS_ALREADY_INSTALLED',changed:false},selfTest:existing,liveWriteExecuted:false,liveStrivenWriteExecuted:false};
+  }
   var install = CFH_installProductionHardening();
   try { SpreadsheetApp.flush(); } catch (ignoredFlush) {}
   var selfTest = CFH_selfTestProductionHardening();
@@ -218,3 +222,4 @@ function CFH_installAndVerifyProductionHardening() {
     selfTest: selfTest
   };
 }
+
