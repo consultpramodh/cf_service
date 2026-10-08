@@ -48,6 +48,8 @@ jobs:
           node tests/recent-gf-backstop.test.cjs
           node tests/matching-cache-recovery.test.cjs
           node tests/readiness-patch.test.mjs
+          node tests/hardening-install.test.cjs
+          node tests/cache-grid-maintenance.test.cjs
 
       - name: Require existing clasp authorization
         shell: bash
