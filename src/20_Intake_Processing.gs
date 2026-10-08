@@ -4922,6 +4922,8 @@ function fetchAllGravityEntries_() {
       var logLastRow = logSheet.getLastRow();
       var logStartRow = Math.max(2, logLastRow - 299);
       var logRows = logLastRow >= 2 ? logSheet.getRange(logStartRow, 1, logLastRow - logStartRow + 1, logHeaders.length).getValues().map(function(row){return logUtil.rowToRecord(logHeaders, row, 0);}) : [];
+      if (logLastRow > 601) logRows = logRows.concat(logSheet.getRange(2, 1, 300, logHeaders.length).getValues().map(function(row){return logUtil.rowToRecord(logHeaders,row,0);}));
+      logRows.sort(function(a,b){return new Date(a['Timestamp']).getTime()-new Date(b['Timestamp']).getTime();});
       var trace = logRows.filter(function(r){return requestIds.indexOf(clean_(r['Request ID'])) !== -1;}).slice(-12).map(function(r){
         var details = deps_().util.parseJson(r['Details JSON'], {}) || {};
         return {at:clean_(r['Timestamp']),action:clean_(r['Action']),status:clean_(r['Status']),durationMs:r['Duration Ms'],stepLabel:details.stepLabel||'',resultStatus:details.resultStatus||'',fromStage:details.fromStage||'',toStage:details.toStage||''};
@@ -4939,6 +4941,7 @@ function fetchAllGravityEntries_() {
         matchingReadiness:{ok:readiness.ok,counts:readiness.counts,fresh:readiness.fresh,requiredMissing:readiness.requiredMissing},
         automation:CF.EventDrivenServiceAutomation.inspect(),
         trace:trace,
+        spreadsheetGrid:(function(){var ss=logSheet.getParent();var sheets=ss.getSheets().map(function(sh){return {name:sh.getName(),rows:sh.getMaxRows(),columns:sh.getMaxColumns(),usedRows:sh.getLastRow()};});return {allocatedCells:sheets.reduce(function(n,sh){return n+sh.rows*sh.columns;},0),sheets:sheets};})(),
         cacheRecoveryTrace:logRows.filter(function(r){return /REFRESH_CUSTOMER|BULK_REFRESH|MATCHING_CACHE_RECOVERY/.test(clean_(r['Action']));}).slice(-12).map(function(r){
           var d=logUtil.parseJson(r['Details JSON'],{})||{};var result=d.result||d;
           return {at:clean_(r['Timestamp']),action:clean_(r['Action']),status:clean_(r['Status']),group:d.group||result.group||'',resultStatus:result.status||'',rowsPrepared:result.rowsPrepared,minutesSinceLastAttempt:result.minutesSinceLastAttempt,ttlMinutes:result.ttlMinutes};
