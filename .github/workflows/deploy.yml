@@ -79,6 +79,7 @@ jobs:
           node tests/core-utilities-patch.test.mjs
           node tests/local-intake-progress.test.cjs
           node tests/queue-kick-liveness.test.cjs
+          node tests/gravity-feed-audit.test.cjs
 
       - name: Require existing clasp authorization
         shell: bash
@@ -140,6 +141,17 @@ jobs:
             const x=JSON.parse(process.argv[1]);
             if(!x || x.ok!==true || x.status!=="INTAKE_BACKSTOP_INSTALLED") process.exit(2);
           ' "$BODY"
+
+      - name: Inspect webhook feed configuration without writes
+        continue-on-error: true
+        shell: bash
+        env:
+          INTAKE_URL: https://script.google.com/macros/s/AKfycbwebnCvczGthe6Z_mvYmukLqFLB-9nk8hjNtNP3lR87CE1m_fEx2d9Bn_vpXMPCLUnPbA/exec
+        run: |
+          set -euo pipefail
+          BODY="$(curl -fsSL --retry 2 --retry-all-errors --retry-delay 2 --max-time 120 --get --data-urlencode 'ops=intake-feed-snapshot' --data-urlencode "nonce=${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" "$INTAKE_URL")"
+          echo "GRAVITY_FEED_SNAPSHOT=$BODY"
+          node -e 'const x=JSON.parse(process.argv[1]);if(!x||x.ok!==true||x.status!=="GRAVITY_FORMS_WEBHOOK_FEED_SNAPSHOT")process.exit(2);' "$BODY"
 
       - name: Inspect recent intake mapping without writes
         shell: bash

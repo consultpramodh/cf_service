@@ -4905,6 +4905,27 @@ function fetchAllGravityEntries_() {
     reconcileRecentGravityForms:
       reconcileRecentGravityForms,
 
+    inspectGravityFormsWebhookFeeds: function() {
+      var cfg=gfConfig_();
+      var feeds=gfGetJson_('forms/'+encodeURIComponent(cfg.formId)+'/feeds',{addon:'gravityformswebhooks'});
+      if(!Array.isArray(feeds))throw new Error('GRAVITY_FORMS_FEED_RESPONSE_SHAPE_UNSUPPORTED');
+      var expected=normalizeSecretValue_(deps_().util.requireProperty('WEBFORM_SHARED_SECRET',{allowDefault:false}));
+      var target='https://script.google.com/macros/s/AKfycbwebnCvczGthe6Z_mvYmukLqFLB-9nk8hjNtNP3lR87CE1m_fEx2d9Bn_vpXMPCLUnPbA/exec';
+      function fields_(list){var obj={};(list||[]).forEach(function(x){var key=clean_(x.custom_key||x.key);if(key)obj[key]=x.custom_value||x.value||'';});return obj;}
+      var rows=feeds.filter(function(feed){return clean_(feed.addon_slug)==='gravityformswebhooks'&&clean_(feed.form_id)===clean_(cfg.formId);}).map(function(feed){
+        var meta=feed.meta||{},url=clean_(meta.requestURL),query={};
+        (url.split('?')[1]||'').split('&').forEach(function(pair){var at=pair.indexOf('=');if(at<0)return;try{query[decodeURIComponent(pair.slice(0,at))]=decodeURIComponent(pair.slice(at+1));}catch(ignored){}});
+        var body=fields_(meta.fieldValues),headers=fields_(meta.requestHeaders);
+        var bodySecret=meta.requestBodyType==='select_fields'?findSecretInObject_(body):'';
+        var querySecret=findSecretInObject_(query),headerSecret=findSecretInObject_(headers);
+        var active=feed.is_active!==false&&feed.is_active!==0&&feed.is_active!=='0';
+        var matches=url.split(/[?#]/)[0]===target;
+        var bodyMatch=!!expected&&bodySecret===expected,queryMatch=!!expected&&querySecret===expected;
+        return {feedId:clean_(feed.id),active:active,targetMatchesExpected:matches,method:clean_(meta.requestMethod).toUpperCase(),format:clean_(meta.requestFormat),bodyType:clean_(meta.requestBodyType),bodyFieldKeys:Object.keys(body),bodySecretMatches:bodyMatch,querySecretMatches:queryMatch,headerSecretMatches:!!expected&&headerSecret===expected,conditionalLogicEnabled:!!meta.feed_condition_conditional_logic,immediateDeliveryConfigured:active&&matches&&clean_(meta.requestMethod).toUpperCase()==='POST'&&(bodyMatch||queryMatch)};
+      });
+      return {ok:true,status:'GRAVITY_FORMS_WEBHOOK_FEED_SNAPSHOT',formId:clean_(cfg.formId),webhookFeedCount:rows.length,immediateDeliveryConfigured:rows.some(function(x){return x.immediateDeliveryConfigured;}),feeds:rows,liveWriteExecuted:false};
+    },
+
     inspectLocalIntakeProgress: function(entryIds) {
       var ids=clean_(entryIds||'3540,3541,3542,3543,3544,3545,3546').split(',').map(clean_).filter(Boolean);
       if(!ids.length||ids.length>25||ids.some(function(id){return !/^\d+$/.test(id);}))throw new Error('NUMERIC_SUBMISSION_IDS_REQUIRED');

@@ -920,6 +920,12 @@ function doGet(e) {
   }
 
   /* CF_SERVICEOPS_V5_14_4_RECENT_GF_BACKSTOP_RUNNER_R1 */
+  if(ops==='intake-feed-snapshot'){
+    var feedSnapshot;
+    try {feedSnapshot=CF.Intake.inspectGravityFormsWebhookFeeds();}
+    catch(feedError){var code=String(feedError&&feedError.message||feedError).match(/HTTP (\d{3})/);feedSnapshot={ok:false,status:'GRAVITY_FORMS_FEED_SNAPSHOT_FAILED',errorClass:code?'HTTP_'+code[1]:'FEED_INSPECTION_UNAVAILABLE',liveWriteExecuted:false};}
+    return ContentService.createTextOutput(JSON.stringify(feedSnapshot)).setMimeType(ContentService.MimeType.JSON);
+  }
   if(ops==='intake-progress-snapshot'){
     var progress;
     try {progress=CF.Intake.inspectLocalIntakeProgress(String(e&&e.parameter&&e.parameter.ids||''));}
