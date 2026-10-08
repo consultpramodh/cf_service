@@ -1,6 +1,9 @@
 name: Emergency Intake Recovery
 
 on:
+  push:
+    branches: [production]
+    paths: [.github/workflows/emergency-intake-recovery.yml]
   # Production deployment runs intake recovery after source and runtime verification.
   # Keep this separate emergency runner manual to avoid executing old code during a deploy.
   workflow_dispatch:
@@ -9,7 +12,22 @@ permissions:
   contents: read
 
 jobs:
+  inspect-connections:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Read current connection snapshots
+        env:
+          INTAKE_URL: https://script.google.com/macros/s/AKfycbwebnCvczGthe6Z_mvYmukLqFLB-9nk8hjNtNP3lR87CE1m_fEx2d9Bn_vpXMPCLUnPbA/exec
+        run: |
+          set -euo pipefail
+          for id in 3543 3545; do
+            BODY="$(curl -fsSL --max-time 180 --get --data-urlencode 'ops=intake-mapping-snapshot' --data-urlencode "id=$id" --data-urlencode "nonce=${GITHUB_RUN_ID}-$id" "$INTAKE_URL")"
+            echo "CURRENT_MAPPING_$id=$BODY"
+          done
+          BODY="$(curl -fsSL --max-time 120 --get --data-urlencode 'ops=status-warning-reconcile-snapshot' --data-urlencode "nonce=${GITHUB_RUN_ID}" "$INTAKE_URL")"
+          echo "CURRENT_WARNING_SNAPSHOT=$BODY"
   recover-recent-intake:
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - name: Recover and kick recent Gravity Forms intake
