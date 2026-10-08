@@ -4795,10 +4795,18 @@ function fetchAllGravityEntries_() {
           mapped = {payload:localPayload,source:'LOCAL_WEBFORM_PAYLOAD'};
         } else {
           var payload = gravityEntryToPayload_(item.entry);
+          var mappingSource = 'GRAVITY_FORMS_RECENT_PAGE';
+          if (gravityPayloadContentScore_(payload) < 2) {
+            // Collection entries can lack the labels needed by the webhook mapper.
+            // Reuse the ID-verified individual-entry recovery path before stopping.
+            var repair = payloadForRepair_(item.submissionId, item.webformRow);
+            payload = repair.payload;
+            mappingSource = repair.source;
+          }
           if (gravityPayloadContentScore_(payload) < 2) {
             throw new Error('RECENT_GF_MAPPING_INSUFFICIENT | fewer than two request fields mapped.');
           }
-          mapped = {payload:payload,source:'GRAVITY_FORMS_RECENT_PAGE'};
+          mapped = {payload:payload,source:mappingSource};
         }
 
         var out = item.status === 'INCOMPLETE_LOCAL_DATA'
