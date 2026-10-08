@@ -20,12 +20,9 @@ jobs:
           INTAKE_URL: https://script.google.com/macros/s/AKfycbwebnCvczGthe6Z_mvYmukLqFLB-9nk8hjNtNP3lR87CE1m_fEx2d9Bn_vpXMPCLUnPbA/exec
         run: |
           set -euo pipefail
-          for id in 3546 3545 3544 3543 3542 3541 3540; do
-            BODY="$(curl -fsSL --retry 2 --retry-all-errors --retry-delay 2 --max-time 180 --get --data-urlencode 'ops=intake-mapping-snapshot' --data-urlencode "id=$id" --data-urlencode "nonce=${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-$id" "$INTAKE_URL")"
-            echo "CURRENT_MAPPING_$id=$BODY"
-          done
-          BODY="$(curl -fsSL --retry 2 --retry-all-errors --retry-delay 2 --max-time 120 --get --data-urlencode 'ops=status-warning-reconcile-snapshot' --data-urlencode "nonce=${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" "$INTAKE_URL")"
-          echo "CURRENT_WARNING_SNAPSHOT=$BODY"
+          BODY="$(curl -fsSL --retry 2 --retry-all-errors --retry-delay 2 --max-time 120 --get --data-urlencode 'ops=intake-progress-snapshot' --data-urlencode "nonce=${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" "$INTAKE_URL")"
+          echo "LOCAL_INTAKE_PROGRESS=$BODY"
+          node -e 'const x=JSON.parse(process.argv[1]);if(!x||x.ok!==true||x.status!=="LOCAL_INTAKE_PROGRESS_SNAPSHOT")process.exit(2);' "$BODY"
   recover-recent-intake:
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
@@ -37,7 +34,7 @@ jobs:
         run: |
           set -euo pipefail
           for attempt in 1 2 3; do
-            BODY="$(curl -fsSL --max-time 75 --get               --data-urlencode "ops=intake-backstop-run" "$INTAKE_URL" || true)"
+            BODY="$(curl -fsSL --max-time 180 --get               --data-urlencode "nonce=${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-$attempt" --data-urlencode "ops=intake-backstop-run" "$INTAKE_URL" || true)"
             echo "ATTEMPT=$attempt BODY=$BODY"
             if [ -n "$BODY" ] && node -e '
               const x=JSON.parse(process.argv[1]);
