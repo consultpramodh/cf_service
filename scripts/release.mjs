@@ -7,6 +7,7 @@ import {
 import { basename, resolve } from 'node:path';
 import { createHash } from 'node:crypto';
 import { patchReadinessCounts } from './readiness-patch.mjs';
+import { patchCoreUtilities } from './core-utilities-patch.mjs';
 
 const RELEASE = '5.14.4';
 const SCRIPT_ID = '1QZp4NAFeA8LmWBN31ylJYdK4XFepBX1h2lP_APaR-d1lTAC-d8LA9x3g';
@@ -221,6 +222,10 @@ const readinessBase = '30_Striven_Data';
 const readinessLivePath = findTarget(readinessBase, live);
 const readinessExpectedText = patchReadinessCounts(readFileSync(readinessLivePath, 'utf8'));
 writeFileSync(readinessLivePath, readinessExpectedText);
+const coreBase = '01_Core_Utilities';
+const coreLivePath = findTarget(coreBase, live);
+const coreExpectedText = patchCoreUtilities(readFileSync(coreLivePath, 'utf8'));
+writeFileSync(coreLivePath, coreExpectedText);
 const removedV2 = [];
 for (const base of OBSOLETE_V2_BASES) {
   const entry = beforeInv.get(base);
@@ -244,11 +249,11 @@ if (JSON.stringify(afterKeys) !== JSON.stringify(expectedAfterKeys)) {
   throw new Error('Live file inventory changed outside approved V2 cleanup; refusing push.');
 }
 const changed = expectedAfterKeys.filter(k => beforeInv.get(k).sha !== afterInv.get(k).sha).sort();
-const unexpectedChanged = changed.filter(k => !PATCH_BASES.includes(k) && !normalizedVersionBases.includes(k) && k !== readinessBase);
+const unexpectedChanged = changed.filter(k => !PATCH_BASES.includes(k) && !normalizedVersionBases.includes(k) && k !== readinessBase && k !== coreBase);
 if (unexpectedChanged.length) {
   throw new Error('Unexpected patch scope outside finalized modules/version normalization: ' + unexpectedChanged.join(', '));
 }
-for (const base of normalizedVersionBases.filter(k => !PATCH_BASES.includes(k) && k !== readinessBase)) {
+for (const base of normalizedVersionBases.filter(k => !PATCH_BASES.includes(k) && k !== readinessBase && k !== coreBase)) {
   const beforeEntry = beforeInv.get(base);
   if (!beforeEntry) throw new Error('VERSION_NORMALIZATION_SOURCE_MISSING: ' + base);
   const expected = normalizeReleaseMetadataText(normalizedText(resolve(before, beforeEntry.name)));
@@ -270,7 +275,9 @@ console.log('READINESS_COUNTS_PATCH_SCOPE_PASS');
 console.log('OBSOLETE_V2_REMOVAL_PASS: ' + (removedV2.length ? removedV2.join(', ') : 'none present'));
 
 console.log('\n=== 6/10 Syntax + single-model checks ===');
-for (const base of PATCH_BASES.concat([readinessBase])) run(process.execPath, ['--check', findTarget(base, live)]);
+const coreBefore = normalizedText(resolve(before, beforeInv.get(coreBase).name));
+if (normalizeReleaseMetadataText(patchCoreUtilities(coreBefore)) !== normalizedText(coreLivePath)) throw new Error('CORE_UTILITIES_PATCH_SCOPE_FAILED');
+for (const base of PATCH_BASES.concat([readinessBase, coreBase])) run(process.execPath, ['--check', findTarget(base, live)]);
 requireMarker(findTarget('20_Intake_Processing', live), 'CF_SERVICEOPS_V5_14_1_CANONICAL_INTAKE_R1');
 requireMarker(findTarget('70_Workflow_Automation', live), 'CF_SERVICEOPS_V5_14_1_SINGLE_AUTOMATION_MODEL_R1');
 requireMarker(findTarget('95_Public_Runners', live), 'CF_SERVICEOPS_V5_14_1_SINGLE_PUBLIC_AUTOMATION_R1');
@@ -295,6 +302,8 @@ for (const base of PATCH_BASES) {
 }
 if (normalizedText(findTarget(readinessBase, verify)) !== readinessExpectedText.replace(/\r\n/g, '\n').trimEnd() + '\n') throw new Error('REMOTE_READINESS_PATCH_MISMATCH');
 console.log('REMOTE_READINESS_PATCH_PASS');
+if (normalizedText(findTarget(coreBase, verify)) !== coreExpectedText.replace(/\r\n/g, '\n').trimEnd() + '\n') throw new Error('REMOTE_CORE_UTILITIES_PATCH_MISMATCH');
+console.log('REMOTE_CORE_UTILITIES_PATCH_PASS');
 for (const base of normalizedVersionBases) {
   const livePath = findTarget(base, live);
   const remotePath = findTarget(base, verify);

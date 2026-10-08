@@ -50,6 +50,8 @@ jobs:
           node tests/readiness-patch.test.mjs
           node tests/hardening-install.test.cjs
           node tests/cache-grid-maintenance.test.cjs
+          node tests/durable-log-sink.test.cjs
+          node tests/core-utilities-patch.test.mjs
 
       - name: Require existing clasp authorization
         shell: bash

@@ -4941,7 +4941,7 @@ function fetchAllGravityEntries_() {
         matchingReadiness:{ok:readiness.ok,counts:readiness.counts,fresh:readiness.fresh,requiredMissing:readiness.requiredMissing},
         automation:CF.EventDrivenServiceAutomation.inspect(),
         trace:trace,
-        spreadsheetGrid:(function(){var ss=logSheet.getParent();var sheets=ss.getSheets().map(function(sh){return {name:sh.getName(),rows:sh.getMaxRows(),columns:sh.getMaxColumns(),usedRows:sh.getLastRow()};});return {allocatedCells:sheets.reduce(function(n,sh){return n+sh.rows*sh.columns;},0),sheets:sheets};})(),
+        spreadsheetGrid:(function(){var ss=logUtil.getSpreadsheet();var sheets=ss.getSheets().map(function(sh){return {name:sh.getName(),rows:sh.getMaxRows(),columns:sh.getMaxColumns(),usedRows:sh.getLastRow()};});return {allocatedCells:sheets.reduce(function(n,sh){return n+sh.rows*sh.columns;},0),sheets:sheets};})(),
         cacheRecoveryTrace:logRows.filter(function(r){return /REFRESH_CUSTOMER|BULK_REFRESH|MATCHING_CACHE_RECOVERY/.test(clean_(r['Action']));}).slice(-12).map(function(r){
           var d=logUtil.parseJson(r['Details JSON'],{})||{};var result=d.result||d;
           return {at:clean_(r['Timestamp']),action:clean_(r['Action']),status:clean_(r['Status']),group:d.group||result.group||'',resultStatus:result.status||'',rowsPrepared:result.rowsPrepared,minutesSinceLastAttempt:result.minutesSinceLastAttempt,ttlMinutes:result.ttlMinutes};

@@ -103,6 +103,7 @@ function CFH_operationalCacheAgeMs_() {
 }
 
 function CFH_refreshOperationalCacheIfIdle() {
+  var capacity=CFH_reclaimUnusedCacheGrid_();
   var queue = CFH_queue_();
   if (queue.length) {
     return {
@@ -203,10 +204,33 @@ function CFH_selfTestProductionHardening() {
   };
 }
 
+function CFH_prepareSystemLogSink_() {
+  var props=PropertiesService.getScriptProperties();
+  var key='CF_SERVICEOPS_SYSTEM_LOG_SINK_ID',currentId=props.getProperty(key);
+  var core=CF.Util.getSpreadsheet();
+  var name=CF.Config.resolveSheetName('SYSTEM_LOG');
+  var current=currentId?SpreadsheetApp.openById(currentId).getSheetByName(name):core.getSheetByName(name);
+  if(!current)throw new Error('SYSTEM_LOG_SOURCE_MISSING');
+  if(current.getLastRow()<=100000)return {ok:true,status:'SYSTEM_LOG_CAPACITY_HEALTHY',sinkId:currentId||'',rows:current.getLastRow()};
+  var created=SpreadsheetApp.create('CF ServiceOps System Log '+new Date().toISOString());
+  var sheet=created.getSheets()[0];
+  sheet.setName(name);
+  var headers=CF.Config.getHeaders('SYSTEM_LOG');
+  sheet.getRange(1,1,1,headers.length).setValues([headers]);
+  sheet.setFrozenRows(1);
+  if(sheet.getMaxColumns()>headers.length)sheet.deleteColumns(headers.length+1,sheet.getMaxColumns()-headers.length);
+  if(sheet.getLastRow()!==1)throw new Error('SYSTEM_LOG_SINK_INITIALIZATION_FAILED');
+  // Preserve every prior workbook and row; switch only future log writes.
+  props.setProperty('CF_SERVICEOPS_SYSTEM_LOG_HISTORY_'+current.getParent().getId(),JSON.stringify({spreadsheetId:current.getParent().getId(),sheetName:name,rows:current.getLastRow(),retainedAt:new Date().toISOString()}));
+  props.setProperty(key,created.getId());
+  return {ok:true,status:'SYSTEM_LOG_SINK_ROTATED',sinkId:created.getId(),url:created.getUrl(),previousRows:current.getLastRow(),historicalRowsPreserved:true};
+}
+
 function CFH_reclaimUnusedCacheGrid_() {
   var lock=LockService.getScriptLock();
   if(!lock.tryLock(5000))return {ok:true,status:'CACHE_GRID_MAINTENANCE_DEFERRED',cellsFreed:0};
   try {
+    var logSink=CFH_prepareSystemLogSink_();
     var freed=0,changes=[];
     ['STRIVEN_CUSTOMER_DATA','STRIVEN_LOCATION_DATA'].forEach(function(key){
       var sh=CF.Util.requireSheet(key),required=CF.Config.getHeaders(key).length;
@@ -223,7 +247,7 @@ function CFH_reclaimUnusedCacheGrid_() {
       PropertiesService.getScriptProperties().deleteProperty('CF_SERVICEOPS_API_BRAKE_LAST_ATTEMPT_CUSTOMER_MS');
       retryReset=true;
     }
-    return {ok:true,status:'UNUSED_CACHE_COLUMNS_RECLAIMED',cellsFreed:freed,changes:changes,emptyCustomerRetryReset:retryReset};
+    return {ok:true,status:'UNUSED_CACHE_COLUMNS_RECLAIMED',cellsFreed:freed,changes:changes,emptyCustomerRetryReset:retryReset,systemLog:logSink};
   } finally {lock.releaseLock();}
 }
 

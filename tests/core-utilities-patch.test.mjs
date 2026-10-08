@@ -1,0 +1,14 @@
+import fs from 'node:fs';
+import assert from 'node:assert/strict';
+import {patchCoreUtilities} from '../scripts/core-utilities-patch.mjs';
+const source=fs.readFileSync(new URL('../src/01_Core_Utilities.gs',import.meta.url),'utf8');
+const patched=patchCoreUtilities(source);
+assert.equal(patchCoreUtilities(patched),patched);
+assert.throws(()=>patchCoreUtilities(source.replace('function getSheet(keyOrName)','function otherSheet(keyOrName)')),/SCOPE_MISMATCH/);
+const body=patched.match(/  function replaceSheetData\(keyOrName, records\) \{[\s\S]*?\n  \}\n/)[0];
+let cleared=false,written=false;
+const sh={getLastRow:()=>11,getLastColumn:()=>2,getRange:()=>({clearContent:()=>{cleared=true;},setValues:()=>{written=true;}})};
+const compile=(grow)=>new Function('getOrCreateSheet','config_','setHeaders','recordToRow','ensureGridSize',body+';return replaceSheetData;')(()=>sh,()=>({getHeaders:()=>['a','b']}),()=>{},()=>[1,2],grow);
+assert.throws(()=>compile(()=>{throw new Error('capacity');})('x',[{}]),/capacity/);assert.equal(cleared,false);
+assert.equal(compile(()=>{})('x',[{}]).rows,1);assert.equal(cleared,true);assert.equal(written,true);
+console.log('PASS: bounded log routing and idempotence; allocation failure preserves old cache; normal replacement still works.');
