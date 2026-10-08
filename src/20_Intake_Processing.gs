@@ -4916,7 +4916,13 @@ function fetchAllGravityEntries_() {
       var services = localSubmissionIndex_('SERVICE_REQUESTS');
       var readiness = CF.StrivenData.inspectReadiness();
       var requestIds = (services[id]||[]).map(function(r){return clean_(r['Request ID']);});
-      var trace = deps_().util.readRecords('SYSTEM_LOG').filter(function(r){return requestIds.indexOf(clean_(r['Request ID'])) !== -1;}).slice(-12).map(function(r){
+      var logUtil = deps_().util;
+      var logSheet = logUtil.requireSheet('SYSTEM_LOG');
+      var logHeaders = logUtil.getActualHeaders(logSheet);
+      var logLastRow = logSheet.getLastRow();
+      var logStartRow = Math.max(2, logLastRow - 99);
+      var logRows = logLastRow >= 2 ? logSheet.getRange(logStartRow, 1, logLastRow - logStartRow + 1, logHeaders.length).getValues().map(function(row){return logUtil.rowToRecord(logHeaders, row, 0);}) : [];
+      var trace = logRows.filter(function(r){return requestIds.indexOf(clean_(r['Request ID'])) !== -1;}).slice(-12).map(function(r){
         var details = deps_().util.parseJson(r['Details JSON'], {}) || {};
         return {at:clean_(r['Timestamp']),action:clean_(r['Action']),status:clean_(r['Status']),durationMs:r['Duration Ms'],stepLabel:details.stepLabel||'',resultStatus:details.resultStatus||'',fromStage:details.fromStage||'',toStage:details.toStage||''};
       });
