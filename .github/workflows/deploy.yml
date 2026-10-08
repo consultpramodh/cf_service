@@ -81,6 +81,7 @@ jobs:
           node tests/local-intake-progress.test.cjs
           node tests/queue-kick-liveness.test.cjs
           node tests/gravity-feed-audit.test.cjs
+          node tests/review-probe.test.cjs
 
       - name: Require existing clasp authorization
         shell: bash

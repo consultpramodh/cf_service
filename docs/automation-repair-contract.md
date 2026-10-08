@@ -37,11 +37,18 @@ New system-log writes use a separate spreadsheet after the active log exceeds 10
 
 The live core utility module is patched narrowly rather than replaced wholesale. Worksheet allocation is checked before existing data is cleared, so a grid expansion failure preserves the old cache. This does not make a multi-batch worksheet replacement transactional.
 
+## Verified live outcomes on 2026-10-08
+
+- Customer cache restored to 68,732 rows; matching readiness has no required missing caches.
+- Submissions 3540–3546 reached COMPLETED. Submission 3545 created order 27565 and passed all certification checks. Six others retain visible repairable differences on existing orders; completion is not complete field parity.
+- Submission 3547 is a follow-up on existing In Progress order 26648. Exact certification found different nonzero location IDs and a different item. The request remains in review; no duplicate order should be created and existing technician/service-level values must not be replaced with intake defaults.
+- Canonical Gravity Forms webhook feed 7 is active, targets the existing deployment, and matches the configured query secret. Three other active Apps Script feeds target different deployments; their purposes remain unverified.
+- Source deployment 199 passed runtime checks. A later repair bounds unchanged failed review probes to once per 30 minutes and rebuilds the full queue once after draining rather than after each completed request. Its deployment result must be checked separately.
+
 ## Evidence limits and remaining verification
 
-- Verify the customer cache actually fills and recovered requests advance; successful deployment alone is insufficient.
 - Root workbook capacity and later cache-refresh lock contention are confirmed. The exact error that originally emptied the cache was not captured.
 - HTTP 404 responses occurred during post-deploy checks; they do not prove source synchronization failed.
 - The historical warning backlog and differences on already-completed orders require separate validation.
-- The live Gravity Forms feed authentication itself has not been independently verified; backstop recovery is verified.
+- Feed configuration/authentication matching is verified; delivery from a fresh real submission has not been tested independently.
 - Relevant retrieved project history was used; inaccessible chats were not claimed to have been inspected.

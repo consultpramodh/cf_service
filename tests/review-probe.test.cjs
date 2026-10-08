@@ -1,0 +1,24 @@
+const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict');
+const source=fs.readFileSync(require('node:path').join(__dirname,'../src/70_Workflow_Automation.gs'),'utf8');
+const start=source.indexOf('  function recoverStaleExistingOrderReview_('),end=source.indexOf('\n  function recoverTechnicalValidationState_',start);
+let reads=0,writes=0,clock=2000000000,store={};
+const row={'Request ID':'test','Matched Customer ID':'1','Matched Contact ID':'2','Matched Location ID':'3'};
+let preview={ok:false,blockingIssues:['billToLocation','lineItem']};
+const ctx={Date:{now:()=>clock},staleExistingOrderReview_:()=>true,clean_:v=>String(v||''),signature_:r=>JSON.stringify(r),parse_:v=>JSON.parse(v||'{}'),props_:()=>({getProperty:k=>store[k],setProperty:(k,v)=>store[k]=v,deleteProperty:k=>delete store[k]}),CF:{OrderPreflight:{previewCertification:()=>{reads++;return preview;}},Util:{patchRow:()=>writes++}},log_:()=>{},now_:()=>'',knownOrderId_:()=>'',SpreadsheetApp:{flush:()=>{}},request_:()=>row};
+vm.runInNewContext(source.slice(start,end),ctx);
+ctx.recoverStaleExistingOrderReview_(row);assert.equal(reads,1);assert.equal(writes,0);
+ctx.recoverStaleExistingOrderReview_(row);assert.equal(reads,1);
+clock+=30*60*1000;ctx.recoverStaleExistingOrderReview_(row);assert.equal(reads,2);
+row['Matched Location ID']='4';ctx.recoverStaleExistingOrderReview_(row);assert.equal(reads,3);
+clock+=30*60*1000;preview={ok:true,blockingIssues:[]};ctx.recoverStaleExistingOrderReview_(row);assert.equal(writes,1);assert.equal(Object.keys(store).length,0);
+// Queued terminal/review transitions must not rebuild the full queue per row.
+const worker=source.slice(source.indexOf('  function worker(e)'),source.indexOf('  function recentRecoverable_'));
+assert.ok(!worker.includes('dequeue_(id);refreshQueue_();continue;'));
+assert.equal((worker.match(/refreshQueue_\(\)/g)||[]).length,1);
+console.log('PASS: unchanged conflicts use bounded probes; expiry and evidence changes retry; proven recovery clears memo; queue refresh occurs once after draining.');
+let queue=['one','two'],refreshes=0;
+const rows={one:{stage:'OPEN'},two:{stage:'OPEN'}};
+const workerContext={Date:{now:()=>1},WORKER_BUDGET_MS:220000,MAX_STEPS:12,WORKER_DELAY_MS:10000,VERSION:'test',props_:()=>({getProperty:()=> 'TRUE'}),ENABLED:'enabled',upper_:v=>String(v||'').toUpperCase(),clean_:v=>String(v||''),normalizeTopology_:()=>{},queue_:()=>queue.slice(),request_:id=>rows[id],recoverDeterministicReview_:r=>r,terminal_:r=>r.stage==='COMPLETED',genuineReview_:()=>false,dequeue_:id=>queue=queue.filter(x=>x!==id),signature_:r=>r.stage,dateMs_:()=>0,stepLabel_:()=> 'TEST',step_:id=>{rows[id].stage='COMPLETED';return {ok:true,requestId:id,status:'DONE'};},assertRequestScoped_:(id,r)=>r,log_:()=>{},knownOrderId_:()=>'',refreshQueue_:()=>refreshes++,ensureWorker_:()=>{},rotateToBack_:()=>queue};
+vm.runInNewContext(worker,workerContext);
+const drained=workerContext.worker({});assert.equal(drained.history.length,2);assert.equal(queue.length,0);assert.equal(refreshes,1);
+console.log('PASS: executed worker drains two requests with one full projection rebuild.');
