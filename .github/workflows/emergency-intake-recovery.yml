@@ -20,11 +20,11 @@ jobs:
           INTAKE_URL: https://script.google.com/macros/s/AKfycbwebnCvczGthe6Z_mvYmukLqFLB-9nk8hjNtNP3lR87CE1m_fEx2d9Bn_vpXMPCLUnPbA/exec
         run: |
           set -euo pipefail
-          for id in 3543 3545; do
-            BODY="$(curl -fsSL --max-time 180 --get --data-urlencode 'ops=intake-mapping-snapshot' --data-urlencode "id=$id" --data-urlencode "nonce=${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-$id" "$INTAKE_URL")"
+          for id in 3546 3545 3544 3543 3542 3541 3540; do
+            BODY="$(curl -fsSL --retry 2 --retry-all-errors --retry-delay 2 --max-time 180 --get --data-urlencode 'ops=intake-mapping-snapshot' --data-urlencode "id=$id" --data-urlencode "nonce=${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-$id" "$INTAKE_URL")"
             echo "CURRENT_MAPPING_$id=$BODY"
           done
-          BODY="$(curl -fsSL --max-time 120 --get --data-urlencode 'ops=status-warning-reconcile-snapshot' --data-urlencode "nonce=${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" "$INTAKE_URL")"
+          BODY="$(curl -fsSL --retry 2 --retry-all-errors --retry-delay 2 --max-time 120 --get --data-urlencode 'ops=status-warning-reconcile-snapshot' --data-urlencode "nonce=${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" "$INTAKE_URL")"
           echo "CURRENT_WARNING_SNAPSHOT=$BODY"
   recover-recent-intake:
     if: github.event_name == 'workflow_dispatch'
