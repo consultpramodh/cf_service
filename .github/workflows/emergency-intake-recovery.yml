@@ -23,6 +23,9 @@ jobs:
           BODY="$(curl -fsSL --retry 2 --retry-all-errors --retry-delay 2 --max-time 120 --get --data-urlencode 'ops=intake-progress-snapshot' --data-urlencode "nonce=${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" "$INTAKE_URL")"
           echo "LOCAL_INTAKE_PROGRESS=$BODY"
           node -e 'const x=JSON.parse(process.argv[1]);if(!x||x.ok!==true||x.status!=="LOCAL_INTAKE_PROGRESS_SNAPSHOT")process.exit(2);' "$BODY"
+          BODY="$(curl -fsSL --retry 2 --retry-all-errors --retry-delay 2 --max-time 120 --get --data-urlencode 'ops=intake-feed-snapshot' --data-urlencode "nonce=${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-feed" "$INTAKE_URL")"
+          echo "WEBHOOK_FEED_CONNECTION=$BODY"
+          node -e 'const x=JSON.parse(process.argv[1]);if(!x||!["GRAVITY_FORMS_WEBHOOK_FEED_SNAPSHOT","GRAVITY_FORMS_FEED_SNAPSHOT_FAILED"].includes(x.status))process.exit(2);' "$BODY"
   recover-recent-intake:
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
