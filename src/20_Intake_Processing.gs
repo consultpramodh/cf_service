@@ -4914,6 +4914,12 @@ function fetchAllGravityEntries_() {
       var payload = gravityEntryToPayload_(entry);
       var webforms = localSubmissionIndex_('WEBFORM_REQUESTS');
       var services = localSubmissionIndex_('SERVICE_REQUESTS');
+      var readiness = CF.StrivenData.inspectReadiness();
+      var requestIds = (services[id]||[]).map(function(r){return clean_(r['Request ID']);});
+      var trace = deps_().util.readRecords('SYSTEM_LOG').filter(function(r){return requestIds.indexOf(clean_(r['Request ID'])) !== -1;}).slice(-12).map(function(r){
+        var details = deps_().util.parseJson(r['Details JSON'], {}) || {};
+        return {at:clean_(r['Timestamp']),action:clean_(r['Action']),status:clean_(r['Status']),durationMs:r['Duration Ms'],stepLabel:details.stepLabel||'',resultStatus:details.resultStatus||'',fromStage:details.fromStage||'',toStage:details.toStage||''};
+      });
       return {
         ok:true,
         submissionId:id,
@@ -4924,6 +4930,9 @@ function fetchAllGravityEntries_() {
         populatedPayloadKeys:Object.keys(payload).filter(function(k){return !!clean_(payload[k]);}),
         webformRowCount:(webforms[id]||[]).length,
         serviceRows:(services[id]||[]).map(function(r){return {requestId:clean_(r['Request ID']),stage:clean_(r['Current Stage']),status:clean_(r['Request Status']),nextAction:clean_(r['Next Action'])};}),
+        matchingReadiness:{ok:readiness.ok,counts:readiness.counts,fresh:readiness.fresh,requiredMissing:readiness.requiredMissing},
+        automation:CF.EventDrivenServiceAutomation.inspect(),
+        trace:trace,
         liveWriteExecuted:false
       };
     }
