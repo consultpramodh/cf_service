@@ -8,7 +8,8 @@ on:
       - production
     paths:
       - .github/workflows/deploy.yml
-      - scripts/release.mjs
+      - scripts/**
+      - tests/**
       - src/20_Intake_Processing.gs
       - src/40_Matching_Profile.gs
       - src/50_Operator_Queue.gs
