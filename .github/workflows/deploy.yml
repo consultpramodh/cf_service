@@ -71,7 +71,7 @@ jobs:
         run: |
           set -euo pipefail
           for attempt in $(seq 1 60); do
-            BODY="$(curl -fsSL --retry 2 --max-time 20 "$HEALTH_URL" || true)"
+            BODY="$(curl -fsSL --retry 2 --max-time 20 --get --data-urlencode "nonce=${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" "$HEALTH_URL" || true)"
             if [ -n "$BODY" ]; then
               echo "LIVE_HEALTH_ATTEMPT=$attempt $BODY"
               if node -e '
@@ -102,6 +102,7 @@ jobs:
         run: |
           set -euo pipefail
           BODY="$(curl -fsSL --max-time 60 --get \
+            --data-urlencode "nonce=${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
             --data-urlencode "ops=install-intake-backstop" "$INTAKE_URL")"
           echo "INTAKE_BACKSTOP_INSTALL=$BODY"
           node -e '
@@ -116,6 +117,7 @@ jobs:
         run: |
           set -euo pipefail
           BODY="$(curl -fsSL --max-time 120 --get \
+            --data-urlencode "nonce=${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
             --data-urlencode "ops=intake-mapping-snapshot" \
             --data-urlencode "id=3543" "$INTAKE_URL" || true)"
           echo "INTAKE_MAPPING_SNAPSHOT=$BODY"
@@ -127,6 +129,7 @@ jobs:
         run: |
           set -euo pipefail
           BODY="$(curl -fsSL --max-time 180 --get \
+            --data-urlencode "nonce=${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
             --data-urlencode "ops=intake-backstop-run" "$INTAKE_URL")"
           echo "RECENT_GF_BACKSTOP=$BODY"
           node -e '
@@ -159,7 +162,8 @@ jobs:
             completed=0
             for round in $(seq 1 8); do
               BODY="$(curl -fsSL --retry 2 --max-time 120 --get \
-                --data-urlencode "ops=recent10-acceptance-step" \
+                --data-urlencode "nonce=${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+            --data-urlencode "ops=recent10-acceptance-step" \
                 --data-urlencode "id=$id" "$ACCEPTANCE_URL")"
               printf '%s\n' "$BODY" | tee -a recent10-acceptance.jsonl
               if node -e '
@@ -187,6 +191,7 @@ jobs:
         run: |
           set -euo pipefail
           BODY="$(curl -fsSL --max-time 90 --get \
+            --data-urlencode "nonce=${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
             --data-urlencode "ops=dashboard-refresh" "$DASHBOARD_URL")"
           echo "DASHBOARD_REFRESH=$BODY"
           node -e '
