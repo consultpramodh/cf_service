@@ -1,0 +1,16 @@
+import {patchReadinessCounts} from '../scripts/readiness-patch.mjs';
+import fs from 'node:fs';
+import assert from 'node:assert/strict';
+import vm from 'node:vm';
+const source=fs.readFileSync(new URL('../src/30_Striven_Data.gs',import.meta.url),'utf8');
+const patched=patchReadinessCounts(source);
+assert.equal(patchReadinessCounts(patched),patched);
+assert.throws(()=>patchReadinessCounts(source.replace('function inspectReadiness()','function missing()')),/SCOPE_MISMATCH/);
+const block=patched.match(/  function inspectReadiness\(\) \{[\s\S]*?\n  \}\n/)[0];
+const context={deps_:()=>({util:{requireSheet:key=>({getLastRow:()=>key==='STRIVEN_CUSTOMER_DATA'?1:101}),readRecords:()=>{throw Error('FULL READ FORBIDDEN');}}}),resolveReports_:()=>({}),cacheFresh_:()=>false,reportSummary_:()=>({}),VERSION:'test'};
+vm.runInNewContext(block,context);
+const result=context.inspectReadiness();
+assert.equal(result.counts.customers,0);
+assert.equal(result.counts.locations,100);
+assert.equal(result.ok,false);
+console.log('PASS: lightweight readiness counts, empty-cache safety, idempotence and patch-scope rejection.');

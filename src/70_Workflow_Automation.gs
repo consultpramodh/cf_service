@@ -32,7 +32,24 @@ CF.CustomerStructureEngine = (function () {
   function finalize_(r,reason){var ids=ids_(r);if(!ids.customer||!ids.contact||!ids.location)return{ok:false,version:VERSION,status:'CUSTOMER_STRUCTURE_IDS_INCOMPLETE',requestId:clean_(r['Request ID']),ids:ids,liveWriteExecuted:false};patch_(r,{'Updated At':deps_().util.nowString(),'Current Stage':'CUSTOMER STRUCTURE COMPLETE','Request Status':'OPEN','Manual Review?':'NO','Manual Review Reason':'','Blocking Issue':'','Next Action':'CONTINUE TO WORK ORDER','Customer Structure Status':'COMPLETE','Contact Association Status':clean_(r['Contact Association Status'])||'ASSOCIATED','Striven Sync Status':'PARTIAL','Striven Sync Error':'','Reconciliation Status':reason||'CUSTOMER STRUCTURE COMPLETE'});return{ok:true,version:VERSION,status:'CUSTOMER_STRUCTURE_COMPLETE',requestId:clean_(r['Request ID']),customerId:ids.customer,contactId:ids.contact,locationId:ids.location,liveWriteExecuted:false};}
   function verifyResultRequest_(requestId,result){if(!result||typeof result!=='object')return result;var nested=[result.requestId,result.stepResult&&result.stepResult.requestId,result.result&&result.result.requestId,result.matching&&result.matching.requestId].map(clean_).filter(Boolean);var bad=nested.filter(function(id){return id!==clean_(requestId);});if(bad.length)return{ok:false,version:VERSION,status:'CROSS_REQUEST_RESULT_REJECTED',requestId:clean_(requestId),returnedRequestIds:nested,rejectedRequestIds:bad,liveWriteExecuted:!!result.liveWriteExecuted,originalResult:result};return result;}
   function step(requestId){requestId=clean_(requestId);if(!requestId)return{ok:false,version:VERSION,status:'REQUEST_ID_REQUIRED',liveWriteExecuted:false};var r=request_(requestId);if(!r)return{ok:false,version:VERSION,status:'REQUEST_NOT_FOUND',requestId:requestId,liveWriteExecuted:false};if(!active_(r))return{ok:true,version:VERSION,status:'REQUEST_NOT_ACTIVE',requestId:requestId,liveWriteExecuted:false};var stage=upper_(r['Current Stage']);
-    if(stage==='NEW INTAKE'){var matching=deps_().matching.recheckRequest(requestId,{persist:true});return verifyResultRequest_(requestId,{ok:!matching||matching.ok!==false,version:VERSION,status:'MATCHING_PROCESSED',requestId:requestId,matching:matching,liveWriteExecuted:false});}
+    if(stage==='NEW INTAKE'){
+      var data=CF.StrivenData;
+      if(data&&typeof data.inspectReadiness==='function'){
+        var readiness=data.inspectReadiness();
+        if(!readiness.ok&&!(readiness.requiredMissing||[]).length){
+          var group=Number(readiness.counts&&readiness.counts.customers||0)===0?'CUSTOMER':(Number(readiness.counts&&readiness.counts.locations||0)===0?'LOCATION':'');
+          var refresh=group==='CUSTOMER'?data.refreshCustomerData:(group==='LOCATION'?data.refreshLocationData:null);
+          if(typeof refresh==='function'){
+            var cacheRecovery=refresh.call(data,{});
+            var restored=Number(cacheRecovery&&cacheRecovery.rowsPrepared||0)>0;
+            if(restored)patch_(r,{'Updated At':deps_().util.nowString(),'Next Action':'RUN MATCHING — '+group+' CACHE RESTORED'});
+            deps_().util.logEvent({module:'70_Workflow_Automation',action:'MATCHING_CACHE_RECOVERY',status:restored?'RESTORED':'PENDING',requestId:requestId,details:{group:group,result:cacheRecovery},version:VERSION});
+            return{ok:!cacheRecovery||cacheRecovery.ok!==false,version:VERSION,status:restored?'MATCHING_CACHE_RESTORED':'MATCHING_CACHE_RECOVERY_PENDING',requestId:requestId,cacheGroup:group,cacheRecovery:cacheRecovery,liveWriteExecuted:false};
+          }
+        }
+      }
+      var matching=deps_().matching.recheckRequest(requestId,{persist:true});return verifyResultRequest_(requestId,{ok:!matching||matching.ok!==false,version:VERSION,status:'MATCHING_PROCESSED',requestId:requestId,matching:matching,liveWriteExecuted:false});
+    }
     if((stage==='CUSTOMER STRUCTURE COMPLETE'||upper_(r['Customer Structure Status'])==='COMPLETE')){var existingIds=ids_(r);if(existingIds.customer&&existingIds.contact&&existingIds.location)return{ok:true,version:VERSION,status:'CUSTOMER_STRUCTURE_ALREADY_COMPLETE',requestId:requestId,ids:existingIds,liveWriteExecuted:false};}
     if(!safe_(r))return{ok:true,version:VERSION,status:'CUSTOMER_STRUCTURE_REVIEW_REQUIRED',requestId:requestId,stage:clean_(r['Current Stage']),liveWriteExecuted:false};
     var ids=ids_(r),association=upper_(r['Contact Association Status']),result;
@@ -1546,6 +1563,7 @@ CF.StatusWarningReconciler=(function(){
   }
   return{version:VERSION,snapshot:snapshot,step:step,stepRequest:stepRequest,refreshQueue:refreshQueue};
 })();
+
 
 
 

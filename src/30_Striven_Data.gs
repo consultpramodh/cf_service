@@ -611,9 +611,9 @@ function CF_V5133_refreshOperationalDataBase_(options) {
     var d = deps_();
     var reports = resolveReports_();
     var counts = {
-      customers: d.util.readRecords('STRIVEN_CUSTOMER_DATA').length,
-      locations: d.util.readRecords('STRIVEN_LOCATION_DATA').length,
-      operational: d.util.readRecords('STRIVEN_OPERATIONAL_DATA').length
+      customers: Math.max(0, d.util.requireSheet('STRIVEN_CUSTOMER_DATA').getLastRow() - 1),
+      locations: Math.max(0, d.util.requireSheet('STRIVEN_LOCATION_DATA').getLastRow() - 1),
+      operational: Math.max(0, d.util.requireSheet('STRIVEN_OPERATIONAL_DATA').getLastRow() - 1)
     };
     var requiredMissing = Object.keys(reports).filter(function (key) {
       return reports[key].definition.required === true && !reports[key].found;
@@ -758,5 +758,6 @@ function CF_V5133_refreshOperationalDataBase_(options) {
     inspectConfiguredReports: reportSummary_
   };
 })();
+
 
 

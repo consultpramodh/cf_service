@@ -43,6 +43,12 @@ jobs:
         with:
           node-version: "20"
 
+      - name: Test intake and matching recovery boundaries
+        run: |
+          node tests/recent-gf-backstop.test.cjs
+          node tests/matching-cache-recovery.test.cjs
+          node tests/readiness-patch.test.mjs
+
       - name: Require existing clasp authorization
         shell: bash
         run: |
