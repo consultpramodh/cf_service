@@ -203,10 +203,35 @@ function CFH_selfTestProductionHardening() {
   };
 }
 
+function CFH_reclaimUnusedCacheGrid_() {
+  var lock=LockService.getScriptLock();
+  if(!lock.tryLock(5000))return {ok:true,status:'CACHE_GRID_MAINTENANCE_DEFERRED',cellsFreed:0};
+  try {
+    var freed=0,changes=[];
+    ['STRIVEN_CUSTOMER_DATA','STRIVEN_LOCATION_DATA'].forEach(function(key){
+      var sh=CF.Util.requireSheet(key),required=CF.Config.getHeaders(key).length;
+      var columns=sh.getMaxColumns();
+      if(required>0&&columns>required&&sh.getLastColumn()<=required){
+        var removed=columns-required;
+        sh.deleteColumns(required+1,removed);
+        freed+=sh.getMaxRows()*removed;
+        changes.push({sheet:key,columnsRemoved:removed});
+      }
+    });
+    var retryReset=false;
+    if(freed>0&&CF.Util.requireSheet('STRIVEN_CUSTOMER_DATA').getLastRow()<2){
+      PropertiesService.getScriptProperties().deleteProperty('CF_SERVICEOPS_API_BRAKE_LAST_ATTEMPT_CUSTOMER_MS');
+      retryReset=true;
+    }
+    return {ok:true,status:'UNUSED_CACHE_COLUMNS_RECLAIMED',cellsFreed:freed,changes:changes,emptyCustomerRetryReset:retryReset};
+  } finally {lock.releaseLock();}
+}
+
 function CFH_installAndVerifyProductionHardening() {
+  var gridMaintenance=CFH_reclaimUnusedCacheGrid_();
   var existing = CFH_selfTestProductionHardening();
   if (existing.ok === true) {
-    return {ok:true,version:CFH_VERSION,status:'PRODUCTION_GUARDS_INSTALLED_AND_VERIFIED',install:{ok:true,status:'PRODUCTION_GUARDS_ALREADY_INSTALLED',changed:false},selfTest:existing,liveWriteExecuted:false,liveStrivenWriteExecuted:false};
+    return {ok:true,version:CFH_VERSION,status:'PRODUCTION_GUARDS_INSTALLED_AND_VERIFIED',install:{ok:true,status:'PRODUCTION_GUARDS_ALREADY_INSTALLED',changed:false},gridMaintenance:gridMaintenance,selfTest:existing,liveWriteExecuted:false,liveStrivenWriteExecuted:false};
   }
   var install = CFH_installProductionHardening();
   try { SpreadsheetApp.flush(); } catch (ignoredFlush) {}
@@ -219,6 +244,7 @@ function CFH_installAndVerifyProductionHardening() {
     version: CFH_VERSION,
     status: 'PRODUCTION_GUARDS_INSTALLED_AND_VERIFIED',
     install: install,
+    gridMaintenance: gridMaintenance,
     selfTest: selfTest
   };
 }
