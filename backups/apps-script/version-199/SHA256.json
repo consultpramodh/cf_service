@@ -1,0 +1,111 @@
+{
+  "script_id": "1QZp4NAFeA8LmWBN31ylJYdK4XFepBX1h2lP_APaR-d1lTAC-d8LA9x3g",
+  "apps_script_version": 199,
+  "source_run": "https://github.com/consultpramodh/cf_service/actions/runs/37812168092",
+  "artifact_id": 11566056429,
+  "archive_sha256": "38a689bb145c04cebebee1410a079c0586527d915dd4e15c893cc557c6f33e03",
+  "files": [
+    {
+      "name": "00_Config.js",
+      "bytes": 20062,
+      "sha256": "75da0b2601e435c388e76f8d4e0d9caad5d52f69dd4898b469993b43ed33e308",
+      "git_sha": "4d9fc2a530db6da0bd2e14a354e7480abffc5e6e"
+    },
+    {
+      "name": "01_Core_Utilities.js",
+      "bytes": 20538,
+      "sha256": "8d41e30ec4533b707c285e46029ed21793bb461d6ddde794dfa0e233235a9c85",
+      "git_sha": "6328e62ac77319ce7cb16e111a51657028399a4e"
+    },
+    {
+      "name": "10_Setup_Admin.js",
+      "bytes": 16025,
+      "sha256": "d63a497d8b64fe32649aef760c1a57bef66f61b3c77fdb69f788a7c2f25d5c90",
+      "git_sha": "faacec71ac269721328ce477ec95550fe688de18"
+    },
+    {
+      "name": "20_Intake_Processing.js",
+      "bytes": 127012,
+      "sha256": "c1f94ad2a41958cb3bc2b98c37d8d8ada91ff393131fe945271cb05c638a01e7",
+      "git_sha": "b8008ed72972594a49f05f3e586165f3deda13a3"
+    },
+    {
+      "name": "30_Striven_Data.js",
+      "bytes": 37287,
+      "sha256": "e7009c996bb7b25fd3303db89d2e76afd67e3d008e59ee0fda49c2573638b935",
+      "git_sha": "f65f036dd463504931696d13586702cb2a2a6ea9"
+    },
+    {
+      "name": "40_Matching_Profile.js",
+      "bytes": 87617,
+      "sha256": "be37f19f5aace54e6aafca443b17b360e7dfefa7b5b296b64fdc5ad322432b19",
+      "git_sha": "4542f0ec4adf24311987dc6c67d6a85636180e85"
+    },
+    {
+      "name": "50_Operator_Queue.js",
+      "bytes": 245507,
+      "sha256": "6874e7f390bfed0599be3f79ae8e507df5b6ada184a881ba3b87edcb31514c7e",
+      "git_sha": "520e105f9b35d7a99cb4b5b2e0acb34a1fa8c3cf"
+    },
+    {
+      "name": "60_Operator_Workflow.js",
+      "bytes": 7972,
+      "sha256": "637bd642acbf548b93113ad94abfdc2dce2726db4444a6340b83d0c57d271775",
+      "git_sha": "185e2ac0289e9aac6b94d403c0254a3e0a1ec31c"
+    },
+    {
+      "name": "60_Striven_Write.js",
+      "bytes": 390419,
+      "sha256": "0e8c1766660eaaddd9410b6dc83067e21b54bbba7549d3fbec524f9db5530cfe",
+      "git_sha": "9ea530793b774ed4f7e36ab2a15584b5c69dc9bc"
+    },
+    {
+      "name": "70_Customer_360.js",
+      "bytes": 110847,
+      "sha256": "1b13e9f3d5f20278eb90a16eb10e5273cfe23c95120d530895c38023e0ddfec1",
+      "git_sha": "22377c523cd39022927a39d3b7d3e8d5b081a8f0"
+    },
+    {
+      "name": "70_Workflow_Automation.js",
+      "bytes": 113349,
+      "sha256": "a66c9bba4cdf10c31c0ac9f1755d8630946f5e975250dbe24171b963769295a3",
+      "git_sha": "7f4d375aa9ca61fcfa463a55b621588c079b2a1b"
+    },
+    {
+      "name": "75_Customer_360_AI.js",
+      "bytes": 20175,
+      "sha256": "3627a1e367b37979b4ce2a4494e47d98c07453ea3e5ffea0755a25fac28bf95b",
+      "git_sha": "d73c4baacce482aba75756be22c153327af3ef08"
+    },
+    {
+      "name": "90_Diagnostics_Tests.js",
+      "bytes": 18140,
+      "sha256": "95dcd54acfbe439999525f67b701bd0a586f83b09bc70a518e11bf12c889b62f",
+      "git_sha": "0b0a9d412d26a98791e156996d6f883c03e9feb2"
+    },
+    {
+      "name": "95_Public_Runners.js",
+      "bytes": 194428,
+      "sha256": "dde38f6e6266ba2dfbe5cb1eb495a9cb3f445cea5eb65c5ae23b5236a5877518",
+      "git_sha": "ded617b86d7710d4418338cf00b8aaf79a202487"
+    },
+    {
+      "name": "98_Code_Audit.js",
+      "bytes": 24478,
+      "sha256": "2290a159b7b225b1e29f01127232b77a68d4d739aec6ebe04e2e858ec903c53b",
+      "git_sha": "5ea1fe111d4b3311d762c8d19deed7c0e61aab82"
+    },
+    {
+      "name": "99_Production_Hardening.js",
+      "bytes": 10576,
+      "sha256": "df89c166cf63704e18cc0f3f13b730f0e38a426aa15a699f84e825b2da421779",
+      "git_sha": "bc196039c10244ecccda8e65da5c6f084d09befd"
+    },
+    {
+      "name": "appsscript.json",
+      "bytes": 634,
+      "sha256": "2c03e4ab159571d52308443745ca7321f78eb9cbd0ba24158093c11a29bdcd2d",
+      "git_sha": "8b67ad66d58e30f872a7093a5fe255b6b52cf59a"
+    }
+  ]
+}
