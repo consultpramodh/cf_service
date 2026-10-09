@@ -4452,3 +4452,34 @@ function TESTING_20261001_manualWorkOrderInternalNotesBacklogStep() {
   return CF.ManualWorkOrderInternalNotes.backlogStep({maxChecks:12});
 }
 
+
+/**
+ * Google Apps Script — guarded repair of the verified October intake cohort.
+ * Each call delegates to the existing field-855 identity/read-back/journal guards.
+ * No new order, contact, customer, or location is created by this runner.
+ */
+function FIX_20261009_fillVerifiedWebformRequestSources() {
+  var ids = [
+    'SR-20261007151444-7380',
+    'SR-20261007151500-1930',
+    'SR-20261007151516-7455',
+    'SR-20261008110829-5516',
+    'SR-20261008113315-7774'
+  ];
+  var results = [], started = Date.now();
+  if (!CF.SalesOrderInternalNotesApi || typeof CF.SalesOrderInternalNotesApi.fillMissingRequestSource !== 'function') {
+    throw new Error('GUARDED_REQUEST_SOURCE_REPAIR_UNAVAILABLE');
+  }
+  for (var i = 0; i < ids.length; i++) {
+    if (Date.now() - started > 240000) break;
+    var result;
+    try { result = CF.SalesOrderInternalNotesApi.fillMissingRequestSource(ids[i]); }
+    catch (error) { result = {ok:false,status:'REPAIR_EXCEPTION_STOPPED',error:String(error&&error.message||error)}; }
+    results.push({requestId:ids[i],result:result});
+    console.log(JSON.stringify(results[results.length-1]));
+    if (!result || /UNCERTAIN|RECONCILIATION_REQUIRED|REQUIRES_GET|EXCEPTION/.test(String(result.status||''))) break;
+  }
+  var report = {status:'GUARDED_REQUEST_SOURCE_REPAIR_COHORT',processed:results.length,total:ids.length,results:results};
+  console.log(JSON.stringify(report));
+  return report;
+}
