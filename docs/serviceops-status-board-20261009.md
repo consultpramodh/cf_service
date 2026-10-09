@@ -26,7 +26,7 @@ Statuses record evidence, not planned completion.
 - No Apps Script code push, version deletion or Striven write performed.
 
 ## Release boundary
-Read-only web-app access works. A fresh authenticated full Apps Script source pull and deploy-capable access have not been established in this session. GitHub production source and the earlier saved-version backup are evidence, not a substitute for current editable HEAD parity. Keep issue #48 open until safe patch and controlled live acceptance pass.
+Read-only web-app access works. Authenticated Apps Script editor access was verified after secure Google sign-in. A fresh full source backup, live-to-patch parity comparison and deployment remain pending. GitHub production source and the earlier saved-version backup are evidence, not a substitute for current editable HEAD parity. Keep issue #48 open until safe patch and controlled live acceptance pass.
 
 ## API reduction correction order
 1. Inspect the shared Striven HTTP wrapper and existing counters. Count each network attempt, retry and report page by request/stage/endpoint without extra Striven requests.
@@ -39,4 +39,4 @@ Read-only web-app access works. A fresh authenticated full Apps Script source pu
 - #49: IMPLEMENTED / LOCAL TESTS PASS / NOT DEPLOYED. Draft PR #50 on fix/serviceops-api-and-timing-20261009. Receipt-to-order acknowledgment timing, refreshed pending duration, zero HTTP calls in helper tests.
 - #51: IMPLEMENTED / LOCAL TESTS PASS / NOT DEPLOYED. Terminal HTTP errors retried 3 times in original mocked test; patched result 1 attempt. Retryable failures preserved. Same branch/PR.
 - #48: DIAGNOSED / SAFE PATCH PENDING. Missing schedule metadata and ignored deletion outcome reproduced.
-- Deployment access: direct project navigation redirected to public Apps Script developer page with Sign in visible; current authenticated editor access is not established. Source/test work continues; no issue closed as live resolved.
+- Access restored: secure Google sign-in completed and the CF Service - July 2026 editor was visibly verified under pramodh@classicfireplace.ca. Deployment has not occurred; no issue is closed as live resolved.
