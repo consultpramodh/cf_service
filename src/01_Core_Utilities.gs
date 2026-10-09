@@ -398,6 +398,7 @@ CF.Util = (function () {
     var attempts = Math.max(1, Number(options.attempts || 1));
     var lastError;
     for (var attempt = 1; attempt <= attempts; attempt++) {
+      var retryable = true;
       try {
         var response = UrlFetchApp.fetch(url, {
           method: options.method || 'get',
@@ -410,9 +411,10 @@ CF.Util = (function () {
         var text = response.getContentText();
         if (status >= 200 && status < 300) return { ok: true, status: status, text: text, json: parseJson(text, {}) };
         lastError = new Error('HTTP ' + status + ': ' + truncate(text, 500));
-        if (status < 500 && status !== 429) throw lastError;
+        if (status < 500 && status !== 429) { retryable = false; throw lastError; }
       } catch (error) {
         lastError = error;
+        if (!retryable) break;
       }
       if (attempt < attempts) Utilities.sleep(Math.min(8000, 500 * Math.pow(2, attempt - 1)));
     }
