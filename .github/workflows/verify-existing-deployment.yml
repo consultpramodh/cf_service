@@ -1,0 +1,36 @@
+name: Verify existing CF ServiceOps deployment
+on:
+  workflow_dispatch:
+  push:
+    branches: [production]
+    paths: [.github/workflows/verify-existing-deployment.yml]
+permissions:
+  contents: read
+concurrency:
+  group: cf-serviceops-live-verification
+  cancel-in-progress: false
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      LIVE_URL: https://script.google.com/macros/s/AKfycbwebnCvczGthe6Z_mvYmukLqFLB-9nk8hjNtNP3lR87CE1m_fEx2d9Bn_vpXMPCLUnPbA/exec
+    steps:
+      - name: Read live health and request state
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir evidence
+          curl -fsSL --retry 2 --max-time 90 --get --data-urlencode "nonce=$GITHUB_RUN_ID" "$LIVE_URL" > evidence/health.json
+          node -e 'const fs=require("fs"),x=JSON.parse(fs.readFileSync("evidence/health.json")); console.log("HEALTH",JSON.stringify(x)); if(x.version!=="5.14.4"||x.singleModelVerified!==true||x.automationEnabled!==true||Number(x.legacyAutomationTriggerCount)!==0||Number(x.watchdogTriggers)!==1||Number(x.finalWorkerTriggers)>1) process.exit(2)'
+          curl -fsSL --retry 2 --max-time 180 --get --data-urlencode 'ops=intake-progress-snapshot' --data-urlencode 'ids=3541,3542,3543,3544,3545,3546,3547,3548,3549,3550,3551,3552,3553,3554,3555' --data-urlencode "nonce=$GITHUB_RUN_ID" "$LIVE_URL" > evidence/intake.json
+          node -e 'const fs=require("fs"),x=JSON.parse(fs.readFileSync("evidence/intake.json")); console.log("INTAKE",JSON.stringify(x)); if(x.ok!==true)process.exit(2)'
+          curl -fsSL --retry 2 --max-time 180 --get --data-urlencode 'ops=status-warning-reconcile-snapshot' --data-urlencode "nonce=$GITHUB_RUN_ID" "$LIVE_URL" > evidence/warnings.json
+          node -e 'const fs=require("fs"),x=JSON.parse(fs.readFileSync("evidence/warnings.json"));console.log("WARNINGS",JSON.stringify(x));if(x.ok!==true)process.exit(2)'
+      - name: Preserve verification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: existing-deployment-evidence
+          path: evidence/
+          retention-days: 30
