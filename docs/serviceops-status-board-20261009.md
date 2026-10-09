@@ -1,6 +1,8 @@
 # CF ServiceOps status board
 Updated October 9, 2026, America/Toronto.
 
+Primary objective: reduce actual Striven HTTP attempts per successful request, without weakening duplicate prevention, ownership verification or required post-write read-back.
+
 Statuses record evidence, not planned completion.
 
 | Priority | Work | Status | Evidence / next action |
@@ -13,7 +15,7 @@ Statuses record evidence, not planned completion.
 | P1 | Existing order 26648 location conflict | LEGITIMATE REVIEW | Direct live snapshot retained BLOCKED and do-not-create-again action. |
 | P1 | Scheduling / technician / print / payment handoffs | UNVERIFIED | Canonical dispatcher ends at certified order; verify downstream independently. |
 | P2 | Queue / dashboard parity | RECHECK REQUIRED | Compare current ledger and display after mutations. |
-| P2 | Runtime and API churn | MEASURE REQUIRED | Live snapshot records repeated stale-worker recovery and a 112191 ms operational refresh; no current cohort baseline. |
+| P0 | Striven API call reduction | FIRST OPTIMIZATION | Count actual HTTP attempts, including retries and report pages. Inspect unchanged-conflict recertification and redundant broad refreshes before adding calls or JEV. Existing conflict preview already has a 30-minute fingerprint cooldown; audit downstream recertification for repeat GETs. No savings quantified yet. |
 | P2 | JEV semantic pilot | NOT INTEGRATED | Skill applied; no model call. Deterministic rules, IDs, retries and writes remain in code. |
 
 ## Verified this investigation
@@ -25,3 +27,10 @@ Statuses record evidence, not planned completion.
 
 ## Release boundary
 Read-only web-app access works. A fresh authenticated full Apps Script source pull and deploy-capable access have not been established in this session. GitHub production source and the earlier saved-version backup are evidence, not a substitute for current editable HEAD parity. Keep issue #48 open until safe patch and controlled live acceptance pass.
+
+## API reduction correction order
+1. Inspect the shared Striven HTTP wrapper and existing counters. Count each network attempt, retry and report page by request/stage/endpoint without extra Striven requests.
+2. Stop repeated reads for unchanged proven conflicts while retaining an explicit evidence-invalidation/resume path. Do not assume a trigger execution equals an API call.
+3. Prefer request-scoped evidence retrieval to broad report refreshes where freshness and identity checks remain satisfied. Reuse reads within one execution; invalidate cached entities after writes.
+4. Keep dashboard/queue projection local wherever possible; confirm dependencies before eliminating refreshes.
+5. Preserve one necessary post-write GET and exact duplicate/ownership gates. Report before/after attempts and completion outcomes; do not invent savings.
