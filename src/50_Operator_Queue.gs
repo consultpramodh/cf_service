@@ -4893,7 +4893,7 @@ function FIX_20260903_reconcileAllExistingOperatorQueue() {
   function relevantPatch_(patch){
     patch=patch||{};
     var keys=['Current Stage','Request Status','Manual Review?','Manual Review Reason','Blocking Issue','Next Action',
-      'Striven Sync Status','Striven Sync Error','Reconciliation Status','Final Outcome','Completed At','Last Striven Sync','Submitted At',
+      'Striven Sync Status','Striven Sync Error','Reconciliation Status','Final Outcome','Completed At','Last Striven Sync','Submitted At','Created At','Write Journal JSON',
       'Matched Customer ID','Created Customer ID','Matched Contact ID','Created Contact ID','Matched Location ID','Created Location ID',
       'Customer Match Status','Contact Match Status','Location Match Status','Customer Action','Contact Action','Location Action',
       'Work Order Action','Work Order Status','Work Order ID','Work Order Number','Work Order Link','Active Work JSON'];
