@@ -27,6 +27,14 @@ jobs:
           node -e 'const fs=require("fs"),x=JSON.parse(fs.readFileSync("evidence/intake.json")); console.log("INTAKE",JSON.stringify(x)); if(x.ok!==true)process.exit(2)'
           curl -fsSL --retry 2 --max-time 180 --get --data-urlencode 'ops=status-warning-reconcile-snapshot' --data-urlencode "nonce=$GITHUB_RUN_ID" "$LIVE_URL" > evidence/warnings.json
           node -e 'const fs=require("fs"),x=JSON.parse(fs.readFileSync("evidence/warnings.json"));console.log("WARNINGS",JSON.stringify(x));if(x.ok!==true)process.exit(2)'
+      - name: Recheck the existing-order conflict and refresh dashboard
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsSL --max-time 180 --get --data-urlencode 'ops=status-warning-reconcile-one' --data-urlencode 'id=SR-20261008130055-2412' --data-urlencode "nonce=$GITHUB_RUN_ID" "$LIVE_URL" > evidence/conflict.json
+          node -e 'const x=JSON.parse(require("fs").readFileSync("evidence/conflict.json")); console.log("CONFLICT_RECHECK",JSON.stringify(x)); if(x.requestId!=="SR-20261008130055-2412"||x.workOrderId!=="26648")process.exit(2)'
+          curl -fsSL --retry 2 --max-time 180 --get --data-urlencode 'ops=dashboard-refresh' --data-urlencode "nonce=$GITHUB_RUN_ID" "$LIVE_URL" > evidence/dashboard.json
+          node -e 'const x=JSON.parse(require("fs").readFileSync("evidence/dashboard.json")); console.log("DASHBOARD",JSON.stringify(x)); if(x.ok!==true)process.exit(2)'
       - name: Preserve verification evidence
         if: always()
         uses: actions/upload-artifact@v4
