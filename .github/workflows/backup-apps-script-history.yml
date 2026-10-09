@@ -1,0 +1,113 @@
+name: Back up every Apps Script version
+on:
+  workflow_dispatch:
+  push:
+    branches: [production]
+    paths: [.github/workflows/backup-apps-script-history.yml]
+permissions:
+  contents: write
+concurrency:
+  group: cf-serviceops-production-v2
+  cancel-in-progress: false
+jobs:
+  backup:
+    if: github.ref == 'refs/heads/production'
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: production
+          fetch-depth: 1
+      - name: Export immutable versions and current head without changing Apps Script
+        env:
+          CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
+        shell: python
+        run: |
+          import os,json,time,urllib.request,urllib.parse,hashlib,gzip,pathlib,re,subprocess
+          sid='1QZp4NAFeA8LmWBN31ylJYdK4XFepBX1h2lP_APaR-d1lTAC-d8LA9x3g'
+          auth=json.loads(os.environ['CLASPRC_JSON'])
+          cred=auth.get('tokens',{}).get('default')
+          if not cred and auth.get('token') and auth.get('oauth2ClientSettings'):
+            cred=dict(auth['token'],client_id=auth['oauth2ClientSettings']['clientId'],client_secret=auth['oauth2ClientSettings']['clientSecret'])
+          if not cred or not all(cred.get(k) for k in ['client_id','client_secret','refresh_token']):
+            raise RuntimeError('Supported refresh credentials required; no credentials printed')
+          token=None; expiry=0
+          def api(path):
+            global token,expiry
+            if time.time()>expiry:
+              form=urllib.parse.urlencode({k:cred[k] for k in ['client_id','client_secret','refresh_token']}|{'grant_type':'refresh_token'}).encode()
+              with urllib.request.urlopen(urllib.request.Request('https://oauth2.googleapis.com/token',data=form),timeout=40) as r: data=json.load(r)
+              token=data['access_token'];expiry=time.time()+int(data.get('expires_in',3600))-120
+              print('::add-mask::'+token)
+            for attempt in range(5):
+              req=urllib.request.Request('https://script.googleapis.com/v1/projects/'+sid+path,headers={'Authorization':'Bearer '+token})
+              try:
+                with urllib.request.urlopen(req,timeout=90) as r: return json.load(r)
+              except urllib.error.HTTPError as e:
+                if e.code in (429,500,502,503,504) and attempt<4: time.sleep(min(2**attempt,16));continue
+                raise RuntimeError('Apps Script GET failed HTTP '+str(e.code)+' on '+path) from None
+            raise RuntimeError('Read retry exhausted')
+          def pages(kind):
+            rows=[];page=''
+            while True:
+              data=api('/'+kind+'?pageSize=50'+('&pageToken='+urllib.parse.quote(page,safe='') if page else ''))
+              rows+=data.get(kind,[]);page=data.get('nextPageToken','')
+              if not page:return rows
+          versions=pages('versions');deployments=pages('deployments')
+          nums=sorted(int(v['versionNumber']) for v in versions)
+          if not nums or len(nums)!=len(set(nums)):raise RuntimeError('Invalid version inventory')
+          root=pathlib.Path('backups/apps-script/full-history-20261009');root.mkdir(parents=True,exist_ok=True)
+          inventory={'scriptId':sid,'exportedAtUtc':time.strftime('%Y-%m-%dT%H:%M:%SZ',time.gmtime()),'versions':versions,'deployments':deployments,'latestVersion':max(nums),'versionCount':len(nums),'snapshots':[]}
+          # Block publication of recognizable credential literals; emit names only.
+          patterns=[r'sk-(?:proj-)?[A-Za-z0-9_-]{24,}',r'AIza[A-Za-z0-9_-]{30,}',r'-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----',r'(?i)(?:client[_ ]?secret|access[_ ]?token|refresh[_ ]?token|api[_ ]?key|webhook[_ ]?secret)\s*[=:]\s*["\'][A-Za-z0-9_+./=-]{24,}["\']']
+          for number in nums+['HEAD']:
+            data=api('/content'+('?versionNumber='+str(number) if number!='HEAD' else ''))
+            files=data.get('files',[])
+            if not files:raise RuntimeError('Empty source at '+str(number))
+            hashes=[]
+            for f in files:
+              source=f.get('source')
+              if not isinstance(source,str):raise RuntimeError('Missing exact source')
+              if any(re.search(p,source) for p in patterns):
+                raise RuntimeError('Possible embedded credential; publication stopped at version '+str(number)+' file '+f['name'])
+              hashes.append({'name':f['name'],'type':f['type'],'bytes':len(source.encode()),'sha256':hashlib.sha256(source.encode()).hexdigest()})
+            raw=json.dumps(data,ensure_ascii=False,separators=(',',':')).encode()
+            compressed=gzip.compress(raw,mtime=0)
+            folder=root/('version-'+str(number));folder.mkdir(exist_ok=True)
+            (folder/'content.json.gz').write_bytes(compressed)
+            manifest={'version':number,'sourceFiles':hashes,'archiveSha256':hashlib.sha256(compressed).hexdigest(),'uncompressedSha256':hashlib.sha256(raw).hexdigest()}
+            (folder/'manifest.json').write_text(json.dumps(manifest,indent=2)+'\n')
+            inventory['snapshots'].append({'version':number,'fileCount':len(files),'archiveSha256':manifest['archiveSha256']})
+            print('EXPORTED version='+str(number)+' files='+str(len(files)))
+            time.sleep(.3)
+          # Immutable source inventory must remain unchanged during export.
+          after=pages('versions');afterdep=pages('deployments')
+          if sorted(int(v['versionNumber']) for v in after)!=nums:raise RuntimeError('Version inventory changed; retry required')
+          def depkey(rows):return sorted((d['deploymentId'],str(d.get('deploymentConfig',{}).get('versionNumber',''))) for d in rows)
+          if depkey(afterdep)!=depkey(deployments):raise RuntimeError('Deployment pins changed; retry required')
+          (root/'inventory.json').write_text(json.dumps(inventory,indent=2)+'\n')
+          (root/'README.md').write_text('# Exact Apps Script history backup\n\nEach content.json.gz is the complete projects.getContent response. manifest.json records SHA-256 for every original source string and the archive. inventory.json maps all versions and deployment pins. HEAD is captured separately.\n\nRecovery: gunzip the chosen archive, read files[], restore every source string using its name/type (SERVER_JS -> .gs, HTML -> .html, JSON -> .json), push the complete project, verify a fresh read-back, and deploy a new version at the existing deployment ID. Deleted version numbers cannot be restored.\n\nThis backup contains source and manifests, not Script Properties, credentials, spreadsheet data, installed triggers, or external records. No Apps Script write or deletion is performed by this workflow.\n')
+          subprocess.run(['git','config','user.name','CF ServiceOps Backup'],check=True)
+          subprocess.run(['git','config','user.email','cf-serviceops-backup@users.noreply.github.com'],check=True)
+          subprocess.run(['git','add',str(root)],check=True)
+          if subprocess.run(['git','diff','--cached','--quiet']).returncode==0:
+            print('BACKUP_ALREADY_PRESENT')
+          else:
+            subprocess.run(['git','commit','-m','Back up exact Apps Script history before approved cleanup [skip ci]'],check=True,stdout=subprocess.DEVNULL)
+            subprocess.run(['git','push','origin','HEAD:production'],check=True)
+          subprocess.run(['git','fetch','--no-tags','origin','production'],check=True)
+          commit=subprocess.check_output(['git','rev-parse','FETCH_HEAD'],text=True).strip()
+          for snapshot in inventory['snapshots']:
+            folder=root/('version-'+str(snapshot['version']))
+            remote=subprocess.check_output(['git','show',commit+':'+str(folder/'content.json.gz')])
+            if hashlib.sha256(remote).hexdigest()!=snapshot['archiveSha256']:raise RuntimeError('REMOTE_ARCHIVE_MISMATCH')
+            manifest=json.loads(subprocess.check_output(['git','show',commit+':'+str(folder/'manifest.json')]))
+            raw=gzip.decompress(remote)
+            if hashlib.sha256(raw).hexdigest()!=manifest['uncompressedSha256']:raise RuntimeError('REMOTE_CONTENT_MISMATCH')
+            files=json.loads(raw)['files']
+            got=sorted((f['name'],f['type'],hashlib.sha256(f['source'].encode()).hexdigest()) for f in files)
+            expected=sorted((f['name'],f['type'],f['sha256']) for f in manifest['sourceFiles'])
+            if got!=expected:raise RuntimeError('REMOTE_SOURCE_FILE_MISMATCH')
+          print('REMOTE_BACKUP_VERIFIED commit='+commit+' versions='+str(len(nums))+' latest='+str(max(nums))+' head=true')
+          print('DEPLOYMENT_PINS '+json.dumps([{'deploymentId':d['deploymentId'],'versionNumber':d.get('deploymentConfig',{}).get('versionNumber')} for d in deployments]))
