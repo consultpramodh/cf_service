@@ -34,3 +34,9 @@ Read-only web-app access works. A fresh authenticated full Apps Script source pu
 3. Prefer request-scoped evidence retrieval to broad report refreshes where freshness and identity checks remain satisfied. Reuse reads within one execution; invalidate cached entities after writes.
 4. Keep dashboard/queue projection local wherever possible; confirm dependencies before eliminating refreshes.
 5. Preserve one necessary post-write GET and exact duplicate/ownership gates. Report before/after attempts and completion outcomes; do not invent savings.
+
+## Execution update
+- #49: IMPLEMENTED / LOCAL TESTS PASS / NOT DEPLOYED. Draft PR #50 on fix/serviceops-api-and-timing-20261009. Receipt-to-order acknowledgment timing, refreshed pending duration, zero HTTP calls in helper tests.
+- #51: IMPLEMENTED / LOCAL TESTS PASS / NOT DEPLOYED. Terminal HTTP errors retried 3 times in original mocked test; patched result 1 attempt. Retryable failures preserved. Same branch/PR.
+- #48: DIAGNOSED / SAFE PATCH PENDING. Missing schedule metadata and ignored deletion outcome reproduced.
+- Deployment access: direct project navigation redirected to public Apps Script developer page with Sign in visible; current authenticated editor access is not established. Source/test work continues; no issue closed as live resolved.
