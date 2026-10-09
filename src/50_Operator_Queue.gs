@@ -4904,12 +4904,22 @@ function FIX_20260903_reconcileAllExistingOperatorQueue() {
   function parseDate_(v){
     if(!v)return null;
     if(Object.prototype.toString.call(v)==='[object Date]')return isNaN(v.getTime())?null:v;
-    var s=clean_(v),m;
-    m=s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})[ T](\d{1,2}):(\d{2})(?::(\d{2}))?/);
-    if(m)return new Date(Number(m[1]),Number(m[2])-1,Number(m[3]),Number(m[4]),Number(m[5]),Number(m[6]||0));
-    m=s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})[ T](\d{1,2}):(\d{2})(?::(\d{2}))?/);
-    if(m)return new Date(Number(m[3]),Number(m[1])-1,Number(m[2]),Number(m[4]),Number(m[5]),Number(m[6]||0));
-    var d=new Date(s);return isNaN(d.getTime())?null:d;
+    var s=clean_(v),m,d;
+    if(/^\d{4}-\d{2}-\d{2}T.*(?:Z|[+-]\d{2}:?\d{2})$/i.test(s)){
+      d=new Date(s);return isNaN(d.getTime())?null:d;
+    }
+    m=s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})[ T](\d{1,2}):(\d{2})(?::(\d{2}))?$/);
+    if(m){
+      var canonical=[m[1],('0'+m[2]).slice(-2),('0'+m[3]).slice(-2)].join('-')+' '+('0'+m[4]).slice(-2)+':'+m[5]+':'+(m[6]||'00');
+      try{
+        d=Utilities.parseDate(canonical,tz_(),'yyyy-MM-dd HH:mm:ss');
+        return Utilities.formatDate(d,tz_(),'yyyy-MM-dd HH:mm:ss')===canonical?d:null;
+      }catch(e){return null;}
+    }
+    m=s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})[ T](\d{1,2}):(\d{2})(?::(\d{2}))?$/);
+    if(m)return parseDate_(m[3]+'-'+m[1]+'-'+m[2]+' '+m[4]+':'+m[5]+':'+(m[6]||'00'));
+    // Reject unzoned ambiguous strings rather than silently applying runtime timezone.
+    return null;
   }
   function tz_(){try{return SpreadsheetApp.getActive().getSpreadsheetTimeZone()||'America/Toronto';}catch(e){return'America/Toronto';}}
   function formatDateTime_(v){var d=parseDate_(v);if(!d)return'';try{return Utilities.formatDate(d,tz_(),'MMM d, yyyy h:mm a');}catch(e){return clean_(v);}}
@@ -4971,14 +4981,30 @@ function FIX_20260903_reconcileAllExistingOperatorQueue() {
     }
     return ['Review: '+clean_(r['Manual Review Reason']||r['Blocking Issue']||'Required')];
   }
+  function orderCreationTime_(r){
+    var root=parseJournal_(r['Write Journal JSON']),so=root.salesOrderCreate||{};
+    var id=clean_(r['Work Order ID']),responseId=clean_(so.responseIdentifier);
+    var canonical=clean_(so.canonicalSalesOrderId),http=Number(so.httpStatus);
+    // POST acknowledgement time is local evidence, not server-created-at.
+    if(!id||!responseId||responseId!==id||(canonical&&canonical!==id)||
+       Number(so.postAttempts)<1||!(http>=200&&http<300))return '';
+    return so.postFinishedAt||'';
+  }
   function statusText_(r){
     var lines=[clean_(r['Current Stage']||r['Request Status'])];
-    var submittedRaw=r['Submitted At']||r['Created At'],processedRaw=processedValue_(r),submitted=formatDateTime_(submittedRaw);
+    var receivedRaw=r['Created At'],submitted=formatDateTime_(r['Submitted At']);
+    var received=formatDateTime_(receivedRaw),createdRaw=orderCreationTime_(r);
     if(submitted)lines.push('Submitted: '+submitted);
-    if(processedRaw){
-      lines.push((processComplete_(r)?'Processed: ':'Last processed: ')+formatDateTime_(processedRaw));
-      var dur=duration_(submittedRaw,processedRaw);if(dur)lines.push((processComplete_(r)?'Processing time: ':'Processing time so far: ')+dur);
-    }else lines.push('Processed: Pending');
+    if(received)lines.push('Received: '+received);
+    var hasOrder=!!clean_(r['Work Order ID']);
+    if(hasOrder){
+      var created=formatDateTime_(createdRaw);
+      lines.push(created?'Sales Order created (acknowledged): '+created:'Sales Order creation time: Unavailable');
+    }else lines.push('Sales Order: Pending');
+    var start=parseDate_(receivedRaw),end=hasOrder?parseDate_(createdRaw):new Date(nowMs_());
+    if(!start||!end)lines.push('Processing time: Unavailable');
+    else if(end.getTime()<start.getTime())lines.push('Processing time: Timestamp conflict');
+    else lines.push((hasOrder?'Processing time: ':'Processing time so far: ')+duration_(start,end));
     lines=lines.concat(reviewLines_(r));
     return lines.filter(Boolean).join('\n');
   }
