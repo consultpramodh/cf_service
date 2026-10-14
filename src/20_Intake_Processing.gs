@@ -1484,231 +1484,8 @@ function buildRecords_(
    *******************************************************/
 
   function sortDurableIntakeLedgersNewestFirst_() {
-    var d = deps_();
-
-    var webformSheet =
-      d.util.requireSheet(
-        'WEBFORM_REQUESTS'
-      );
-
-    var serviceSheet =
-      d.util.requireSheet(
-        'SERVICE_REQUESTS'
-      );
-
-    var webformHeaderMap =
-      d.util.getHeaderMap(
-        webformSheet
-      );
-
-    var serviceHeaderMap =
-      d.util.getHeaderMap(
-        serviceSheet
-      );
-
-    var webformLastRow =
-      webformSheet.getLastRow();
-
-    var serviceLastRow =
-      serviceSheet.getLastRow();
-
-    if (
-      webformLastRow > 2 &&
-      webformHeaderMap[
-        'Received At'
-      ]
-    ) {
-      webformSheet
-        .getRange(
-          2,
-          1,
-          webformLastRow - 1,
-          webformSheet.getLastColumn()
-        )
-        .sort({
-          column:
-            webformHeaderMap[
-              'Received At'
-            ],
-          ascending: false
-        });
-    }
-
-    if (
-      serviceLastRow > 2 &&
-      serviceHeaderMap[
-        'Submitted At'
-      ]
-    ) {
-      serviceSheet
-        .getRange(
-          2,
-          1,
-          serviceLastRow - 1,
-          serviceSheet.getLastColumn()
-        )
-        .sort({
-          column:
-            serviceHeaderMap[
-              'Submitted At'
-            ],
-          ascending: false
-        });
-    }
-
-    /*
-     * Sorting changes physical row numbers, so rebuild
-     * Source Row ID using stable ledger identity.
-     */
-    var webformRows =
-      d.util.readObjects(
-        'WEBFORM_REQUESTS',
-        {
-          includeRowNumber: true
-        }
-      );
-
-    var webformBySubmissionId = {};
-    var webformByRequestId = {};
-
-    webformRows.forEach(
-      function (row) {
-        var submissionId =
-          clean_(
-            row[
-              'Submission ID'
-            ]
-          );
-
-        var requestId =
-          clean_(
-            row[
-              'Request ID'
-            ]
-          );
-
-        if (
-          submissionId &&
-          webformBySubmissionId[
-            submissionId
-          ] === undefined
-        ) {
-          webformBySubmissionId[
-            submissionId
-          ] =
-            row.__rowNumber;
-        }
-
-        if (
-          requestId &&
-          webformByRequestId[
-            requestId
-          ] === undefined
-        ) {
-          webformByRequestId[
-            requestId
-          ] =
-            row.__rowNumber;
-        }
-      }
-    );
-
-    if (
-      webformHeaderMap[
-        'Source Row ID'
-      ] &&
-      webformRows.length
-    ) {
-      webformSheet
-        .getRange(
-          2,
-          webformHeaderMap[
-            'Source Row ID'
-          ],
-          webformRows.length,
-1
-        )
-        .setValues(
-          webformRows.map(
-            function (row) {
-              return [
-                row.__rowNumber
-              ];
-            }
-          )
-        );
-    }
-
-    var serviceRows =
-      d.util.readObjects(
-        'SERVICE_REQUESTS',
-        {
-          includeRowNumber: true
-        }
-      );
-
-    if (
-      serviceHeaderMap[
-        'Source Row ID'
-      ] &&
-      serviceRows.length
-    ) {
-      serviceSheet
-        .getRange(
-          2,
-          serviceHeaderMap[
-            'Source Row ID'
-          ],
-          serviceRows.length,
-1
-        )
-        .setValues(
-          serviceRows.map(
-            function (row) {
-              var submissionId =
-                clean_(
-                  row[
-                    'Submission ID'
-                  ]
-                );
-
-              var requestId =
-                clean_(
-                  row[
-                    'Request ID'
-                  ]
-                );
-
-              var sourceRow =
-                (
-                  submissionId &&
-                  webformBySubmissionId[
-                    submissionId
-                  ]
-                ) ||
-                (
-                  requestId &&
-                  webformByRequestId[
-                    requestId
-                  ]
-                ) ||
-                '';
-
-              return [
-                sourceRow
-              ];
-            }
-          )
-        );
-    }
-
-    return {
-      ok: true,
-      webformRows:
-        webformRows.length,
-      serviceRows:
-        serviceRows.length
-    };
+    // Keep physical ledger rows stable. Newest-first order belongs to the Operator Queue.
+    return reindexDurableIntakeSourceRows_();
   }
 
   /*******************************************************
@@ -1725,29 +1502,9 @@ function buildRecords_(
    * after physical rows move.
    *******************************************************/
 
-  function insertRecordAtTop_(keyOrName, record) {
-    var d = deps_();
-    var sheet = d.util.requireSheet(keyOrName);
-    var row = d.util.recordToRow(keyOrName, record);
-
-    d.util.ensureGridSize(
-      sheet,
-      Math.max(2, sheet.getMaxRows()),
-      Math.max(1, row.length)
-    );
-
-    sheet.insertRowBefore(2);
-
-    sheet
-      .getRange(
-        2,
-        1,
-        1,
-        row.length
-      )
-      .setValues([row]);
-
-    return 2;
+  function insertRecordAtTop_() {
+    // Historical name retained for compatible callers; data storage is append-only.
+    return deps_().util.appendRecord(arguments[0], arguments[1]);
   }
 
   function reindexDurableIntakeSourceRows_() {
@@ -1927,78 +1684,7 @@ function buildRecords_(
   }
 
   function sortDurableIntakeLedgersNewestFirst_() {
-    var d = deps_();
-
-    var webformSheet =
-      d.util.requireSheet(
-        'WEBFORM_REQUESTS'
-      );
-
-    var serviceSheet =
-      d.util.requireSheet(
-        'SERVICE_REQUESTS'
-      );
-
-    var webformHeaderMap =
-      d.util.getHeaderMap(
-        webformSheet
-      );
-
-    var serviceHeaderMap =
-      d.util.getHeaderMap(
-        serviceSheet
-      );
-
-    var webformLastRow =
-      webformSheet.getLastRow();
-
-    var serviceLastRow =
-      serviceSheet.getLastRow();
-
-    if (
-      webformLastRow > 2 &&
-      webformHeaderMap[
-        'Received At'
-      ]
-    ) {
-      webformSheet
-        .getRange(
-          2,
-          1,
-          webformLastRow - 1,
-          webformSheet.getLastColumn()
-        )
-        .sort({
-          column:
-            webformHeaderMap[
-              'Received At'
-            ],
-          ascending: false
-        });
-    }
-
-    if (
-      serviceLastRow > 2 &&
-      serviceHeaderMap[
-        'Submitted At'
-      ]
-    ) {
-      serviceSheet
-        .getRange(
-          2,
-          1,
-          serviceLastRow - 1,
-          serviceSheet.getLastColumn()
-        )
-        .sort({
-          column:
-            serviceHeaderMap[
-              'Submitted At'
-            ],
-          ascending: false
-        });
-    }
-
+    // Keep physical ledger rows stable. Newest-first order belongs to the Operator Queue.
     return reindexDurableIntakeSourceRows_();
   }
 
@@ -2491,32 +2177,9 @@ function buildRecords_(
   }
 
   function reorderWebformNewestFirst_() {
-    var d = deps_();
-    var sheet = d.util.requireSheet('WEBFORM_REQUESTS');
-    var lastRow = sheet.getLastRow();
-    if (lastRow < 3) return { moved: 0, rows: Math.max(0, lastRow - 1) };
-    var map = intakeHeaderMap_(sheet);
-    if (!map['Request ID'] || !map['Received At']) throw new Error('INTAKE_ORDER_SAFETY_STOP | Webform headers Request ID / Received At are required.');
-    var width = sheet.getLastColumn();
-    var values = sheet.getRange(2, 1, lastRow - 1, width).getValues();
-    var items = values.map(function (row, index) {
-      var id = String(row[map['Request ID'] - 1] || '').trim();
-      return { key: id || ('__WEBFORM_ROW_' + (index + 2)), id: id, ms: intakeDateMs_(row[map['Received At'] - 1]), original: index };
-    });
-    assertUniqueIntakeIds_(items.map(function (x) { return x.id; }), 'Webform Request ID');
-    var desired = items.slice().sort(function (a, b) { return b.ms - a.ms || a.original - b.original; });
-    var current = items.map(function (x) { return x.key; });
-    var moved = 0;
-    desired.forEach(function (item, targetIndex) {
-      var currentIndex = current.indexOf(item.key);
-      if (currentIndex < 0 || currentIndex === targetIndex) return;
-      if (currentIndex < targetIndex) throw new Error('INTAKE_ORDER_SAFETY_STOP | Webform reorder invariant failed.');
-      sheet.moveRows(sheet.getRange(currentIndex + 2, 1, 1, width), targetIndex + 2);
-      current.splice(currentIndex, 1);
-      current.splice(targetIndex, 0, item.key);
-      moved++;
-    });
-    return { moved: moved, rows: items.length };
+    // Never move Webform rows: workers may retain row references.
+    var sheet = deps_().util.requireSheet('WEBFORM_REQUESTS');
+    return { moved: 0, rows: Math.max(0, sheet.getLastRow() - 1), mode: 'APPEND_ONLY' };
   }
 
   function currentWebformOrder_() {
@@ -2532,32 +2195,9 @@ function buildRecords_(
   }
 
   function syncServiceRequestOrder_() {
-    var d = deps_();
-    var desiredIds = currentWebformOrder_();
-    var sheet = d.util.requireSheet('SERVICE_REQUESTS');
-    var lastRow = sheet.getLastRow();
-    if (lastRow < 2) return { moved: 0, linked: 0, rows: 0 };
-    var map = intakeHeaderMap_(sheet);
-    if (!map['Request ID']) throw new Error('INTAKE_ORDER_SAFETY_STOP | Service Request ID header is required.');
-    var width = sheet.getLastColumn();
-    var ids = sheet.getRange(2, map['Request ID'], lastRow - 1, 1).getDisplayValues().map(function (row) { return String(row[0] || '').trim(); });
-    assertUniqueIntakeIds_(ids, 'Service Request ID');
-    var current = ids.slice();
-    var targetIndex = 0;
-    var moved = 0;
-    desiredIds.forEach(function (id) {
-      var currentIndex = current.indexOf(id);
-      if (currentIndex < 0) return;
-      if (currentIndex !== targetIndex) {
-        if (currentIndex < targetIndex) throw new Error('INTAKE_ORDER_SAFETY_STOP | Service Request reorder invariant failed.');
-        sheet.moveRows(sheet.getRange(currentIndex + 2, 1, 1, width), targetIndex + 2);
-        current.splice(currentIndex, 1);
-        current.splice(targetIndex, 0, id);
-        moved++;
-      }
-      targetIndex++;
-    });
-    return { moved: moved, linked: targetIndex, rows: ids.length };
+    // Historical ordering helper is non-mutating. Queue presentation handles sorting.
+    var sheet = deps_().util.requireSheet('SERVICE_REQUESTS');
+    return { moved: 0, linked: 0, rows: Math.max(0, sheet.getLastRow() - 1), mode: 'APPEND_ONLY' };
   }
 
   function refreshSourceRowReferences_() {
