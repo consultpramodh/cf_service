@@ -10,6 +10,7 @@ on:
       - .github/workflows/deploy.yml
       - scripts/**
       - tests/**
+      - src/01_Core_Utilities.gs
       - src/20_Intake_Processing.gs
       - src/40_Matching_Profile.gs
       - src/50_Operator_Queue.gs
@@ -71,6 +72,7 @@ jobs:
 
       - name: Test intake and matching recovery boundaries
         run: |
+          node tests/request-ledger-integrity.test.cjs
           node tests/recent-gf-backstop.test.cjs
           node tests/matching-cache-recovery.test.cjs
           node tests/readiness-patch.test.mjs
