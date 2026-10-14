@@ -169,7 +169,7 @@ function FIX_20260901_standardServiceItemAndResumeTwoRequests() {
 /************************************************************
  * APPS SCRIPT — 90_Diagnostics_Tests.gs
  * CF ServiceOps — Phase 5A Diagnostics
- * Version: 5.8.0
+ * Version: 5.14.4
  *
  * Routine output is intentionally compact. It does not expose
  * report URLs, tokens, payloads, or the migration backup snapshot.
@@ -180,7 +180,7 @@ CF.Diagnostics = (function () {
   'use strict';
 
   var MODULE_NAME = '90_Diagnostics_Tests';
-  var VERSION = '5.8.0';
+  var VERSION = '5.14.4';
 
   function deps_() {
     if (!CF.Config || !CF.Util) throw new Error('CF.Config and CF.Util are required.');
