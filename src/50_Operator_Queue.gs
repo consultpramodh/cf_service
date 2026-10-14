@@ -1385,7 +1385,7 @@ function salesOrderText_(row,operationalIndex){
       patch['Next Action'] = nextActionForStage_(stage);
     }
 
-    if (typeof d.util.clearRowDataValidations === 'function') d.util.clearRowDataValidations('SERVICE_REQUESTS', record.__rowNumber);
+    if (typeof d.util.clearRowDataValidations === 'function') d.util.clearServiceRequestRowValidationsById(record['Request ID']);
     d.util.patchServiceRequestById(record['Request ID'], patch);
 
     var result;
