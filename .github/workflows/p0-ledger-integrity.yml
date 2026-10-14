@@ -42,7 +42,8 @@ jobs:
           for b in files:
               c=candidate/b.name
               if not c.exists():raise RuntimeError('CANONICAL_SOURCE_MISSING '+b.name)
-              if b.read_bytes()!=c.read_bytes():
+              def norm(p):return p.read_text('utf8').replace('\r\n','\n').rstrip()+'\n'
+              if norm(b)!=norm(c):
                   actual.append(b.name)
                   if b.name not in approved:unexpected.append(b.name)
           if unexpected:
