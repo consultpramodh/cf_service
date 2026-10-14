@@ -427,7 +427,7 @@ CF.StrivenWrite = (function () {
     if (typeof d.util.clearRowDataValidations === 'function') {
       d.util.clearRowDataValidations('SERVICE_REQUESTS', record.__rowNumber);
     }
-    d.util.patchRow('SERVICE_REQUESTS', record.__rowNumber, patch);
+    d.util.patchServiceRequestById(record['Request ID'], patch);
     return changed;
   }
 
@@ -3001,7 +3001,7 @@ CF.StrivenControlledCustomerCreate = (function () {
     if (typeof d.util.clearRowDataValidations === 'function') {
       d.util.clearRowDataValidations('SERVICE_REQUESTS', record.__rowNumber);
     }
-    d.util.patchRow('SERVICE_REQUESTS', record.__rowNumber, patch);
+    d.util.patchServiceRequestById(record['Request ID'], patch);
     SpreadsheetApp.flush();
   }
 
@@ -3264,7 +3264,7 @@ CF.StrivenControlledCustomerCreate = (function () {
         'Reconciliation Status': 'CUSTOMER RECONCILED',
         'Write Journal JSON': safeJson_(updated)
       });
-      return reconcileKnownCustomer_(request_(record.__rowNumber), updated, customerId);
+      return reconcileKnownCustomer_(request_(record['Request ID']), updated, customerId);
     }
 
     var status = candidates.length > 1 ? 'CUSTOMER_RECONCILIATION_AMBIGUOUS' : 'UNCERTAIN_RECONCILE_REQUIRED';
@@ -3342,7 +3342,7 @@ CF.StrivenControlledCustomerCreate = (function () {
       return reconcileKnownCustomer_(record, parseJson_(record['Write Journal JSON'], {}), existingCustomerId);
     }
 
-    var initialPreview = buildPreview_(record.__rowNumber, options);
+    var initialPreview = buildPreview_(record['Request ID'], options);
     var initialAssessment = journalAssessment_(record, initialPreview.payloadFingerprint, initialPreview.writeFingerprint);
 
     // Only the known deterministic rejected validation attempt may be retried,
@@ -3355,7 +3355,7 @@ CF.StrivenControlledCustomerCreate = (function () {
     // After that guard, use request-scoped exact lookup rather than rebuilding
     // the entire Customer/Contact matching map.
     var refresh = refreshCustomerIfStale_();
-    record=request_(record.__rowNumber);
+    record=request_(record['Request ID']);
 
     // Independent exact phone/email duplicate guard on the freshest available
     // cache. One exact Customer is consumed directly; multiple candidates remain
@@ -3390,8 +3390,8 @@ CF.StrivenControlledCustomerCreate = (function () {
       };
     }
 
-    record = request_(record.__rowNumber);
-    var preview = buildPreview_(record.__rowNumber, options);
+    record = request_(record['Request ID']);
+    var preview = buildPreview_(record['Request ID'], options);
     if (preview.blockers.length) {
       return {
         ok: false,
@@ -3405,8 +3405,8 @@ CF.StrivenControlledCustomerCreate = (function () {
     }
 
     return withWriteLock_(function () {
-      record = request_(record.__rowNumber);
-      var lockedPreview = buildPreview_(record.__rowNumber, options);
+      record = request_(record['Request ID']);
+      var lockedPreview = buildPreview_(record['Request ID'], options);
       if (lockedPreview.blockers.length) {
         return {
           ok: false,
@@ -4067,7 +4067,7 @@ function rootJournal_(record) {
   function patchRequest_(record, patch) {
     var d = deps_();
     if (typeof d.util.clearRowDataValidations === 'function') d.util.clearRowDataValidations('SERVICE_REQUESTS', record.__rowNumber);
-    d.util.patchRow('SERVICE_REQUESTS', record.__rowNumber, patch);
+    d.util.patchServiceRequestById(record['Request ID'], patch);
     SpreadsheetApp.flush();
   }
 
@@ -4389,7 +4389,7 @@ function rootJournal_(record) {
     };
   }
 
-  function reconcileUncertainCreate_(record, cj) {var d=deps_(),customerId=resolvedCustomerId_(record),genericId=clean_(cj.genericResponseIdentifier||cj.responseIdentifier);if(genericId){var gv=verifyContactIdByGetV5127_(genericId,record);if(gv.ok){cj.status='CONTACT_RECONCILED_AFTER_UNCERTAIN_CREATE_BY_GET';cj.responseContactId=genericId;cj.genericResponseIdVerifiedByGet=true;var gs=contactJournal_(record);gs.root.contactCreate=cj;patchRequest_(record,{'Write Journal JSON':safeJson_(gs.root),'Reconciliation Status':'CONTACT RECONCILED BY DIRECT GET'});return reconcileKnownContact_(request_(record.__rowNumber),genericId,customerId);}}var candidates=contactCandidates_(record);if(candidates.length===0&&(!cacheFresh_()||postPredatesCache_(cj.postFinishedAt))){d.data.refreshCustomerData({});candidates=contactCandidates_(record);}if(candidates.length===1){var id=candidates[0].contactId;cj.status='CONTACT_RECONCILED_AFTER_UNCERTAIN_CREATE';cj.responseContactId=id;var state=contactJournal_(record);state.root.contactCreate=cj;patchRequest_(record,{'Updated At':d.util.nowString(),'Created Contact ID':id,'Matched Contact ID':id,'Matched Contact Name':candidates[0].fullName||clean_(record['Full Name']),'Contact Match Status':'MATCHED','Contact Action':'LINK EXISTING','Contact Association Status':'PENDING RECONCILIATION','Customer Structure Status':'CONTACT RECONCILED — ASSOCIATION PENDING','Striven Sync Status':'PARTIAL','Striven Sync Error':'','Reconciliation Status':'CONTACT RECONCILED','Write Journal JSON':safeJson_(state.root)});return reconcileKnownContact_(request_(record.__rowNumber),id,customerId);}if(candidates.length>1)return{ok:false,status:'CONTACT_RECONCILIATION_AMBIGUOUS',requestId:clean_(record['Request ID']),contactCandidateCount:candidates.length,liveWriteExecuted:false,automaticPostRetry:false};var email=clean_(record['Normalized Email']||record['Email']).toLowerCase(),recoveryAttempts=Number(cj.emailProtectedRecoveryAttempts||0);if(email&&Number(cj.postAttempts||0)===1&&recoveryAttempts<1){cj.emailProtectedRecoveryAttempts=1;cj.emailProtectedRecoveryStartedAt=d.util.nowString();cj.status='EMAIL_PROTECTED_RECOVERY_INTENT_RECORDED';var rs=contactJournal_(record);rs.root.contactCreate=cj;patchRequest_(record,{'Write Journal JSON':safeJson_(rs.root),'Reconciliation Status':'EMAIL-PROTECTED CONTACT RECOVERY INTENT','Next Action':'EMAIL-PROTECTED CONTACT RECOVERY — MAX ONE POST'});try{var response=d.http.requestJson(contactEndpoint_(),{method:'post',payload:contactPayload_(record,customerId),idempotent:false,attempts:1});var body=response&&response.json?response.json:{},rid=clean_(extractContactId_(body)||genericResponseContactIdV5127_(body));cj.emailProtectedRecoveryFinishedAt=d.util.nowString();cj.emailProtectedRecoveryHttpStatus=response&&response.status||200;cj.emailProtectedRecoveryResponseId=rid;var rs2=contactJournal_(request_(record.__rowNumber));rs2.root.contactCreate=cj;patchRequest_(request_(record.__rowNumber),{'Write Journal JSON':safeJson_(rs2.root),'Reconciliation Status':rid?'EMAIL-PROTECTED RECOVERY RESPONSE ID':'EMAIL-PROTECTED RECOVERY ID MISSING — READ ONLY RECONCILE'});if(rid){var rv=verifyContactIdByGetV5127_(rid,record);if(rv.ok)return reconcileKnownContact_(request_(record.__rowNumber),rid,customerId);}return{ok:false,status:'EMAIL_PROTECTED_RECOVERY_RECONCILE_REQUIRED',requestId:clean_(record['Request ID']),liveWriteExecuted:true,automaticPostRetry:false};}catch(e){var ids=duplicateContactIdsFromError_(e);cj.emailProtectedRecoveryFinishedAt=d.util.nowString();cj.emailProtectedRecoveryError=String(e&&e.message||e);cj.existingDuplicateContactIds=ids;var rs3=contactJournal_(request_(record.__rowNumber));rs3.root.contactCreate=cj;patchRequest_(request_(record.__rowNumber),{'Write Journal JSON':safeJson_(rs3.root),'Reconciliation Status':ids.length?'EMAIL-PROTECTED RECOVERY DUPLICATE RECONCILE':'EMAIL-PROTECTED RECOVERY ERROR — READ ONLY RECONCILE'});if(ids.length===1)return reconcileKnownContact_(request_(record.__rowNumber),ids[0],customerId);if(ids.length>1)return{ok:false,status:'DUPLICATE_CONTACT_IDS_AMBIGUOUS',requestId:clean_(record['Request ID']),existingDuplicateContactIds:ids,liveWriteExecuted:true,automaticPostRetry:false};return{ok:false,status:'EMAIL_PROTECTED_RECOVERY_RECONCILE_REQUIRED',requestId:clean_(record['Request ID']),error:String(e&&e.message||e),remoteWriteMayHaveSucceeded:true,liveWriteExecuted:true,automaticPostRetry:false};}}return{ok:false,status:'UNCERTAIN_RECONCILE_REQUIRED',requestId:clean_(record['Request ID']),contactCandidateCount:0,emailProtectedRecoveryAttempts:recoveryAttempts,liveWriteExecuted:false,automaticPostRetry:false};}
+  function reconcileUncertainCreate_(record, cj) {var d=deps_(),customerId=resolvedCustomerId_(record),genericId=clean_(cj.genericResponseIdentifier||cj.responseIdentifier);if(genericId){var gv=verifyContactIdByGetV5127_(genericId,record);if(gv.ok){cj.status='CONTACT_RECONCILED_AFTER_UNCERTAIN_CREATE_BY_GET';cj.responseContactId=genericId;cj.genericResponseIdVerifiedByGet=true;var gs=contactJournal_(record);gs.root.contactCreate=cj;patchRequest_(record,{'Write Journal JSON':safeJson_(gs.root),'Reconciliation Status':'CONTACT RECONCILED BY DIRECT GET'});return reconcileKnownContact_(request_(record['Request ID']),genericId,customerId);}}var candidates=contactCandidates_(record);if(candidates.length===0&&(!cacheFresh_()||postPredatesCache_(cj.postFinishedAt))){d.data.refreshCustomerData({});candidates=contactCandidates_(record);}if(candidates.length===1){var id=candidates[0].contactId;cj.status='CONTACT_RECONCILED_AFTER_UNCERTAIN_CREATE';cj.responseContactId=id;var state=contactJournal_(record);state.root.contactCreate=cj;patchRequest_(record,{'Updated At':d.util.nowString(),'Created Contact ID':id,'Matched Contact ID':id,'Matched Contact Name':candidates[0].fullName||clean_(record['Full Name']),'Contact Match Status':'MATCHED','Contact Action':'LINK EXISTING','Contact Association Status':'PENDING RECONCILIATION','Customer Structure Status':'CONTACT RECONCILED — ASSOCIATION PENDING','Striven Sync Status':'PARTIAL','Striven Sync Error':'','Reconciliation Status':'CONTACT RECONCILED','Write Journal JSON':safeJson_(state.root)});return reconcileKnownContact_(request_(record['Request ID']),id,customerId);}if(candidates.length>1)return{ok:false,status:'CONTACT_RECONCILIATION_AMBIGUOUS',requestId:clean_(record['Request ID']),contactCandidateCount:candidates.length,liveWriteExecuted:false,automaticPostRetry:false};var email=clean_(record['Normalized Email']||record['Email']).toLowerCase(),recoveryAttempts=Number(cj.emailProtectedRecoveryAttempts||0);if(email&&Number(cj.postAttempts||0)===1&&recoveryAttempts<1){cj.emailProtectedRecoveryAttempts=1;cj.emailProtectedRecoveryStartedAt=d.util.nowString();cj.status='EMAIL_PROTECTED_RECOVERY_INTENT_RECORDED';var rs=contactJournal_(record);rs.root.contactCreate=cj;patchRequest_(record,{'Write Journal JSON':safeJson_(rs.root),'Reconciliation Status':'EMAIL-PROTECTED CONTACT RECOVERY INTENT','Next Action':'EMAIL-PROTECTED CONTACT RECOVERY — MAX ONE POST'});try{var response=d.http.requestJson(contactEndpoint_(),{method:'post',payload:contactPayload_(record,customerId),idempotent:false,attempts:1});var body=response&&response.json?response.json:{},rid=clean_(extractContactId_(body)||genericResponseContactIdV5127_(body));cj.emailProtectedRecoveryFinishedAt=d.util.nowString();cj.emailProtectedRecoveryHttpStatus=response&&response.status||200;cj.emailProtectedRecoveryResponseId=rid;var rs2=contactJournal_(request_(record['Request ID']));rs2.root.contactCreate=cj;patchRequest_(request_(record['Request ID']),{'Write Journal JSON':safeJson_(rs2.root),'Reconciliation Status':rid?'EMAIL-PROTECTED RECOVERY RESPONSE ID':'EMAIL-PROTECTED RECOVERY ID MISSING — READ ONLY RECONCILE'});if(rid){var rv=verifyContactIdByGetV5127_(rid,record);if(rv.ok)return reconcileKnownContact_(request_(record['Request ID']),rid,customerId);}return{ok:false,status:'EMAIL_PROTECTED_RECOVERY_RECONCILE_REQUIRED',requestId:clean_(record['Request ID']),liveWriteExecuted:true,automaticPostRetry:false};}catch(e){var ids=duplicateContactIdsFromError_(e);cj.emailProtectedRecoveryFinishedAt=d.util.nowString();cj.emailProtectedRecoveryError=String(e&&e.message||e);cj.existingDuplicateContactIds=ids;var rs3=contactJournal_(request_(record['Request ID']));rs3.root.contactCreate=cj;patchRequest_(request_(record['Request ID']),{'Write Journal JSON':safeJson_(rs3.root),'Reconciliation Status':ids.length?'EMAIL-PROTECTED RECOVERY DUPLICATE RECONCILE':'EMAIL-PROTECTED RECOVERY ERROR — READ ONLY RECONCILE'});if(ids.length===1)return reconcileKnownContact_(request_(record['Request ID']),ids[0],customerId);if(ids.length>1)return{ok:false,status:'DUPLICATE_CONTACT_IDS_AMBIGUOUS',requestId:clean_(record['Request ID']),existingDuplicateContactIds:ids,liveWriteExecuted:true,automaticPostRetry:false};return{ok:false,status:'EMAIL_PROTECTED_RECOVERY_RECONCILE_REQUIRED',requestId:clean_(record['Request ID']),error:String(e&&e.message||e),remoteWriteMayHaveSucceeded:true,liveWriteExecuted:true,automaticPostRetry:false};}}return{ok:false,status:'UNCERTAIN_RECONCILE_REQUIRED',requestId:clean_(record['Request ID']),contactCandidateCount:0,emailProtectedRecoveryAttempts:recoveryAttempts,liveWriteExecuted:false,automaticPostRetry:false};}
 
   function previewControlledContactCreate(requestIdOrRow) { return buildPreview_(requestIdOrRow); }
 
@@ -4560,7 +4560,7 @@ function executeControlledContactCreate(requestIdOrRow, options) {
         return { ok: false, status: 'CONTACT_MATCH_AMBIGUOUS', requestId: clean_(record['Request ID']), candidates: candidates, liveWriteExecuted: false };
       }
 
-      var preview = buildPreview_(record.__rowNumber, options);
+      var preview = buildPreview_(record['Request ID'], options);
       if (!preview.validation.ok || preview.blockers.length) return { ok: false, status: 'BLOCKED', requestId: preview.requestId, blockers: preview.blockers, liveWriteExecuted: false };
 
       cj.phase = 'PHASE 5D — GUARDED CONTACT CREATE + ASSOCIATION';
@@ -4761,7 +4761,7 @@ function executeControlledContactCreate(requestIdOrRow, options) {
       // keep the request at a GET-only technical boundary. Never expose a route
       // that could replay the association POST.
       if(result&&result.status==='CONTACT_CREATED_ASSOCIATION_REQUIRED'&&Number(prior.associationAttempts||0)>0){
-        var fresh=request_(record.__rowNumber)||record;
+        var fresh=request_(record['Request ID'])||record;
         var state=contactJournal_(fresh),cj=clone_(state.contact||prior||{});
         cj.associationStatus='READ_ONLY_RECONCILE_REQUIRED';
         cj.status='CONTACT_ASSOCIATION_GET_ONLY_RECONCILE_REQUIRED';
@@ -4790,7 +4790,7 @@ function executeControlledContactCreate(requestIdOrRow, options) {
       }
       result=result||{ok:false,status:'CONTACT_ASSOCIATION_READ_ONLY_RECONCILE_EMPTY_RESULT',requestId:clean_(record['Request ID']),liveWriteExecuted:false};
       if(result.ok===true&&String(result.status||'').indexOf('CONTACT_ASSOCIATED_RECONCILED')===0){
-        var gate=applyRecoveryOrderGate_(request_(record.__rowNumber),customerId);
+        var gate=applyRecoveryOrderGate_(request_(record['Request ID']),customerId);
         result.salesOrderRecoveryGate=gate;
         result.nextAction=gate&&gate.nextAction||result.nextAction||'';
       }
@@ -4894,7 +4894,7 @@ CF.OrderPreflight = (function () {
   function customerId_(r){return clean_(r['Matched Customer ID']||r['Created Customer ID']);}
   function contactId_(r){return clean_(r['Matched Contact ID']||r['Created Contact ID']);}
   function locationId_(r){return clean_(r['Matched Location ID']||r['Created Location ID']);}
-  function patch_(r,p){var d=deps_();if(typeof d.util.clearRowDataValidations==='function')d.util.clearRowDataValidations('SERVICE_REQUESTS',r.__rowNumber);d.util.patchRow('SERVICE_REQUESTS',r.__rowNumber,p);SpreadsheetApp.flush();}
+  function patch_(r,p){var d=deps_();if(typeof d.util.clearRowDataValidations==='function')d.util.clearRowDataValidations('SERVICE_REQUESTS',r.__rowNumber);d.util.patchServiceRequestById(r['Request ID'],p);SpreadsheetApp.flush();}
   function rootJournal_(r){var x=parse_(r['Write Journal JSON'],{});if(!x||typeof x!=='object'||Array.isArray(x))x={};return x;}
   function orderJournal_(r){var root=rootJournal_(r);return{root:root,order:root.salesOrderCreate||{}};}
   function log_(r,action,status,details,message){deps_().util.logEvent({module:MODULE_NAME,action:action,status:status,requestId:clean_(r['Request ID']),correlationId:clean_(r['Correlation ID']),message:message||'',details:details||{},version:VERSION});}
@@ -6309,7 +6309,7 @@ CF.SalesOrderInternalNotesApi = (function () {
     payload[plan.key]=payload[plan.key].filter(function(f){return cfId_(f)!=='855';}).concat([{Id:855,Value:value}]);
     if(canonicalJson_(stripCustomFields_(payload))!==canonicalJson_(stripCustomFields_(before)))return {ok:false,status:'PAYLOAD_DELTA_GUARD_FAILED',liveWriteExecuted:false};
     root.requestSourceRepair={salesOrderId:id,status:'POST_PENDING_RECONCILIATION',postAttempts:1,expectedValue:value,startedAt:CF.Util.nowString(),automaticPostRetry:false};
-    CF.Util.patchRow('SERVICE_REQUESTS',r.__rowNumber,{'Write Journal JSON':JSON.stringify(root)});
+    CF.Util.patchServiceRequestById(r['Request ID'],{'Write Journal JSON':JSON.stringify(root)});
     SpreadsheetApp.flush();
     var postError=null;
     try{CF.StrivenHttp.requestJson('/v1/sales-orders',{method:'post',payload:payload,idempotent:false,attempts:1});}catch(ePost){postError=ePost;}
@@ -6323,7 +6323,7 @@ CF.SalesOrderInternalNotesApi = (function () {
     var matched=afterTarget.length===1&&(clean_(cfValue_(afterTarget[0]))===value||clean_(cfValueText_(afterTarget[0])).toUpperCase()==='WEBFORM');
     root.requestSourceRepair.status=preserved&&matched?'VERIFIED':'POSTWRITE_RECONCILIATION_REQUIRED_NO_RETRY';
     root.requestSourceRepair.finishedAt=CF.Util.nowString();root.requestSourceRepair.otherFieldsPreserved=preserved;
-    CF.Util.patchRow('SERVICE_REQUESTS',r.__rowNumber,{'Write Journal JSON':JSON.stringify(root)});
+    CF.Util.patchServiceRequestById(r['Request ID'],{'Write Journal JSON':JSON.stringify(root)});
     SpreadsheetApp.flush();
     var result={ok:preserved&&matched,status:root.requestSourceRepair.status,salesOrderId:id,requestId:clean_(requestId),fieldId:'855',otherFieldsPreserved:preserved,liveWriteExecuted:true,automaticPostRetry:false};
     CF.Util.logEvent({module:'60_Striven_Write',action:'FILL_MISSING_REQUEST_SOURCE',status:result.status,requestId:clean_(requestId),details:result,version:VERSION});
@@ -6479,7 +6479,7 @@ CF.CustomerScopedContactIdentity = (function () {
     root.contactCreate.reconciliation.customerScopedContactVerifiedAt=now_();
     var changed=!prior.ok||prior.customerScopedContactId!==scopedId||clean_(prior.globalContactId)!==clean_(globalId);
     if(changed){
-      CF.Util.patchRow('SERVICE_REQUESTS',r.__rowNumber,{
+      CF.Util.patchServiceRequestById(r['Request ID'],{
         'Updated At':now_(),
         'Write Journal JSON':CF.Util.safeJson?CF.Util.safeJson(root):JSON.stringify(root)
       });
@@ -6618,7 +6618,7 @@ CF.ManualWorkOrderInternalNotes = (function () {
     if(result&&result.error)entry.error=String(result.error).slice(0,1000);
     if(prior.firstAttemptAt)entry.firstAttemptAt=prior.firstAttemptAt;else entry.firstAttemptAt=entry.attemptedAt;
     root.manualWorkOrderInternalNotes=entry;
-    CF.Util.patchRow('SERVICE_REQUESTS',r.__rowNumber,{'Updated At':now_(),'Write Journal JSON':CF.Util.safeJson?CF.Util.safeJson(root):JSON.stringify(root)});
+    CF.Util.patchServiceRequestById(r['Request ID'],{'Updated At':now_(),'Write Journal JSON':CF.Util.safeJson?CF.Util.safeJson(root):JSON.stringify(root)});
     SpreadsheetApp.flush();
     return entry;
   }
@@ -6734,7 +6734,7 @@ CF.CustomerContactInfoSync = (function () {
   function province_(v){var x=String(v||'').trim().toUpperCase().replace(/[^A-Z]/g,'');var m={ONTARIO:'ON',ON:'ON',QUEBEC:'QC',QC:'QC',PQ:'QC',ALBERTA:'AB',AB:'AB',BRITISHCOLUMBIA:'BC',BC:'BC',MANITOBA:'MB',MB:'MB',NEWBRUNSWICK:'NB',NB:'NB',NOVASCOTIA:'NS',NS:'NS',SASKATCHEWAN:'SK',SK:'SK',PRINCEEDWARDISLAND:'PE',PEI:'PE',PE:'PE',NEWFOUNDLANDANDLABRADOR:'NL',NEWFOUNDLANDLABRADOR:'NL',NL:'NL',NORTHWESTTERRITORIES:'NT',NT:'NT',NUNAVUT:'NU',NU:'NU',YUKON:'YT',YT:'YT'};return m[x]||clean_(v);}
   function country_(v){var x=String(v||'').trim().toUpperCase();return (x==='CA'||x==='CAN'||x==='CANADA')?'Canada':(clean_(v)||'Canada');}
   function req_(id){return d_().u.findRecord('SERVICE_REQUESTS','Request ID',id);}
-  function patch_(r,p){if(!r||!r.__rowNumber)throw new Error('Service Request row is unavailable for durable journal write.');if(typeof d_().u.clearRowDataValidations==='function')d_().u.clearRowDataValidations('SERVICE_REQUESTS',r.__rowNumber);d_().u.patchRow('SERVICE_REQUESTS',r.__rowNumber,p);SpreadsheetApp.flush();}
+  function patch_(r,p){if(!r||!r.__rowNumber)throw new Error('Service Request row is unavailable for durable journal write.');if(typeof d_().u.clearRowDataValidations==='function')d_().u.clearRowDataValidations('SERVICE_REQUESTS',r.__rowNumber);d_().u.patchServiceRequestById(r['Request ID'],p);SpreadsheetApp.flush();}
   function log_(r,status,details,message){try{d_().u.logEvent({module:'CustomerContactInfoSync',action:'RECONCILE',status:status,requestId:clean_(r&&r['Request ID']),details:details||{},message:message||'',version:VERSION});}catch(e){}}
   function get_(ep){var x=d_().h.requestJson(ep,{method:'get',attempts:1,idempotent:true});return x&&x.json?x.json:{};}
   function post_(ep,payload){return d_().h.requestJson(ep,{method:'post',payload:payload,attempts:1,idempotent:false});}
@@ -6936,7 +6936,7 @@ CF.StandaloneLocationCreateV5128=(function(){
   function request_(id){return CF.Util.findRecord('SERVICE_REQUESTS','Request ID',clean_(id));}
   function resolved_(r,a,b){return clean_(r[a]||r[b]);}
   function rootJournal_(r){var raw=clean_(r['Write Journal JSON']);if(!raw)return{};try{var x=JSON.parse(raw);return x&&typeof x==='object'?x:{};}catch(e){return{};}}
-  function patch_(r,p){if(!r||!r.__rowNumber)throw new Error('Service Request row unavailable.');CF.Util.patchRow('SERVICE_REQUESTS',r.__rowNumber,p);}
+  function patch_(r,p){if(!r||!r.__rowNumber)throw new Error('Service Request row unavailable.');CF.Util.patchServiceRequestById(r['Request ID'],p);}
   function payload_(r){
     var address={
       Address1:clean_(r['Street']),
