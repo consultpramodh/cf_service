@@ -68,7 +68,7 @@ const SERVICEOPS_CODE_AUDIT_ = (() => {
       spreadsheet.toast(
         `Code audit completed. ${audit.files.length} files captured.`,
         'ServiceOps Code Audit',
-8
+        8
       );
 
       return {
@@ -763,7 +763,7 @@ const SERVICEOPS_CODE_AUDIT_ = (() => {
           sheetRow,
           1,
           batch.length,
-5
+          5
         )
         .setValues(metadataValues);
 
@@ -772,7 +772,7 @@ const SERVICEOPS_CODE_AUDIT_ = (() => {
           sheetRow,
           6,
           batch.length,
-1
+          1
         )
         .setRichTextValues(sourceRichTextValues);
     }
