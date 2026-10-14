@@ -209,6 +209,22 @@ const beforeInv = inventory(before);
 writeFileSync(resolve(work, 'before.sha256.json'), JSON.stringify(Object.fromEntries(beforeInv), null, 2) + '\n');
 console.log('Checkpoint: ' + before);
 
+// P0 safety: never overwrite a changed live project with an older GitHub copy.
+// Approved baseline was pulled read-only, scanned and saved under this branch.
+const approvedLiveRoot = resolve(root, 'backups', 'apps-script', 'p0-live-head-20261014');
+const approvedLiveFiles = files(approvedLiveRoot).filter(name => name !== 'manifest.json');
+if (approvedLiveFiles.length !== 17 || beforeInv.size !== 17) {
+  throw new Error('P0_LIVE_SOURCE_INVENTORY_DRIFT_STOP');
+}
+for (const name of approvedLiveFiles) {
+  const logical = logicalName(name);
+  const actual = logical === 'appsscript.json' ? resolve(before, name) : findTarget(logical, before);
+  if (!existsSync(actual) || normalizedText(resolve(approvedLiveRoot, name)) !== normalizedText(actual)) {
+    throw new Error('P0_LIVE_SOURCE_BASELINE_DRIFT_STOP: ' + name);
+  }
+}
+console.log('P0_LIVE_BASELINE_PARITY_PASS: exact approved 17-file checkpoint');
+
 console.log('\n=== 4/10 Replace finalized modules + normalize live version metadata + remove obsolete V2 shadow generation ===');
 for (const base of PATCH_BASES) {
   const src = resolve(root, 'src', base + '.gs');
