@@ -14,8 +14,8 @@ for (const filename of [
   const source = fs.readFileSync('src/' + filename, 'utf8');
   new vm.Script(source, {filename});
   if (filename !== '01_Core_Utilities.gs') {
-    assert.doesNotMatch(source, /\\.patchRow\\(['"]SERVICE_REQUESTS['"]/, filename + ' has an unguarded Service Request patch');
-    assert.doesNotMatch(source, /\\.clearRowDataValidations\\(['"]SERVICE_REQUESTS['"]/, filename + ' has an unguarded Service Request validation clear');
+    assert.doesNotMatch(source, /\.patchRow\(['"]SERVICE_REQUESTS['"]/, filename + ' has an unguarded Service Request patch');
+    assert.doesNotMatch(source, /\.clearRowDataValidations\(['"]SERVICE_REQUESTS['"]/, filename + ' has an unguarded Service Request validation clear');
   }
 }
 function bodyOf(source, functionName) {
