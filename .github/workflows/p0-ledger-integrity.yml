@@ -28,3 +28,63 @@ jobs:
           node tests/queue-kick-liveness.test.cjs
       - name: Confirm no release runs in verification-only workflow
         run: echo "P0_CHECK_ONLY_NO_APPS_SCRIPT_DEPLOYMENT"
+
+  read-live-source:
+    needs: verify-ledger
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Pull exact current bound source (READ-ONLY)
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${CLASPRC_JSON:-}" || { echo "LIVE_SOURCE_ACCESS_REQUIRED"; exit 2; }
+          umask 077
+          printf '%s' "$CLASPRC_JSON" > "$HOME/.clasprc.json"
+          mkdir -p "$RUNNER_TEMP/serviceops-live" "$RUNNER_TEMP/serviceops-parity"
+          printf '%s' '{"scriptId":"1QZp4NAFeA8LmWBN31ylJYdK4XFepBX1h2lP_APaR-d1lTAC-d8LA9x3g","rootDir":"."}' > "$RUNNER_TEMP/serviceops-live/.clasp.json"
+          (cd "$RUNNER_TEMP/serviceops-live" && npx -y @google/clasp@3.3.0 pull >/dev/null)
+          python3 - <<'PY'
+          import os,json,hashlib,pathlib,sys
+          live=pathlib.Path(os.environ['RUNNER_TEMP'])/'serviceops-live'
+          expected=pathlib.Path('src')
+          def inventory(root):
+              out={}
+              for path in root.iterdir():
+                  if not path.is_file() or path.name=='.clasp.json':continue
+                  name=path.name
+                  if name.endswith('.js') or name.endswith('.gs'):
+                      logical=name.rsplit('.',1)[0]
+                  else:
+                      logical=name
+                  if logical in out:raise ValueError('Duplicate logical filename '+logical)
+                  text=path.read_text('utf8').replace('\r\n','\n').rstrip()+'\n'
+                  out[logical]={'sha256':hashlib.sha256(text.encode()).hexdigest(),'file':name}
+              return out
+          a=inventory(live);b=inventory(expected)
+          missing=sorted(set(b)-set(a));extra=sorted(set(a)-set(b))
+          different=sorted(k for k in a.keys()&b.keys() if a[k]['sha256']!=b[k]['sha256'])
+          report={'liveFileCount':len(a),'sourceFileCount':len(b),'missing':missing,'extra':extra,'divergent':different,
+                  'liveHashes':{k:v['sha256'] for k,v in sorted(a.items())}}
+          dest=pathlib.Path(os.environ['RUNNER_TEMP'])/'serviceops-parity'/'manifest.json'
+          dest.write_text(json.dumps(report,indent=2)+'\n')
+          print('LIVE_SOURCE_SNAPSHOT',json.dumps({k:v for k,v in report.items() if k!='liveHashes'}))
+          if len(a)!=17 or missing or extra:
+              print('LIVE_SOURCE_INVENTORY_FAIL');sys.exit(2)
+          if different:
+              print('LIVE_SOURCE_DIVERGENCE_NEEDS_RECONCILIATION');sys.exit(3)
+          print('LIVE_SOURCE_PARITY_PASS')
+          PY
+      - name: Preserve hash-only parity manifest
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: p0-live-source-hashes
+          path: ${{ runner.temp }}/serviceops-parity/manifest.json
+          retention-days: 14
