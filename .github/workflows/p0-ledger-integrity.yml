@@ -109,7 +109,7 @@ jobs:
             r'sk-(?:proj-)?[A-Za-z0-9_-]{24,}',
             r'AIza[A-Za-z0-9_-]{30,}',
             r'-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----',
-            r'(?i)(?:client[_ ]?secret|access[_ ]?token|refresh[_ ]?token|api[_ ]?key|webhook[_ ]?secret)\\s*[=:]\\s*["\\\'][A-Za-z0-9_+./=-]{24,}["\\\']',
+            r"(?i)(?:client[_ ]?secret|access[_ ]?token|refresh[_ ]?token|api[_ ]?key|webhook[_ ]?secret)\s*[=:]\s*['\"][A-Za-z0-9_+./=-]{24,}['\"]",
           ]
           target=pathlib.Path(os.environ['SNAPSHOT_DIR']);target.mkdir(parents=True,exist_ok=True)
           manifest=[]
@@ -121,7 +121,7 @@ jobs:
               logical=file.name[:-3]+'.gs' if file.name.endswith('.js') else file.name
               (target/logical).write_text(source)
               manifest.append({'file':logical,'sha256':hashlib.sha256(source.encode('utf8')).hexdigest(),'bytes':len(source.encode('utf8'))})
-          (target/'manifest.json').write_text(json.dumps({'scriptId':'1QZp4NAFeA8LmWBN31ylJYdK4XFepBX1h2lP_APaR-d1lTAC-d8LA9x3g','files':manifest},indent=2)+'\\n')
+          (target/'manifest.json').write_text(json.dumps({'scriptId':'1QZp4NAFeA8LmWBN31ylJYdK4XFepBX1h2lP_APaR-d1lTAC-d8LA9x3g','files':manifest},indent=2)+'\n')
           print('SOURCE_SNAPSHOT_PREPARED files='+str(len(manifest)))
           PY
           git config user.name 'CF ServiceOps Verified Backup'
