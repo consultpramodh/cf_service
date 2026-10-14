@@ -26,6 +26,31 @@ jobs:
           node tests/core-utilities-patch.test.mjs
           node tests/recent-gf-backstop.test.cjs
           node tests/queue-kick-liveness.test.cjs
+      - name: Confirm approved patch scope against exact live checkpoint
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import pathlib,sys
+          base=pathlib.Path('backups/apps-script/p0-live-head-20261014')
+          candidate=pathlib.Path('src')
+          approved={'01_Core_Utilities.gs','20_Intake_Processing.gs','40_Matching_Profile.gs','50_Operator_Queue.gs','60_Striven_Write.gs','70_Workflow_Automation.gs','95_Public_Runners.gs'}
+          files=sorted(x for x in base.iterdir() if x.is_file() and x.name!='manifest.json')
+          if len(files)!=17:raise RuntimeError('BACKUP_CHECKPOINT_INCOMPLETE')
+          unexpected=[]
+          actual=[]
+          for b in files:
+              c=candidate/b.name
+              if not c.exists():raise RuntimeError('CANONICAL_SOURCE_MISSING '+b.name)
+              if b.read_bytes()!=c.read_bytes():
+                  actual.append(b.name)
+                  if b.name not in approved:unexpected.append(b.name)
+          if unexpected:
+              print('OUT_OF_SCOPE_LIVE_DIVERGENCE '+','.join(unexpected));sys.exit(2)
+          if sorted(actual)!=sorted(approved):
+              print('PATCH_SCOPE_MISMATCH changed='+','.join(actual));sys.exit(2)
+          print('APPROVED_LIVE_PATCH_SCOPE_PASS changed='+','.join(actual))
+          PY
       - name: Confirm no release runs in verification-only workflow
         run: echo "P0_CHECK_ONLY_NO_APPS_SCRIPT_DEPLOYMENT"
 
@@ -60,11 +85,11 @@ jobs:
           python3 - <<'PY'
           import os,json,hashlib,pathlib,sys
           live=pathlib.Path(os.environ['RUNNER_TEMP'])/'serviceops-live'
-          expected=pathlib.Path(os.environ['RUNNER_TEMP'])/'serviceops-base'
+          expected=pathlib.Path('backups/apps-script/p0-live-head-20261014')
           def inventory(root):
               out={}
               for path in root.iterdir():
-                  if not path.is_file() or path.name=='.clasp.json':continue
+                  if not path.is_file() or path.name in ('.clasp.json','manifest.json'):continue
                   name=path.name
                   if name.endswith('.js') or name.endswith('.gs'):
                       logical=name.rsplit('.',1)[0]
@@ -77,7 +102,7 @@ jobs:
           a=inventory(live);b=inventory(expected)
           missing=sorted(set(b)-set(a));extra=sorted(set(a)-set(b))
           different=sorted(k for k in a.keys()&b.keys() if a[k]['sha256']!=b[k]['sha256'])
-          report={'liveFileCount':len(a),'productionBaselineFileCount':len(b),'missing':missing,'extra':extra,'divergent':different,
+          report={'liveFileCount':len(a),'checkpointFileCount':len(b),'missing':missing,'extra':extra,'divergent':different,
                   'liveHashes':{k:v['sha256'] for k,v in sorted(a.items())}}
           dest=pathlib.Path(os.environ['RUNNER_TEMP'])/'serviceops-parity'/'manifest.json'
           dest.write_text(json.dumps(report,indent=2)+'\n')
@@ -85,8 +110,8 @@ jobs:
           if len(a)!=17 or missing or extra:
               print('LIVE_SOURCE_INVENTORY_FAIL');sys.exit(2)
           if different:
-              print('LIVE_SOURCE_DIVERGENCE_NEEDS_RECONCILIATION');sys.exit(3)
-          print('LIVE_SOURCE_PARITY_WITH_PRODUCTION_REPO_PASS')
+              print('LIVE_SOURCE_CHANGED_SINCE_CHECKPOINT_STOP');sys.exit(3)
+          print('LIVE_SOURCE_PARITY_WITH_APPROVED_BACKUP_PASS')
           PY
 
       - name: Preserve exact current source in isolated P0 backup branch
