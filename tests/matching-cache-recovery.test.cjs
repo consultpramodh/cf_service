@@ -5,7 +5,7 @@ const end=text.indexOf('\n})();',start)+6;
 function run({customers=0,locations=10,missing=[],cooldown=false}){
  const calls={customer:0,location:0,matching:0,patches:[]};
  const row={'Request ID':'SR-test','Current Stage':'NEW INTAKE',__rowNumber:2};
- const util={cleanText:v=>v==null?'':String(v).trim(),findRecord:()=>row,patchRow:(key,num,p)=>{calls.patches.push(p);Object.assign(row,p);},nowString:()=>new Date(),logEvent:()=>{}};
+ const util={cleanText:v=>v==null?'':String(v).trim(),findRecord:()=>row,patchRow:(key,num,p)=>{calls.patches.push(p);Object.assign(row,p);},patchServiceRequestById:(id,p)=>{assert.equal(id,row['Request ID']);calls.patches.push(p);Object.assign(row,p);},nowString:()=>new Date(),logEvent:()=>{}};
  const CF={Config:{isTerminalState:()=>false},Util:util,Matching:{recheckRequest:()=>{calls.matching++;return{ok:true,requestId:'SR-test'};}},StrivenControlledCustomerCreate:{},StrivenControlledContactCreate:{},StrivenData:{inspectReadiness:()=>({ok:customers>0&&locations>0&&missing.length===0,counts:{customers,locations},requiredMissing:missing}),refreshCustomerData:options=>{calls.customer++;assert.equal(JSON.stringify(options),'{}');return cooldown?{ok:true,status:'BULK_REFRESH_SKIPPED_COOLDOWN'}:{ok:true,rowsPrepared:20};},refreshLocationData:()=>{calls.location++;return{ok:true,rowsPrepared:20};}}};
  vm.runInNewContext(text.slice(start,end),{CF,SpreadsheetApp:{flush:()=>{}},Date,Number});
  return{out:CF.CustomerStructureEngine.step('SR-test'),calls};
