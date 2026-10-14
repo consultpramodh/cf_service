@@ -4,7 +4,7 @@ const start=source.indexOf('  function recoverStaleExistingOrderReview_('),end=s
 let reads=0,writes=0,clock=2000000000,store={};
 const row={'Request ID':'test','Matched Customer ID':'1','Matched Contact ID':'2','Matched Location ID':'3'};
 let preview={ok:false,blockingIssues:['billToLocation','lineItem']};
-const ctx={Date:{now:()=>clock},staleExistingOrderReview_:()=>true,clean_:v=>String(v||''),signature_:r=>JSON.stringify(r),parse_:v=>JSON.parse(v||'{}'),props_:()=>({getProperty:k=>store[k],setProperty:(k,v)=>store[k]=v,deleteProperty:k=>delete store[k]}),CF:{OrderPreflight:{previewCertification:()=>{reads++;return preview;}},Util:{patchRow:()=>writes++}},log_:()=>{},now_:()=>'',knownOrderId_:()=>'',SpreadsheetApp:{flush:()=>{}},request_:()=>row};
+const ctx={Date:{now:()=>clock},staleExistingOrderReview_:()=>true,clean_:v=>String(v||''),signature_:r=>JSON.stringify(r),parse_:v=>JSON.parse(v||'{}'),props_:()=>({getProperty:k=>store[k],setProperty:(k,v)=>store[k]=v,deleteProperty:k=>delete store[k]}),CF:{OrderPreflight:{previewCertification:()=>{reads++;return preview;}},Util:{patchRow:()=>writes++,patchServiceRequestById:(id,p)=>{assert.equal(id,row['Request ID']);writes++;}}},log_:()=>{},now_:()=>'',knownOrderId_:()=>'',SpreadsheetApp:{flush:()=>{}},request_:()=>row};
 vm.runInNewContext(source.slice(start,end),ctx);
 ctx.recoverStaleExistingOrderReview_(row);assert.equal(reads,1);assert.equal(writes,0);
 ctx.recoverStaleExistingOrderReview_(row);assert.equal(reads,1);

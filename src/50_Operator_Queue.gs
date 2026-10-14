@@ -1385,8 +1385,8 @@ function salesOrderText_(row,operationalIndex){
       patch['Next Action'] = nextActionForStage_(stage);
     }
 
-    if (typeof d.util.clearRowDataValidations === 'function') d.util.clearRowDataValidations('SERVICE_REQUESTS', record.__rowNumber);
-    d.util.patchRow('SERVICE_REQUESTS', record.__rowNumber, patch);
+    if (typeof d.util.clearRowDataValidations === 'function') d.util.clearServiceRequestRowValidationsById(record['Request ID']);
+    d.util.patchServiceRequestById(record['Request ID'], patch);
 
     var result;
     if (action === 'APPROVE PROPOSED ACTION') {
@@ -1508,7 +1508,7 @@ function salesOrderText_(row,operationalIndex){
       patch['Manual Review Reason'] = stage === 'NEEDS REVIEW' ? 'One or more Customer, Contact, or Location resolutions are incomplete.' : '';
       patch['Blocking Issue'] = patch['Manual Review Reason'];
       patch['Next Action'] = nextActionForStage_(stage);
-      d.util.patchRow('SERVICE_REQUESTS', record.__rowNumber, patch);
+      d.util.patchServiceRequestById(record['Request ID'], patch);
 
       d.util.logEvent({
         module: MODULE_NAME, action: 'FAST_RESOLVE_AMBIGUOUS_CANDIDATE', status: 'COMPLETE',
@@ -1632,7 +1632,7 @@ function salesOrderText_(row,operationalIndex){
       if (header === 'Operator Notes') {
         var request = d.util.findRecord('SERVICE_REQUESTS', 'Request ID', requestId);
         if (!request) throw new Error('Request not found: ' + requestId);
-        d.util.patchRow('SERVICE_REQUESTS', request.__rowNumber, {
+        d.util.patchServiceRequestById(request['Request ID'], {
           'Operator Notes': event.range.getValue(),
           'Updated At': d.util.nowString()
         });
@@ -1650,7 +1650,7 @@ function salesOrderText_(row,operationalIndex){
         var selectedAction = upper_(rawSelection);
         var actionRequest = d.util.findRecord('SERVICE_REQUESTS', 'Request ID', requestId);
         if (!actionRequest) throw new Error('Request not found: ' + requestId);
-        d.util.patchRow('SERVICE_REQUESTS', actionRequest.__rowNumber, {
+        d.util.patchServiceRequestById(actionRequest['Request ID'], {
           'Operator Action': selectedAction,
           'Updated At': d.util.nowString()
         });
@@ -2808,7 +2808,7 @@ var CF_SERVICEOPS_OPERATIONAL_LINK_RECONCILIATION_V51016_R1_ = (function () {
       'Work Order Number':number,
       'Work Order Link':id?'https://classicfireplace.striven.com/next/crm#/sales-orders/'+id:''
     };
-    CF.Util.patchRow('SERVICE_REQUESTS',request.__rowNumber,patch);
+    CF.Util.patchServiceRequestById(request['Request ID'],patch);
     Object.keys(patch).forEach(function(k){request[k]=patch[k];});
     return patch;
   }
@@ -2825,7 +2825,7 @@ var CF_SERVICEOPS_OPERATIONAL_LINK_RECONCILIATION_V51016_R1_ = (function () {
     var finalId=clean_(patch['Work Order ID']||request['Work Order ID']);
     if(!clean_(request['Work Order Link'])&&finalId){patch['Work Order Link']='https://classicfireplace.striven.com/next/crm#/sales-orders/'+finalId;changed=true;}
     if(changed&&persist){
-      CF.Util.patchRow('SERVICE_REQUESTS',request.__rowNumber,patch);
+      CF.Util.patchServiceRequestById(request['Request ID'],patch);
       Object.keys(patch).forEach(function(k){request[k]=patch[k];});
     }
     return{changed:changed,patch:patch,workOrder:wo};

@@ -202,6 +202,15 @@ CF.Util = (function () {
   }
 
   function getSheet(keyOrName) {
+    // CF_DURABLE_SYSTEM_LOG_ROUTING_R1
+    if (keyOrName === 'SYSTEM_LOG' || keyOrName === config_().resolveSheetName('SYSTEM_LOG')) {
+      var sinkId = getScriptProperties_().getProperty('CF_SERVICEOPS_SYSTEM_LOG_SINK_ID');
+      if (sinkId) {
+        var sinkSheet = SpreadsheetApp.openById(sinkId).getSheetByName(config_().resolveSheetName('SYSTEM_LOG'));
+        if (!sinkSheet) throw new Error('SYSTEM_LOG_SINK_SHEET_MISSING');
+        return sinkSheet;
+      }
+    }
     var ss = getSpreadsheet();
     var candidates = typeof config_().getSheetCandidates === 'function'
       ? config_().getSheetCandidates(keyOrName)
@@ -297,11 +306,12 @@ CF.Util = (function () {
     var sheet = getOrCreateSheet(keyOrName);
     var headers = config_().getHeaders(keyOrName);
     setHeaders(sheet, headers);
+    // CF_CACHE_GRID_PREFLIGHT_R1: allocation failure preserves the previous data.
+    var rows = (records || []).map(function (record) { return recordToRow(keyOrName, record); });
+    if (rows.length) ensureGridSize(sheet, rows.length + 1, headers.length);
     var oldRows = Math.max(0, sheet.getLastRow() - 1);
     if (oldRows) sheet.getRange(2, 1, oldRows, Math.max(sheet.getLastColumn(), headers.length)).clearContent();
     if (!records || !records.length) return { rows: 0, columns: headers.length };
-    var rows = records.map(function (record) { return recordToRow(keyOrName, record); });
-    ensureGridSize(sheet, rows.length + 1, headers.length);
     var batch = 5000;
     for (var start = 0; start < rows.length; start += batch) {
       var chunk = rows.slice(start, start + batch);
@@ -364,18 +374,107 @@ CF.Util = (function () {
     }
   }
 
-  function patchRow(keyOrName, rowNumber, patch) {
+  // P0: no journal or stage mutation may use another request's durable evidence.
+  function assertServiceJournalOwner_(requestId, value) {
+    if (isBlank(value)) return;
+    var journal = value;
+    if (typeof value === 'string') {
+      try { journal = JSON.parse(value); }
+      catch (error) { throw new Error('SERVICE_JOURNAL_INVALID_JSON | Request ' + requestId); }
+    }
+    if (!journal || typeof journal !== 'object' || Array.isArray(journal)) {
+      throw new Error('SERVICE_JOURNAL_INVALID_SHAPE | Request ' + requestId);
+    }
+    var sections = [
+      journal, journal.customerCreate, journal.contactCreate, journal.salesOrderCreate,
+      journal.standaloneLocationCreate, journal.locationCreate
+    ];
+    sections.forEach(function (part) {
+      if (!part || typeof part !== 'object') return;
+      var owner = cleanText(part.requestId);
+      if (owner && owner !== requestId) {
+        throw new Error('CROSS_REQUEST_JOURNAL | Expected ' + requestId + ', found ' + owner);
+      }
+    });
+  }
+
+  function assertServiceRowOwner_(sheet, map, rowNumber, patch, expectedRequestId) {
+    if (!map['Request ID']) throw new Error('SERVICE_REQUEST_ID_COLUMN_MISSING');
+    if (!Number.isInteger(rowNumber) || rowNumber < 2 || rowNumber > sheet.getLastRow()) {
+      throw new Error('SERVICE_REQUEST_ROW_INVALID');
+    }
+    var rowId = cleanText(sheet.getRange(rowNumber, map['Request ID']).getValue());
+    if (!rowId) throw new Error('SERVICE_REQUEST_ROW_UNIDENTIFIED');
+    var expected = cleanText(expectedRequestId);
+    if (expected && expected !== rowId) {
+      throw new Error('CROSS_REQUEST_ROW | Expected ' + expected + ', found ' + rowId);
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, 'Request ID') && cleanText(patch['Request ID']) !== rowId) {
+      throw new Error('SERVICE_REQUEST_ID_IMMUTABLE | ' + rowId);
+    }
+    if (map['Write Journal JSON']) {
+      var oldJournal = sheet.getRange(rowNumber, map['Write Journal JSON']).getValue();
+      assertServiceJournalOwner_(rowId, oldJournal);
+      if (Object.prototype.hasOwnProperty.call(patch, 'Write Journal JSON')) {
+        assertServiceJournalOwner_(rowId, patch['Write Journal JSON']);
+      }
+    }
+    return rowId;
+  }
+
+  function patchRow(keyOrName, rowNumber, patch, expectedRequestId) {
     var sheet = requireSheet(keyOrName);
     var map = getHeaderMap(sheet);
+    if (keyOrName === 'SERVICE_REQUESTS') {
+      assertServiceRowOwner_(sheet, map, rowNumber, patch, expectedRequestId);
+    }
     groupContiguousColumns_(patch, map).forEach(function (group) {
       var values = group.values.map(function (value) {
-        if (typeof value === 'object' && !(value instanceof Date)) return truncate(safeJson(value), 45000);
+        if (typeof value === 'object' && !(value instanceof Date)) {
+          var serialized = safeJson(value);
+          if (group.start <= map['Write Journal JSON'] && group.end >= map['Write Journal JSON'] && serialized.length > 45000) {
+            throw new Error('SERVICE_JOURNAL_TOO_LARGE | Refusing truncated journal write.');
+          }
+          return truncate(serialized, 45000);
+        }
         return typeof value === 'string' && value.charAt(0) === '=' ? "'" + value : value;
       });
       var range = sheet.getRange(rowNumber, group.start, 1, values.length);
       writeTechnicalRange_(sheet, range, values);
     });
     return patch;
+  }
+
+  // Looks up a fresh physical row immediately before a request-scoped patch.
+  // Callers already holding the script write lock must not acquire a nested lock.
+  function serviceRequestRowNumberById_(requestId) {
+    var id = cleanText(requestId);
+    if (!id) throw new Error('SERVICE_REQUEST_ID_REQUIRED');
+    var sheet = requireSheet('SERVICE_REQUESTS');
+    var map = getHeaderMap(sheet);
+    if (!map['Request ID']) throw new Error('SERVICE_REQUEST_ID_COLUMN_MISSING');
+    var lastRow = sheet.getLastRow();
+    if (lastRow < 2) throw new Error('SERVICE_REQUEST_NOT_FOUND | ' + id);
+    var ids = sheet.getRange(2, map['Request ID'], lastRow - 1, 1).getValues();
+    var rowNumber = 0;
+    ids.forEach(function (value, i) {
+      if (cleanText(value[0]) !== id) return;
+      if (rowNumber) throw new Error('SERVICE_REQUEST_DUPLICATE_ID | ' + id);
+      rowNumber = i + 2;
+    });
+    if (!rowNumber) throw new Error('SERVICE_REQUEST_NOT_FOUND | ' + id);
+    return rowNumber;
+  }
+
+  function patchServiceRequestById(requestId, patch) {
+    return patchRow('SERVICE_REQUESTS', serviceRequestRowNumberById_(requestId), patch, cleanText(requestId));
+  }
+
+  function clearServiceRequestRowValidationsById(requestId) {
+    var rowNumber = serviceRequestRowNumberById_(requestId);
+    var sheet = requireSheet('SERVICE_REQUESTS');
+    assertServiceRowOwner_(sheet, getHeaderMap(sheet), rowNumber, {}, cleanText(requestId));
+    return clearRowDataValidations('SERVICE_REQUESTS', rowNumber);
   }
 
   function findRecord(keyOrName, header, value) {
@@ -489,6 +588,8 @@ CF.Util = (function () {
     appendRecord: appendRecord,
     replaceSheetData: replaceSheetData,
     patchRow: patchRow,
+    patchServiceRequestById: patchServiceRequestById,
+    clearServiceRequestRowValidationsById: clearServiceRequestRowValidationsById,
     clearRowDataValidations: clearRowDataValidations,
     clearSheetDataValidations: clearSheetDataValidations,
     findRecord: findRecord,

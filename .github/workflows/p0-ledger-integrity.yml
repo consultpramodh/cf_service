@@ -1,0 +1,169 @@
+name: Verify P0 ServiceOps ledger integrity
+on:
+  pull_request:
+    branches: [production]
+    paths:
+      - src/**
+      - scripts/**
+      - tests/request-ledger-integrity.test.cjs
+      - .github/workflows/p0-ledger-integrity.yml
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  verify-ledger:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Validate code syntax and isolated P0 cases
+        run: |
+          set -euo pipefail
+          node --check scripts/release.mjs
+          node tests/request-ledger-integrity.test.cjs
+          node tests/core-utilities-patch.test.mjs
+          node tests/recent-gf-backstop.test.cjs
+          node tests/queue-kick-liveness.test.cjs
+          for test_file in tests/*.cjs tests/*.mjs; do node "$test_file"; done
+          node scripts/release.mjs
+      - name: Confirm approved patch scope against exact live checkpoint
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import pathlib,sys
+          base=pathlib.Path('backups/apps-script/p0-live-head-20261014')
+          candidate=pathlib.Path('src')
+          approved={'01_Core_Utilities.gs','20_Intake_Processing.gs','40_Matching_Profile.gs','50_Operator_Queue.gs','60_Striven_Write.gs','70_Workflow_Automation.gs','95_Public_Runners.gs'}
+          files=sorted(x for x in base.iterdir() if x.is_file() and x.name!='manifest.json')
+          if len(files)!=17:raise RuntimeError('BACKUP_CHECKPOINT_INCOMPLETE')
+          unexpected=[]
+          actual=[]
+          for b in files:
+              c=candidate/b.name
+              if not c.exists():raise RuntimeError('CANONICAL_SOURCE_MISSING '+b.name)
+              def norm(p):return p.read_text('utf8').replace('\r\n','\n').rstrip()+'\n'
+              if norm(b)!=norm(c):
+                  actual.append(b.name)
+                  if b.name not in approved:unexpected.append(b.name)
+          if unexpected:
+              print('OUT_OF_SCOPE_LIVE_DIVERGENCE '+','.join(unexpected));sys.exit(2)
+          if sorted(actual)!=sorted(approved):
+              print('PATCH_SCOPE_MISMATCH changed='+','.join(actual));sys.exit(2)
+          print('APPROVED_LIVE_PATCH_SCOPE_PASS changed='+','.join(actual))
+          PY
+      - name: Confirm no release runs in verification-only workflow
+        run: echo "P0_CHECK_ONLY_NO_APPS_SCRIPT_DEPLOYMENT"
+
+  read-live-source:
+    needs: verify-ledger
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref || 'fix/p0-request-ledger-integrity-20261014' }}
+          persist-credentials: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Pull exact current bound source (READ-ONLY)
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${CLASPRC_JSON:-}" || { echo "LIVE_SOURCE_ACCESS_REQUIRED"; exit 2; }
+          umask 077
+          printf '%s' "$CLASPRC_JSON" > "$HOME/.clasprc.json"
+          mkdir -p "$RUNNER_TEMP/serviceops-live" "$RUNNER_TEMP/serviceops-parity" "$RUNNER_TEMP/serviceops-base"
+          git fetch --no-tags --depth=1 origin production
+          for source in src/*; do
+            if [ -f "$source" ]; then git show "FETCH_HEAD:$source" > "$RUNNER_TEMP/serviceops-base/${source##*/}"; fi
+          done
+          printf '%s' '{"scriptId":"1QZp4NAFeA8LmWBN31ylJYdK4XFepBX1h2lP_APaR-d1lTAC-d8LA9x3g","rootDir":"."}' > "$RUNNER_TEMP/serviceops-live/.clasp.json"
+          (cd "$RUNNER_TEMP/serviceops-live" && npx -y @google/clasp@3.3.0 pull >/dev/null)
+          python3 - <<'PY'
+          import os,json,hashlib,pathlib,sys
+          live=pathlib.Path(os.environ['RUNNER_TEMP'])/'serviceops-live'
+          expected=pathlib.Path('backups/apps-script/p0-live-head-20261014')
+          def inventory(root):
+              out={}
+              for path in root.iterdir():
+                  if not path.is_file() or path.name in ('.clasp.json','manifest.json'):continue
+                  name=path.name
+                  if name.endswith('.js') or name.endswith('.gs'):
+                      logical=name.rsplit('.',1)[0]
+                  else:
+                      logical=name
+                  if logical in out:raise ValueError('Duplicate logical filename '+logical)
+                  text=path.read_text('utf8').replace('\r\n','\n').rstrip()+'\n'
+                  out[logical]={'sha256':hashlib.sha256(text.encode()).hexdigest(),'file':name}
+              return out
+          a=inventory(live);b=inventory(expected)
+          missing=sorted(set(b)-set(a));extra=sorted(set(a)-set(b))
+          different=sorted(k for k in a.keys()&b.keys() if a[k]['sha256']!=b[k]['sha256'])
+          report={'liveFileCount':len(a),'checkpointFileCount':len(b),'missing':missing,'extra':extra,'divergent':different,
+                  'liveHashes':{k:v['sha256'] for k,v in sorted(a.items())}}
+          dest=pathlib.Path(os.environ['RUNNER_TEMP'])/'serviceops-parity'/'manifest.json'
+          dest.write_text(json.dumps(report,indent=2)+'\n')
+          print('LIVE_SOURCE_SNAPSHOT',json.dumps({k:v for k,v in report.items() if k!='liveHashes'}))
+          if len(a)!=17 or missing or extra:
+              print('LIVE_SOURCE_INVENTORY_FAIL');sys.exit(2)
+          if different:
+              print('LIVE_SOURCE_CHANGED_SINCE_CHECKPOINT_STOP');sys.exit(3)
+          print('LIVE_SOURCE_PARITY_WITH_APPROVED_BACKUP_PASS')
+          PY
+
+      - name: Preserve exact current source in isolated P0 backup branch
+        if: always()
+        shell: bash
+        env:
+          EXPECTED_HEAD_REPO: consultpramodh/cf_service
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+        run: |
+          set -euo pipefail
+          if [ "$HEAD_REPO" != "$EXPECTED_HEAD_REPO" ]; then echo "SOURCE_SNAPSHOT_SKIPPED_EXTERNAL_PR"; exit 0; fi
+          export SNAPSHOT_DIR='backups/apps-script/p0-live-head-20261014'
+          python3 - <<'PY'
+          import pathlib,os,re,hashlib,json,sys
+          live=pathlib.Path(os.environ['RUNNER_TEMP'])/'serviceops-live'
+          files=sorted(p for p in live.iterdir() if p.is_file() and p.name!='.clasp.json')
+          if len(files)!=17:
+              print('SOURCE_SNAPSHOT_STOP_INVENTORY');sys.exit(2)
+          scan=[
+            r'sk-(?:proj-)?[A-Za-z0-9_-]{24,}',
+            r'AIza[A-Za-z0-9_-]{30,}',
+            r'-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----',
+            r"(?i)(?:client[_ ]?secret|access[_ ]?token|refresh[_ ]?token|api[_ ]?key|webhook[_ ]?secret)\s*[=:]\s*['\"][A-Za-z0-9_+./=-]{24,}['\"]",
+          ]
+          target=pathlib.Path(os.environ['SNAPSHOT_DIR']);target.mkdir(parents=True,exist_ok=True)
+          manifest=[]
+          for file in files:
+              source=file.read_text('utf8')
+              if any(re.search(p,source) for p in scan):
+                  print('SOURCE_SNAPSHOT_STOP_SENSITIVE_LITERAL file='+file.name)
+                  sys.exit(3)
+              logical=file.name[:-3]+'.gs' if file.name.endswith('.js') else file.name
+              (target/logical).write_text(source)
+              manifest.append({'file':logical,'sha256':hashlib.sha256(source.encode('utf8')).hexdigest(),'bytes':len(source.encode('utf8'))})
+          (target/'manifest.json').write_text(json.dumps({'scriptId':'1QZp4NAFeA8LmWBN31ylJYdK4XFepBX1h2lP_APaR-d1lTAC-d8LA9x3g','files':manifest},indent=2)+'\n')
+          print('SOURCE_SNAPSHOT_PREPARED files='+str(len(manifest)))
+          PY
+          git config user.name 'CF ServiceOps Verified Backup'
+          git config user.email 'cf-serviceops-backup@users.noreply.github.com'
+          git add "$SNAPSHOT_DIR"
+          if git diff --cached --quiet; then echo "SOURCE_SNAPSHOT_ALREADY_PRESENT"; exit 0; fi
+          git commit -m 'Back up current live ServiceOps HEAD for P0 repair [skip ci]'
+          git push origin HEAD:refs/heads/fix/p0-request-ledger-integrity-20261014
+          echo "SOURCE_SNAPSHOT_COMMITTED_TO_FIX_BRANCH"
+
+      - name: Preserve hash-only parity manifest
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: p0-live-source-hashes
+          path: ${{ runner.temp }}/serviceops-parity/manifest.json
+          retention-days: 14

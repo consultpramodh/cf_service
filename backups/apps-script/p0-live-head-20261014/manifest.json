@@ -1,0 +1,90 @@
+{
+  "scriptId": "1QZp4NAFeA8LmWBN31ylJYdK4XFepBX1h2lP_APaR-d1lTAC-d8LA9x3g",
+  "files": [
+    {
+      "file": "00_Config.gs",
+      "sha256": "75da0b2601e435c388e76f8d4e0d9caad5d52f69dd4898b469993b43ed33e308",
+      "bytes": 20062
+    },
+    {
+      "file": "01_Core_Utilities.gs",
+      "sha256": "8d41e30ec4533b707c285e46029ed21793bb461d6ddde794dfa0e233235a9c85",
+      "bytes": 20538
+    },
+    {
+      "file": "10_Setup_Admin.gs",
+      "sha256": "d63a497d8b64fe32649aef760c1a57bef66f61b3c77fdb69f788a7c2f25d5c90",
+      "bytes": 16025
+    },
+    {
+      "file": "20_Intake_Processing.gs",
+      "sha256": "c1f94ad2a41958cb3bc2b98c37d8d8ada91ff393131fe945271cb05c638a01e7",
+      "bytes": 127012
+    },
+    {
+      "file": "30_Striven_Data.gs",
+      "sha256": "e7009c996bb7b25fd3303db89d2e76afd67e3d008e59ee0fda49c2573638b935",
+      "bytes": 37287
+    },
+    {
+      "file": "40_Matching_Profile.gs",
+      "sha256": "be37f19f5aace54e6aafca443b17b360e7dfefa7b5b296b64fdc5ad322432b19",
+      "bytes": 87617
+    },
+    {
+      "file": "50_Operator_Queue.gs",
+      "sha256": "6874e7f390bfed0599be3f79ae8e507df5b6ada184a881ba3b87edcb31514c7e",
+      "bytes": 245507
+    },
+    {
+      "file": "60_Operator_Workflow.gs",
+      "sha256": "637bd642acbf548b93113ad94abfdc2dce2726db4444a6340b83d0c57d271775",
+      "bytes": 7972
+    },
+    {
+      "file": "60_Striven_Write.gs",
+      "sha256": "60b734b211cc05dca7d8cd640d070a0788c2a813817f53c025711a90bafa29df",
+      "bytes": 395974
+    },
+    {
+      "file": "70_Customer_360.gs",
+      "sha256": "1b13e9f3d5f20278eb90a16eb10e5273cfe23c95120d530895c38023e0ddfec1",
+      "bytes": 110847
+    },
+    {
+      "file": "70_Workflow_Automation.gs",
+      "sha256": "b8e2ba2837a183c84d36c1c025e5ff0e853a76c24dfaad4ffded658d3fdd6968",
+      "bytes": 114662
+    },
+    {
+      "file": "75_Customer_360_AI.gs",
+      "sha256": "3627a1e367b37979b4ce2a4494e47d98c07453ea3e5ffea0755a25fac28bf95b",
+      "bytes": 20175
+    },
+    {
+      "file": "90_Diagnostics_Tests.gs",
+      "sha256": "95dcd54acfbe439999525f67b701bd0a586f83b09bc70a518e11bf12c889b62f",
+      "bytes": 18140
+    },
+    {
+      "file": "95_Public_Runners.gs",
+      "sha256": "97fdd57f28ace84e5e9b599fb807c79e71589c1180adb160a3c9386af68753ed",
+      "bytes": 196396
+    },
+    {
+      "file": "98_Code_Audit.gs",
+      "sha256": "2290a159b7b225b1e29f01127232b77a68d4d739aec6ebe04e2e858ec903c53b",
+      "bytes": 24478
+    },
+    {
+      "file": "99_Production_Hardening.gs",
+      "sha256": "df89c166cf63704e18cc0f3f13b730f0e38a426aa15a699f84e825b2da421779",
+      "bytes": 10576
+    },
+    {
+      "file": "appsscript.json",
+      "sha256": "69727a8008f39460c65a108bd19484654d1d6d5d6f53014f80b7f39842e68431",
+      "bytes": 633
+    }
+  ]
+}

@@ -28,7 +28,7 @@ CF.CustomerStructureEngine = (function () {
   function active_(r){return !!r&&!deps_().config.isTerminalState(r['Current Stage'])&&!deps_().config.isTerminalState(r['Final Outcome']);}
   function safe_(r){if(!active_(r))return false;if(upper_(r['Manual Review?'])==='YES')return false;var risk=upper_(r['Duplicate Risk Status']);if(risk&&risk!=='NONE')return false;if(['BLOCKED','DUPLICATE','CANCELLED','CANCELED','ERROR'].indexOf(upper_(r['Request Status']))!==-1)return false;return true;}
   function ids_(r){return{customer:clean_(r['Matched Customer ID']||r['Created Customer ID']),contact:clean_(r['Matched Contact ID']||r['Created Contact ID']),location:clean_(r['Matched Location ID']||r['Created Location ID'])};}
-  function patch_(r,p){if(typeof deps_().util.clearRowDataValidations==='function')deps_().util.clearRowDataValidations('SERVICE_REQUESTS',r.__rowNumber);deps_().util.patchRow('SERVICE_REQUESTS',r.__rowNumber,p);SpreadsheetApp.flush();}
+  function patch_(r,p){if(typeof deps_().util.clearRowDataValidations==='function')deps_().util.clearServiceRequestRowValidationsById(r['Request ID']);deps_().util.patchServiceRequestById(r['Request ID'],p);SpreadsheetApp.flush();}
   function finalize_(r,reason){var ids=ids_(r);if(!ids.customer||!ids.contact||!ids.location)return{ok:false,version:VERSION,status:'CUSTOMER_STRUCTURE_IDS_INCOMPLETE',requestId:clean_(r['Request ID']),ids:ids,liveWriteExecuted:false};patch_(r,{'Updated At':deps_().util.nowString(),'Current Stage':'CUSTOMER STRUCTURE COMPLETE','Request Status':'OPEN','Manual Review?':'NO','Manual Review Reason':'','Blocking Issue':'','Next Action':'CONTINUE TO WORK ORDER','Customer Structure Status':'COMPLETE','Contact Association Status':clean_(r['Contact Association Status'])||'ASSOCIATED','Striven Sync Status':'PARTIAL','Striven Sync Error':'','Reconciliation Status':reason||'CUSTOMER STRUCTURE COMPLETE'});return{ok:true,version:VERSION,status:'CUSTOMER_STRUCTURE_COMPLETE',requestId:clean_(r['Request ID']),customerId:ids.customer,contactId:ids.contact,locationId:ids.location,liveWriteExecuted:false};}
   function verifyResultRequest_(requestId,result){if(!result||typeof result!=='object')return result;var nested=[result.requestId,result.stepResult&&result.stepResult.requestId,result.result&&result.result.requestId,result.matching&&result.matching.requestId].map(clean_).filter(Boolean);var bad=nested.filter(function(id){return id!==clean_(requestId);});if(bad.length)return{ok:false,version:VERSION,status:'CROSS_REQUEST_RESULT_REJECTED',requestId:clean_(requestId),returnedRequestIds:nested,rejectedRequestIds:bad,liveWriteExecuted:!!result.liveWriteExecuted,originalResult:result};return result;}
   function step(requestId){requestId=clean_(requestId);if(!requestId)return{ok:false,version:VERSION,status:'REQUEST_ID_REQUIRED',liveWriteExecuted:false};var r=request_(requestId);if(!r)return{ok:false,version:VERSION,status:'REQUEST_NOT_FOUND',requestId:requestId,liveWriteExecuted:false};if(!active_(r))return{ok:true,version:VERSION,status:'REQUEST_NOT_ACTIVE',requestId:requestId,liveWriteExecuted:false};var stage=upper_(r['Current Stage']);
@@ -865,7 +865,7 @@ CF.EventDrivenServiceAutomation = (function () {
   }
   function normalizeTopology_(currentUid){var removed=cleanLegacyTriggers_();var finals=triggersBy_(FINAL_HANDLER),current=clean_(currentUid),kept=false,removedFinal=0;finals.forEach(function(t){var id='';try{id=clean_(t.getUniqueId&&t.getUniqueId());}catch(e){}if(current&&id===current){kept=true;return;}if(!kept){kept=true;return;}if(deleteTriggerSafe_(t))removedFinal++;});return{removedLegacyTriggers:removed,removedDuplicateFinalTriggers:removedFinal,watchdog:ensureWatchdog_()};}
   function falsePreflightPark_(r){if(!r)return false;if(upper_(r['Current Stage'])!=='NEEDS REVIEW'||upper_(r['Request Status'])!=='BLOCKED'||upper_(r['Manual Review?'])!=='YES')return false;var reason=[r['Manual Review Reason'],r['Blocking Issue'],r['Reconciliation Status']].map(clean_).join(' ');if(!/(PREFLIGHT_BLOCKED|PRE-WRITE CUSTOMER CANDIDATE FOUND)/i.test(reason))return false;if(upper_(r['Duplicate Risk Status'])!=='NONE')return false;if(upper_(r['Customer Match Status'])!=='NOT FOUND'||upper_(r['Customer Action'])!=='CREATE')return false;if(upper_(r['Contact Action'])!=='CREATE'||upper_(r['Location Action'])!=='CREATE'||upper_(r['Work Order Action'])!=='CREATE')return false;if(clean_(r['Matched Customer ID']||r['Created Customer ID']||r['Matched Contact ID']||r['Created Contact ID']||r['Matched Location ID']||r['Created Location ID']||r['Work Order ID']))return false;var root=parse_(r['Write Journal JSON']),keys=['customerCreate','contactCreate','standaloneLocationCreate','salesOrderCreate'];for(var i=0;i<keys.length;i++){var x=root&&root[keys[i]]||{};if(Number(x.postAttempts||0)>0||x.remoteWriteMayHaveSucceeded===true)return false;}return true;}
-  function recoverFalsePreflightPark_(r){if(!falsePreflightPark_(r))return r;if(typeof CF.Util.clearRowDataValidations==='function')CF.Util.clearRowDataValidations('SERVICE_REQUESTS',r.__rowNumber);CF.Util.patchRow('SERVICE_REQUESTS',r.__rowNumber,{'Updated At':now_(),'Current Stage':'READY FOR CUSTOMER CREATE','Request Status':'OPEN','Manual Review?':'NO','Manual Review Reason':'','Blocking Issue':'','Next Action':'CREATE CUSTOMER','Striven Sync Status':'PARTIAL','Striven Sync Error':'','Reconciliation Status':'AUTO-RECOVERED DETERMINISTIC PREWRITE PARK'});SpreadsheetApp.flush();log_('FALSE_PREFLIGHT_PARK_RECOVERY','RESTORED',r['Request ID'],{},'No Striven write had occurred; deterministic pre-write park returned to the Customer resolution stage.');return request_(r['Request ID'])||r;}
+  function recoverFalsePreflightPark_(r){if(!falsePreflightPark_(r))return r;if(typeof CF.Util.clearRowDataValidations==='function')CF.Util.clearServiceRequestRowValidationsById(r['Request ID']);CF.Util.patchServiceRequestById(r['Request ID'],{'Updated At':now_(),'Current Stage':'READY FOR CUSTOMER CREATE','Request Status':'OPEN','Manual Review?':'NO','Manual Review Reason':'','Blocking Issue':'','Next Action':'CREATE CUSTOMER','Striven Sync Status':'PARTIAL','Striven Sync Error':'','Reconciliation Status':'AUTO-RECOVERED DETERMINISTIC PREWRITE PARK'});SpreadsheetApp.flush();log_('FALSE_PREFLIGHT_PARK_RECOVERY','RESTORED',r['Request ID'],{},'No Striven write had occurred; deterministic pre-write park returned to the Customer resolution stage.');return request_(r['Request ID'])||r;}
   /* CF_SERVICEOPS_V5_14_2_DETERMINISTIC_REVIEW_RECOVERY_R1 */
   function scopedContactReviewEvidence_(r){
     if(!r||upper_(r['Current Stage'])!=='NEEDS REVIEW'||upper_(r['Manual Review?'])!=='YES')return null;
@@ -886,8 +886,8 @@ CF.EventDrivenServiceAutomation = (function () {
     var ev=scopedContactReviewEvidence_(r);
     if(!ev)return r;
     if(!clean_(r['Matched Location ID']||r['Created Location ID']))return r;
-    if(typeof CF.Util.clearRowDataValidations==='function')CF.Util.clearRowDataValidations('SERVICE_REQUESTS',r.__rowNumber);
-    CF.Util.patchRow('SERVICE_REQUESTS',r.__rowNumber,{
+    if(typeof CF.Util.clearRowDataValidations==='function')CF.Util.clearServiceRequestRowValidationsById(r['Request ID']);
+    CF.Util.patchServiceRequestById(r['Request ID'],{
       'Updated At':now_(),
       'Current Stage':'CUSTOMER STRUCTURE COMPLETE',
       'Request Status':'OPEN',
@@ -962,8 +962,8 @@ CF.EventDrivenServiceAutomation = (function () {
       locationId:locationId,
       priorIssues:ev.issues
     };
-    if(typeof CF.Util.clearRowDataValidations==='function')CF.Util.clearRowDataValidations('SERVICE_REQUESTS',r.__rowNumber);
-    CF.Util.patchRow('SERVICE_REQUESTS',r.__rowNumber,{
+    if(typeof CF.Util.clearRowDataValidations==='function')CF.Util.clearServiceRequestRowValidationsById(r['Request ID']);
+    CF.Util.patchServiceRequestById(r['Request ID'],{
       'Updated At':now_(),
       'Current Stage':'CUSTOMER STRUCTURE COMPLETE',
       'Request Status':'OPEN',
@@ -1030,8 +1030,8 @@ CF.EventDrivenServiceAutomation = (function () {
       return r;
     }
     props_().deleteProperty(probeKey);
-    if(typeof CF.Util.clearRowDataValidations==='function')CF.Util.clearRowDataValidations('SERVICE_REQUESTS',r.__rowNumber);
-    CF.Util.patchRow('SERVICE_REQUESTS',r.__rowNumber,{
+    if(typeof CF.Util.clearRowDataValidations==='function')CF.Util.clearServiceRequestRowValidationsById(r['Request ID']);
+    CF.Util.patchServiceRequestById(r['Request ID'],{
       'Updated At':now_(),
       'Current Stage':'CUSTOMER STRUCTURE COMPLETE',
       'Request Status':'OPEN',
@@ -1059,8 +1059,8 @@ CF.EventDrivenServiceAutomation = (function () {
     var priorCountry=clean_(j&&j.payload&&j.payload.Address&&j.payload.Address.Country);
     if(!/^HTTP 400:/i.test(errorText)||!(/country code .* could not be read/i.test(errorText)||/country_Invalid/i.test(errorText)))return r;
     if(!priorCountry||upper_(priorCountry)==='CA')return r;
-    if(typeof CF.Util.clearRowDataValidations==='function')CF.Util.clearRowDataValidations('SERVICE_REQUESTS',r.__rowNumber);
-    CF.Util.patchRow('SERVICE_REQUESTS',r.__rowNumber,{
+    if(typeof CF.Util.clearRowDataValidations==='function')CF.Util.clearServiceRequestRowValidationsById(r['Request ID']);
+    CF.Util.patchServiceRequestById(r['Request ID'],{
       'Updated At':now_(),
       'Request Status':'OPEN',
       'Manual Review?':'NO',
@@ -1091,7 +1091,7 @@ CF.EventDrivenServiceAutomation = (function () {
   function assertRequestScoped_(requestId,result){var bad=resultIds_(result).filter(function(id){return id!==clean_(requestId);});if(!bad.length)return result;log_('REQUEST_ID_INTEGRITY_GUARD','REJECTED_CROSS_REQUEST_RESULT',requestId,{returnedRequestIds:resultIds_(result),rejectedRequestIds:bad},'A result for another request was ignored.');return{ok:false,version:VERSION,status:'CROSS_REQUEST_RESULT_REJECTED',requestId:clean_(requestId),returnedRequestIds:resultIds_(result),rejectedRequestIds:bad,liveWriteExecuted:!!(result&&result.liveWriteExecuted===true)};}
   function signature_(r){if(!r)return'';return[clean_(r['Current Stage']),clean_(r['Request Status']),clean_(r['Next Action']),clean_(r['Matched Customer ID']||r['Created Customer ID']),clean_(r['Matched Contact ID']||r['Created Contact ID']),clean_(r['Matched Location ID']||r['Created Location ID']),clean_(r['Work Order ID']),clean_(r['Reconciliation Status']),clean_(r['Manual Review?'])].join('|');}
   function reconcileOperationalLinks_(){try{if(typeof CF_SERVICEOPS_OPERATIONAL_LINK_RECONCILIATION_V51016_R1_!=='undefined'&&CF_SERVICEOPS_OPERATIONAL_LINK_RECONCILIATION_V51016_R1_&&typeof CF_SERVICEOPS_OPERATIONAL_LINK_RECONCILIATION_V51016_R1_.reconcileAll==='function')return CF_SERVICEOPS_OPERATIONAL_LINK_RECONCILIATION_V51016_R1_.reconcileAll({refreshIfStale:false});}catch(e){return{ok:false,status:'OPERATIONAL_LINK_RECONCILIATION_FAILED',error:String(e&&e.message||e),liveWriteExecuted:false};}return{ok:true,status:'OPERATIONAL_LINK_RECONCILIATION_UNAVAILABLE',liveWriteExecuted:false};}
-  function review_(r,code,message){if(!r||!r.__rowNumber)return{ok:false,version:VERSION,status:code||'REVIEW_REQUIRED',requestId:clean_(r&&r['Request ID']),message:message||'',liveWriteExecuted:false};if(typeof CF.Util.clearRowDataValidations==='function')CF.Util.clearRowDataValidations('SERVICE_REQUESTS',r.__rowNumber);CF.Util.patchRow('SERVICE_REQUESTS',r.__rowNumber,{'Updated At':now_(),'Current Stage':'NEEDS REVIEW','Request Status':'BLOCKED','Manual Review?':'YES','Manual Review Reason':message||code||'Review required.','Blocking Issue':message||code||'Review required.','Next Action':'REVIEW REQUEST','Striven Sync Status':'BLOCKED','Reconciliation Status':code||'REVIEW REQUIRED'});SpreadsheetApp.flush();return{ok:false,version:VERSION,status:code||'REVIEW_REQUIRED',requestId:clean_(r['Request ID']),message:message||'',manualReviewRequired:true,liveWriteExecuted:false};}
+  function review_(r,code,message){if(!r||!r.__rowNumber)return{ok:false,version:VERSION,status:code||'REVIEW_REQUIRED',requestId:clean_(r&&r['Request ID']),message:message||'',liveWriteExecuted:false};if(typeof CF.Util.clearRowDataValidations==='function')CF.Util.clearServiceRequestRowValidationsById(r['Request ID']);CF.Util.patchServiceRequestById(r['Request ID'],{'Updated At':now_(),'Current Stage':'NEEDS REVIEW','Request Status':'BLOCKED','Manual Review?':'YES','Manual Review Reason':message||code||'Review required.','Blocking Issue':message||code||'Review required.','Next Action':'REVIEW REQUEST','Striven Sync Status':'BLOCKED','Reconciliation Status':code||'REVIEW REQUIRED'});SpreadsheetApp.flush();return{ok:false,version:VERSION,status:code||'REVIEW_REQUIRED',requestId:clean_(r['Request ID']),message:message||'',manualReviewRequired:true,liveWriteExecuted:false};}
   /* CF_SERVICEOPS_V5_14_2_MANUAL_WORK_ORDER_NOTES_AUTOMATION_R1
    * An existing Service Work Order that was not created by ServiceOps is
    * allowed through the proven official Internal Notes reconciliation before
@@ -1292,8 +1292,8 @@ CF.StatusWarningReconciler=(function(){
     return out;
   }
   function patch_(r,p){
-    if(typeof CF.Util.clearRowDataValidations==='function')CF.Util.clearRowDataValidations('SERVICE_REQUESTS',r.__rowNumber);
-    CF.Util.patchRow('SERVICE_REQUESTS',r.__rowNumber,p);
+    if(typeof CF.Util.clearRowDataValidations==='function')CF.Util.clearServiceRequestRowValidationsById(r['Request ID']);
+    CF.Util.patchServiceRequestById(r['Request ID'],p);
     SpreadsheetApp.flush();
     Object.keys(p).forEach(function(k){r[k]=p[k];});
     return r;

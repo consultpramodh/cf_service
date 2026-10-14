@@ -13,6 +13,7 @@ const RELEASE = '5.14.4';
 const SCRIPT_ID = '1QZp4NAFeA8LmWBN31ylJYdK4XFepBX1h2lP_APaR-d1lTAC-d8LA9x3g';
 const DEPLOYMENT_ID = 'AKfycbwebnCvczGthe6Z_mvYmukLqFLB-9nk8hjNtNP3lR87CE1m_fEx2d9Bn_vpXMPCLUnPbA';
 const PATCH_BASES = [
+  '01_Core_Utilities',
   '20_Intake_Processing',
   '40_Matching_Profile',
   '50_Operator_Queue',
@@ -208,6 +209,22 @@ const beforeInv = inventory(before);
 writeFileSync(resolve(work, 'before.sha256.json'), JSON.stringify(Object.fromEntries(beforeInv), null, 2) + '\n');
 console.log('Checkpoint: ' + before);
 
+// P0 safety: never overwrite a changed live project with an older GitHub copy.
+// Approved baseline was pulled read-only, scanned and saved under this branch.
+const approvedLiveRoot = resolve(root, 'backups', 'apps-script', 'p0-live-head-20261014');
+const approvedLiveFiles = files(approvedLiveRoot).filter(name => name !== 'manifest.json');
+if (approvedLiveFiles.length !== 17 || beforeInv.size !== 17) {
+  throw new Error('P0_LIVE_SOURCE_INVENTORY_DRIFT_STOP');
+}
+for (const name of approvedLiveFiles) {
+  const logical = logicalName(name);
+  const actual = logical === 'appsscript.json' ? resolve(before, name) : findTarget(logical, before);
+  if (!existsSync(actual) || normalizedText(resolve(approvedLiveRoot, name)) !== normalizedText(actual)) {
+    throw new Error('P0_LIVE_SOURCE_BASELINE_DRIFT_STOP: ' + name);
+  }
+}
+console.log('P0_LIVE_BASELINE_PARITY_PASS: exact approved 17-file checkpoint');
+
 console.log('\n=== 4/10 Replace finalized modules + normalize live version metadata + remove obsolete V2 shadow generation ===');
 for (const base of PATCH_BASES) {
   const src = resolve(root, 'src', base + '.gs');
@@ -263,7 +280,8 @@ for (const base of normalizedVersionBases.filter(k => !PATCH_BASES.includes(k) &
 for (const base of PATCH_BASES) {
   const expectedPath = resolve(root, 'src', base + '.gs');
   const livePath = findTarget(base, live);
-  if (normalizedText(expectedPath) !== normalizedText(livePath)) {
+  const expected = base === coreBase ? patchCoreUtilities(normalizedText(expectedPath)) : normalizedText(expectedPath);
+  if (expected !== normalizedText(livePath)) {
     throw new Error('CANONICAL_MODULE_PARITY_FAILED: ' + base);
   }
 }
@@ -275,8 +293,8 @@ console.log('READINESS_COUNTS_PATCH_SCOPE_PASS');
 console.log('OBSOLETE_V2_REMOVAL_PASS: ' + (removedV2.length ? removedV2.join(', ') : 'none present'));
 
 console.log('\n=== 6/10 Syntax + single-model checks ===');
-const coreBefore = normalizedText(resolve(before, beforeInv.get(coreBase).name));
-if (normalizeReleaseMetadataText(patchCoreUtilities(coreBefore)) !== normalizedText(coreLivePath)) throw new Error('CORE_UTILITIES_PATCH_SCOPE_FAILED');
+const coreExpected = patchCoreUtilities(normalizedText(resolve(root, 'src', coreBase + '.gs')));
+if (normalizeReleaseMetadataText(coreExpected) !== normalizedText(coreLivePath)) throw new Error('CORE_UTILITIES_PATCH_SCOPE_FAILED');
 for (const base of PATCH_BASES.concat([readinessBase, coreBase])) run(process.execPath, ['--check', findTarget(base, live)]);
 requireMarker(findTarget('20_Intake_Processing', live), 'CF_SERVICEOPS_V5_14_1_CANONICAL_INTAKE_R1');
 requireMarker(findTarget('70_Workflow_Automation', live), 'CF_SERVICEOPS_V5_14_1_SINGLE_AUTOMATION_MODEL_R1');
@@ -307,7 +325,8 @@ clasp(['pull'], {cwd: verify});
 for (const base of PATCH_BASES) {
   const expectedPath = resolve(root, 'src', base + '.gs');
   const remotePath = findTarget(base, verify);
-  if (normalizedText(expectedPath) !== normalizedText(remotePath)) throw new Error('REMOTE_CONTENT_MISMATCH: ' + base);
+  const expected = base === coreBase ? patchCoreUtilities(normalizedText(expectedPath)) : normalizedText(expectedPath);
+  if (expected !== normalizedText(remotePath)) throw new Error('REMOTE_CONTENT_MISMATCH: ' + base);
   console.log('REMOTE_CONTENT_PASS: ' + base);
 }
 if (normalizedText(findTarget(readinessBase, verify)) !== readinessExpectedText.replace(/\r\n/g, '\n').trimEnd() + '\n') throw new Error('REMOTE_READINESS_PATCH_MISMATCH');

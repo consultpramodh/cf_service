@@ -671,8 +671,8 @@ function CF_20260930_queueTodayEndToEndOnce_() {
         !String(sheila['Work Order ID']||'').trim() &&
         String(sheila['Reconciliation Status']||'').toUpperCase()==='WORK_ORDER_PREFLIGHT_BLOCKED' &&
         String(sheila['Manual Review Reason']||'').indexOf('STANDARD_SERVICE_ITEM_ID_NOT_CONFIGURED')!==-1) {
-      CF.Util.clearRowDataValidations('SERVICE_REQUESTS',sheila.__rowNumber);
-      CF.Util.patchRow('SERVICE_REQUESTS',sheila.__rowNumber,{
+      CF.Util.clearServiceRequestRowValidationsById(sheila['Request ID']);
+      CF.Util.patchServiceRequestById(sheila['Request ID'],{
         'Updated At':CF.Util.nowString(),
         'Current Stage':'CUSTOMER STRUCTURE COMPLETE',
         'Request Status':'OPEN',
@@ -814,8 +814,8 @@ function doGet(e) {
           root.contactCreate.erroneousDuplicateReason='Created because Alt Phone was omitted from Contact duplicate guard and Contact matching incorrectly required all new primary identifiers to match.';
           root.contactCreate.canonicalExistingContactId='35697';
           root.contactCreate.correctionAppliedAt=CF.Util.nowString();
-          CF.Util.clearRowDataValidations('SERVICE_REQUESTS',les.__rowNumber);
-          CF.Util.patchRow('SERVICE_REQUESTS',les.__rowNumber,{
+          CF.Util.clearServiceRequestRowValidationsById(les['Request ID']);
+          CF.Util.patchServiceRequestById(les['Request ID'],{
             'Updated At':CF.Util.nowString(),
             'Created Contact ID':'',
             'Contact Association Status':'RECONCILE',
@@ -3937,7 +3937,7 @@ function FIX_20260905_applyWorkflowStabilityAndResumeRecentIncomplete() {
         patch['Current Stage'] = 'READY FOR CONTACT CREATE';
         patch['Next Action'] = 'CREATE CONTACT';
       }
-      CF.Util.patchRow('SERVICE_REQUESTS', record.__rowNumber, patch);
+      CF.Util.patchServiceRequestById(record['Request ID'], patch);
       try { SpreadsheetApp.flush(); } catch (ignoredFlush) {}
       return true;
     }
@@ -4132,8 +4132,8 @@ function FIX_20260905_applyAutonomousResolutionPolicyAndResume() {
     function row_(id) { return CF.Util.findRecord('SERVICE_REQUESTS', 'Request ID', id); }
     function patch_(record, patch) {
       if (!record || !record.__rowNumber) throw new Error('Service Request row unavailable for patch.');
-      if (typeof CF.Util.clearRowDataValidations === 'function') CF.Util.clearRowDataValidations('SERVICE_REQUESTS', record.__rowNumber);
-      CF.Util.patchRow('SERVICE_REQUESTS', record.__rowNumber, patch);
+      if (typeof CF.Util.clearRowDataValidations === 'function') CF.Util.clearServiceRequestRowValidationsById(record['Request ID']);
+      CF.Util.patchServiceRequestById(record['Request ID'], patch);
       try { SpreadsheetApp.flush(); } catch (ignoredFlush) {}
     }
     function clearLegacyVerifiedSoReview_(id) {
@@ -4323,7 +4323,7 @@ function TESTING_20260905_autonomousResolutionStatus() {
     } else if(technicalReview_(r)&&!genuineRisk_(r)){
       var s=canonicalStage_(r);Object.assign(patch,{'Current Stage':s.stage,'Request Status':s.status,'Manual Review?':'NO','Manual Review Reason':'','Blocking Issue':'','Next Action':s.next,'Customer Structure Status':s.structure,'Striven Sync Error':''});changed=true;
     }
-    if(changed)CF.Util.patchRow('SERVICE_REQUESTS',r.__rowNumber,patch);
+    if(changed)CF.Util.patchServiceRequestById(r['Request ID'],patch);
     return{changed:changed};
   }
   function snapshot_(r){return{requestId:clean_(r&&r['Request ID']),name:clean_(r&&r['Full Name']),stage:clean_(r&&r['Current Stage']),requestStatus:clean_(r&&r['Request Status']),manualReview:clean_(r&&r['Manual Review?']),manualReviewReason:clean_(r&&r['Manual Review Reason']),nextAction:clean_(r&&r['Next Action']),customerId:durable_(r||{},'Matched Customer ID','Created Customer ID'),contactId:durable_(r||{},'Matched Contact ID','Created Contact ID'),locationId:durable_(r||{},'Matched Location ID','Created Location ID'),workOrderId:clean_(r&&r['Work Order ID']),workOrderNumber:clean_(r&&r['Work Order Number'])};}
@@ -4391,7 +4391,7 @@ function TESTING_CURRENT_runReadOnlyStatusCheck() {
   function householdReview_(r){var t=clean_(r&&r['Manual Review Reason'])+' '+clean_(r&&r['Blocking Issue']);return /Possible household Contact/i.test(t)&&upper_(r&&r['Duplicate Risk Status'])==='NONE';}
   function verifiedSo_(r){return !!clean_(r&&r['Work Order ID']);}
   function uncertainContact_(r){var j=journal_(r),c=j.contactCreate||{};return !durable_(r||{},'Matched Contact ID','Created Contact ID')&&Number(c.postAttempts||0)>0&&c.remoteWriteMayHaveSucceeded===true;}
-  function patch_(r,p){if(r&&r.__rowNumber)CF.Util.patchRow('SERVICE_REQUESTS',r.__rowNumber,p);}
+  function patch_(r,p){if(r&&r.__rowNumber)CF.Util.patchServiceRequestById(r['Request ID'],p);}
   function snapshot_(r){return{requestId:clean_(r&&r['Request ID']),name:clean_(r&&r['Full Name']),stage:clean_(r&&r['Current Stage']),requestStatus:clean_(r&&r['Request Status']),manualReview:clean_(r&&r['Manual Review?']),manualReviewReason:clean_(r&&r['Manual Review Reason']),nextAction:clean_(r&&r['Next Action']),customerId:durable_(r||{},'Matched Customer ID','Created Customer ID'),contactId:durable_(r||{},'Matched Contact ID','Created Contact ID'),locationId:durable_(r||{},'Matched Location ID','Created Location ID'),workOrderId:clean_(r&&r['Work Order ID']),workOrderNumber:clean_(r&&r['Work Order Number']),reconciliationStatus:clean_(r&&r['Reconciliation Status'])};}
   function repairOne_(id){
     var r=row_(id),steps=[];if(!r)return{requestId:id,status:'NOT_FOUND'};
