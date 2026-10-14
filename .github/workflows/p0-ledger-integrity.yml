@@ -1,0 +1,30 @@
+name: Verify P0 ServiceOps ledger integrity
+on:
+  pull_request:
+    branches: [production]
+    paths:
+      - src/**
+      - scripts/**
+      - tests/request-ledger-integrity.test.cjs
+      - .github/workflows/p0-ledger-integrity.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  verify-ledger:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Validate code syntax and isolated P0 cases
+        run: |
+          set -euo pipefail
+          node --check scripts/release.mjs
+          node tests/request-ledger-integrity.test.cjs
+          node tests/core-utilities-patch.test.mjs
+          node tests/recent-gf-backstop.test.cjs
+          node tests/queue-kick-liveness.test.cjs
+      - name: Confirm no release runs in verification-only workflow
+        run: echo "P0_CHECK_ONLY_NO_APPS_SCRIPT_DEPLOYMENT"
