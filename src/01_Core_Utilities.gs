@@ -437,7 +437,7 @@ CF.Util = (function () {
 
   // Looks up a fresh physical row immediately before a request-scoped patch.
   // Callers already holding the script write lock must not acquire a nested lock.
-  function patchServiceRequestById(requestId, patch) {
+  function serviceRequestRowNumberById_(requestId) {
     var id = cleanText(requestId);
     if (!id) throw new Error('SERVICE_REQUEST_ID_REQUIRED');
     var sheet = requireSheet('SERVICE_REQUESTS');
@@ -453,7 +453,18 @@ CF.Util = (function () {
       rowNumber = i + 2;
     });
     if (!rowNumber) throw new Error('SERVICE_REQUEST_NOT_FOUND | ' + id);
-    return patchRow('SERVICE_REQUESTS', rowNumber, patch, id);
+    return rowNumber;
+  }
+
+  function patchServiceRequestById(requestId, patch) {
+    return patchRow('SERVICE_REQUESTS', serviceRequestRowNumberById_(requestId), patch, cleanText(requestId));
+  }
+
+  function clearServiceRequestRowValidationsById(requestId) {
+    var rowNumber = serviceRequestRowNumberById_(requestId);
+    var sheet = requireSheet('SERVICE_REQUESTS');
+    assertServiceRowOwner_(sheet, getHeaderMap(sheet), rowNumber, {}, cleanText(requestId));
+    return clearRowDataValidations('SERVICE_REQUESTS', rowNumber);
   }
 
   function findRecord(keyOrName, header, value) {
@@ -568,6 +579,7 @@ CF.Util = (function () {
     replaceSheetData: replaceSheetData,
     patchRow: patchRow,
     patchServiceRequestById: patchServiceRequestById,
+    clearServiceRequestRowValidationsById: clearServiceRequestRowValidationsById,
     clearRowDataValidations: clearRowDataValidations,
     clearSheetDataValidations: clearSheetDataValidations,
     findRecord: findRecord,
