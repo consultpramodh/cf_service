@@ -1,0 +1,104 @@
+name: Finish CF ServiceOps P0 web-app deployment
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: cf-serviceops-production-v2
+  cancel-in-progress: false
+jobs:
+  pin-verified-head:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
+      SCRIPT_ID: 1QZp4NAFeA8LmWBN31ylJYdK4XFepBX1h2lP_APaR-d1lTAC-d8LA9x3g
+      DEPLOYMENT_ID: AKfycbwebnCvczGthe6Z_mvYmukLqFLB-9nk8hjNtNP3lR87CE1m_fEx2d9Bn_vpXMPCLUnPbA
+      HEALTH_URL: https://script.google.com/macros/s/AKfycbwebnCvczGthe6Z_mvYmukLqFLB-9nk8hjNtNP3lR87CE1m_fEx2d9Bn_vpXMPCLUnPbA/exec
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: production
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Run local P0 and existing regression tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          for test_file in tests/*.cjs tests/*.mjs; do node "$test_file"; done
+      - name: Authenticate and pull actual Apps Script HEAD (read-only)
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${CLASPRC_JSON:-}" || { echo "CLASPRC_JSON_MISSING"; exit 2; }
+          umask 077
+          printf '%s' "$CLASPRC_JSON" > "$HOME/.clasprc.json"
+          mkdir -p "$RUNNER_TEMP/serviceops-verified-head"
+          printf '{"scriptId":"%s","rootDir":"."}\n' "$SCRIPT_ID" > "$RUNNER_TEMP/serviceops-verified-head/.clasp.json"
+          (cd "$RUNNER_TEMP/serviceops-verified-head" && npx -y @google/clasp@3.3.0 pull)
+      - name: Check all 17 remote files against patched production source
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'JS'
+          import fs from 'node:fs';
+          import path from 'node:path';
+          import {patchReadinessCounts} from './scripts/readiness-patch.mjs';
+          import {patchCoreUtilities} from './scripts/core-utilities-patch.mjs';
+          const remote = path.join(process.env.RUNNER_TEMP, 'serviceops-verified-head');
+          const normalize = text => text.replace(/\r\n/g,'\n').trimEnd()+'\n';
+          const listed = fs.readdirSync(remote).filter(n=>n!=='.clasp.json' && fs.statSync(path.join(remote,n)).isFile());
+          const expected = fs.readdirSync('src').filter(n=>/\.gs$|^appsscript\.json$/.test(n));
+          if(listed.length!==17 || expected.length!==17) throw Error('REMOTE_INVENTORY_MISMATCH');
+          const seen=new Set(), differences=[];
+          for(const name of expected) {
+            const logical=name.endsWith('.gs')?name.slice(0,-3):name;
+            const actual=listed.filter(n=>n===name || (name.endsWith('.gs') && n===logical+'.js'));
+            if(actual.length!==1 || seen.has(actual[0])) throw Error('REMOTE_FILE_MISSING_OR_DUPLICATED: '+name);
+            seen.add(actual[0]);
+            let wanted=fs.readFileSync(path.join('src',name),'utf8');
+            if(name==='01_Core_Utilities.gs') wanted=patchCoreUtilities(wanted);
+            if(name==='30_Striven_Data.gs') wanted=patchReadinessCounts(wanted);
+            const got=fs.readFileSync(path.join(remote,actual[0]),'utf8');
+            if(normalize(wanted)!==normalize(got)) differences.push(name);
+          }
+          if(differences.length || seen.size!==listed.length) {
+            throw Error('LIVE_SOURCE_PARITY_FAILED: '+differences.join(', ')+' extra='+listed.filter(n=>!seen.has(n)).join(', '));
+          }
+          console.log('P0_ALL_17_LIVE_SOURCE_PARITY_PASS; ready to create immutable version; no source push needed');
+          JS
+      - name: Create one version and repin existing web-app deployment
+        shell: bash
+        run: |
+          set -euo pipefail
+          (cd "$RUNNER_TEMP/serviceops-verified-head" && npx -y @google/clasp@3.3.0 version "CF ServiceOps v5.14.4 P0 ledger integrity verified") > "$RUNNER_TEMP/new_version.txt"
+          cat "$RUNNER_TEMP/new_version.txt"
+          VERSION="$(sed -nE 's/.*[Vv]ersion[[:space:]]+([0-9]+).*/\1/p' "$RUNNER_TEMP/new_version.txt" | tail -1)"
+          test -n "$VERSION" || { echo 'NEW_VERSION_NUMBER_NOT_PARSED'; exit 2; }
+          (cd "$RUNNER_TEMP/serviceops-verified-head" && npx -y @google/clasp@3.3.0 redeploy "$DEPLOYMENT_ID" --versionNumber "$VERSION" --description "CF ServiceOps v5.14.4 P0 ledger integrity verified" --json) > "$RUNNER_TEMP/redeploy.json"
+          node - "$RUNNER_TEMP/redeploy.json" "$DEPLOYMENT_ID" "$VERSION" <<'JS'
+          const fs=require('node:fs');
+          const [file,id,version]=process.argv.slice(2);
+          const raw=fs.readFileSync(file,'utf8').trim();
+          const out=JSON.parse(raw);
+          if(String(out.deploymentId)!==id || String(out.versionNumber)!==version)throw Error('REDEPLOY_RESPONSE_MISMATCH');
+          console.log('P0_REDEPLOY_RESPONSE_PASS version='+version);
+          JS
+          (cd "$RUNNER_TEMP/serviceops-verified-head" && npx -y @google/clasp@3.3.0 deployments) > "$RUNNER_TEMP/deployments.txt"
+          grep -F "$DEPLOYMENT_ID @$VERSION" "$RUNNER_TEMP/deployments.txt"
+          echo 'P0_EXISTING_DEPLOYMENT_PIN_VERIFIED'
+      - name: Verify published production web-app health
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsSL --retry 2 --max-time 60 --get --data-urlencode "nonce=$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" "$HEALTH_URL" > "$RUNNER_TEMP/health.json"
+          node - "$RUNNER_TEMP/health.json" <<'JS'
+          const fs=require('node:fs');
+          const x=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
+          if(!x || x.version!=='5.14.4' || x.singleModelVerified!==true ||
+              x.automationEnabled!==true || Number(x.legacyAutomationTriggerCount)!==0 ||
+              Number(x.watchdogTriggers)!==1 || Number(x.finalWorkerTriggers)>1)
+            throw Error('PUBLISHED_WEBAPP_HEALTH_GATE_FAILED');
+          console.log('P0_WEBAPP_HEALTH_PASS; same /exec deployed');
+          JS
