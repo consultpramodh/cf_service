@@ -303,7 +303,7 @@ CF.Matching = (function () {
     Object.keys(patch).forEach(function (key) { request[key] = patch[key]; });
 
     if (persist === true && request.__rowNumber) {
-      d.util.patchRow('SERVICE_REQUESTS', request.__rowNumber, patch);
+      d.util.patchServiceRequestById(request['Request ID'], patch);
 
       if (webform && webform.__rowNumber) {
         var webPatch = {
@@ -1741,7 +1741,7 @@ function contactNameCandidates_(request, contacts) {
       var request = prepareRequest_(row);
       var evaluation = evaluate_(request, maps, selections);
       var patch = mergePatch_(normalizationPatch_(request), patch_(evaluation));
-      d.util.patchRow('SERVICE_REQUESTS', row.__rowNumber, patch);
+      d.util.patchServiceRequestById(row['Request ID'], patch);
 
       d.util.logEvent({
         module: MODULE_NAME,
@@ -1928,7 +1928,7 @@ function contactNameCandidates_(request, contacts) {
         var patch = mergePatch_(normalizationPatch_(request), patch_(evaluation));
 
         if (options.preview !== true) {
-          d.util.patchRow('SERVICE_REQUESTS', request.__rowNumber, patch);
+          d.util.patchServiceRequestById(request['Request ID'], patch);
         }
 
         selected.push(compact_(evaluation, patch, repair.repaired));
