@@ -202,6 +202,15 @@ CF.Util = (function () {
   }
 
   function getSheet(keyOrName) {
+    // CF_DURABLE_SYSTEM_LOG_ROUTING_R1
+    if (keyOrName === 'SYSTEM_LOG' || keyOrName === config_().resolveSheetName('SYSTEM_LOG')) {
+      var sinkId = getScriptProperties_().getProperty('CF_SERVICEOPS_SYSTEM_LOG_SINK_ID');
+      if (sinkId) {
+        var sinkSheet = SpreadsheetApp.openById(sinkId).getSheetByName(config_().resolveSheetName('SYSTEM_LOG'));
+        if (!sinkSheet) throw new Error('SYSTEM_LOG_SINK_SHEET_MISSING');
+        return sinkSheet;
+      }
+    }
     var ss = getSpreadsheet();
     var candidates = typeof config_().getSheetCandidates === 'function'
       ? config_().getSheetCandidates(keyOrName)
@@ -297,11 +306,12 @@ CF.Util = (function () {
     var sheet = getOrCreateSheet(keyOrName);
     var headers = config_().getHeaders(keyOrName);
     setHeaders(sheet, headers);
+    // CF_CACHE_GRID_PREFLIGHT_R1: allocation failure preserves the previous data.
+    var rows = (records || []).map(function (record) { return recordToRow(keyOrName, record); });
+    if (rows.length) ensureGridSize(sheet, rows.length + 1, headers.length);
     var oldRows = Math.max(0, sheet.getLastRow() - 1);
     if (oldRows) sheet.getRange(2, 1, oldRows, Math.max(sheet.getLastColumn(), headers.length)).clearContent();
     if (!records || !records.length) return { rows: 0, columns: headers.length };
-    var rows = records.map(function (record) { return recordToRow(keyOrName, record); });
-    ensureGridSize(sheet, rows.length + 1, headers.length);
     var batch = 5000;
     for (var start = 0; start < rows.length; start += batch) {
       var chunk = rows.slice(start, start + batch);
