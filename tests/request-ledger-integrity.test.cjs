@@ -6,8 +6,17 @@ const vm = require('node:vm');
 
 const intake = fs.readFileSync('src/20_Intake_Processing.gs', 'utf8');
 const utilSrc = fs.readFileSync('src/01_Core_Utilities.gs', 'utf8');
-for (const source of [intake, utilSrc, fs.readFileSync('src/60_Striven_Write.gs','utf8'), fs.readFileSync('src/70_Workflow_Automation.gs','utf8')]) {
-  new vm.Script(source);
+for (const filename of [
+  '01_Core_Utilities.gs', '20_Intake_Processing.gs', '40_Matching_Profile.gs',
+  '50_Operator_Queue.gs', '60_Striven_Write.gs', '70_Workflow_Automation.gs',
+  '95_Public_Runners.gs'
+]) {
+  const source = fs.readFileSync('src/' + filename, 'utf8');
+  new vm.Script(source, {filename});
+  if (filename !== '01_Core_Utilities.gs') {
+    assert.doesNotMatch(source, /\\.patchRow\\(['"]SERVICE_REQUESTS['"]/, filename + ' has an unguarded Service Request patch');
+    assert.doesNotMatch(source, /\\.clearRowDataValidations\\(['"]SERVICE_REQUESTS['"]/, filename + ' has an unguarded Service Request validation clear');
+  }
 }
 function bodyOf(source, functionName) {
   const begin = source.indexOf('  function ' + functionName + '(');
@@ -23,6 +32,7 @@ for (const functionName of ['insertRecordAtTop_', 'sortDurableIntakeLedgersNewes
 assert.match(bodyOf(intake, 'insertRecordAtTop_'), /\.appendRecord\(/);
 
 const headers = ['Request ID','Write Journal JSON','Current Stage','Updated At'];
+const clearedRows = [];
 const records = [
   ['SR-A', '{"requestId":"SR-A"}', 'OPEN',''],
   ['SR-B', '{"requestId":"SR-B"}', 'OPEN','']
@@ -49,7 +59,7 @@ const sheet = {
           records[row+ri-2][col+ci-1]=value;
         }));
       },
-      clearDataValidations() {}
+      clearDataValidations() {clearedRows.push(row)}
     };
   }
 };
@@ -86,6 +96,8 @@ assert.equal(records[1][0],'SR-A');
 assert.equal(records[1][2],'COMPLETED');
 assert.equal(records[0][0],'SR-B');
 assert.equal(records[0][2],'OPEN');
+u.clearServiceRequestRowValidationsById('SR-A');
+assert.equal(clearedRows[clearedRows.length - 1],3, 'validation clearing must use the actual Request ID row');
 
 // Reject stale physical-row address even with plausible patch data.
 assert.throws(()=>u.patchRow('SERVICE_REQUESTS',2,{'Current Stage':'BAD'},'SR-A'),/CROSS_REQUEST_ROW/);
