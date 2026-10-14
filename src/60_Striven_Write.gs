@@ -425,7 +425,7 @@ CF.StrivenWrite = (function () {
       }
     }
     if (typeof d.util.clearRowDataValidations === 'function') {
-      d.util.clearRowDataValidations('SERVICE_REQUESTS', record.__rowNumber);
+      d.util.clearServiceRequestRowValidationsById(record['Request ID']);
     }
     d.util.patchServiceRequestById(record['Request ID'], patch);
     return changed;
@@ -2999,7 +2999,7 @@ CF.StrivenControlledCustomerCreate = (function () {
   function patchRequest_(record, patch) {
     var d = deps_();
     if (typeof d.util.clearRowDataValidations === 'function') {
-      d.util.clearRowDataValidations('SERVICE_REQUESTS', record.__rowNumber);
+      d.util.clearServiceRequestRowValidationsById(record['Request ID']);
     }
     d.util.patchServiceRequestById(record['Request ID'], patch);
     SpreadsheetApp.flush();
@@ -4066,7 +4066,7 @@ function rootJournal_(record) {
 
   function patchRequest_(record, patch) {
     var d = deps_();
-    if (typeof d.util.clearRowDataValidations === 'function') d.util.clearRowDataValidations('SERVICE_REQUESTS', record.__rowNumber);
+    if (typeof d.util.clearRowDataValidations === 'function') d.util.clearServiceRequestRowValidationsById(record['Request ID']);
     d.util.patchServiceRequestById(record['Request ID'], patch);
     SpreadsheetApp.flush();
   }
@@ -4894,7 +4894,7 @@ CF.OrderPreflight = (function () {
   function customerId_(r){return clean_(r['Matched Customer ID']||r['Created Customer ID']);}
   function contactId_(r){return clean_(r['Matched Contact ID']||r['Created Contact ID']);}
   function locationId_(r){return clean_(r['Matched Location ID']||r['Created Location ID']);}
-  function patch_(r,p){var d=deps_();if(typeof d.util.clearRowDataValidations==='function')d.util.clearRowDataValidations('SERVICE_REQUESTS',r.__rowNumber);d.util.patchServiceRequestById(r['Request ID'],p);SpreadsheetApp.flush();}
+  function patch_(r,p){var d=deps_();if(typeof d.util.clearRowDataValidations==='function')d.util.clearServiceRequestRowValidationsById(r['Request ID']);d.util.patchServiceRequestById(r['Request ID'],p);SpreadsheetApp.flush();}
   function rootJournal_(r){var x=parse_(r['Write Journal JSON'],{});if(!x||typeof x!=='object'||Array.isArray(x))x={};return x;}
   function orderJournal_(r){var root=rootJournal_(r);return{root:root,order:root.salesOrderCreate||{}};}
   function log_(r,action,status,details,message){deps_().util.logEvent({module:MODULE_NAME,action:action,status:status,requestId:clean_(r['Request ID']),correlationId:clean_(r['Correlation ID']),message:message||'',details:details||{},version:VERSION});}
@@ -6734,7 +6734,7 @@ CF.CustomerContactInfoSync = (function () {
   function province_(v){var x=String(v||'').trim().toUpperCase().replace(/[^A-Z]/g,'');var m={ONTARIO:'ON',ON:'ON',QUEBEC:'QC',QC:'QC',PQ:'QC',ALBERTA:'AB',AB:'AB',BRITISHCOLUMBIA:'BC',BC:'BC',MANITOBA:'MB',MB:'MB',NEWBRUNSWICK:'NB',NB:'NB',NOVASCOTIA:'NS',NS:'NS',SASKATCHEWAN:'SK',SK:'SK',PRINCEEDWARDISLAND:'PE',PEI:'PE',PE:'PE',NEWFOUNDLANDANDLABRADOR:'NL',NEWFOUNDLANDLABRADOR:'NL',NL:'NL',NORTHWESTTERRITORIES:'NT',NT:'NT',NUNAVUT:'NU',NU:'NU',YUKON:'YT',YT:'YT'};return m[x]||clean_(v);}
   function country_(v){var x=String(v||'').trim().toUpperCase();return (x==='CA'||x==='CAN'||x==='CANADA')?'Canada':(clean_(v)||'Canada');}
   function req_(id){return d_().u.findRecord('SERVICE_REQUESTS','Request ID',id);}
-  function patch_(r,p){if(!r||!r.__rowNumber)throw new Error('Service Request row is unavailable for durable journal write.');if(typeof d_().u.clearRowDataValidations==='function')d_().u.clearRowDataValidations('SERVICE_REQUESTS',r.__rowNumber);d_().u.patchServiceRequestById(r['Request ID'],p);SpreadsheetApp.flush();}
+  function patch_(r,p){if(!r||!r.__rowNumber)throw new Error('Service Request row is unavailable for durable journal write.');if(typeof d_().u.clearRowDataValidations==='function')d_().u.clearServiceRequestRowValidationsById(r['Request ID']);d_().u.patchServiceRequestById(r['Request ID'],p);SpreadsheetApp.flush();}
   function log_(r,status,details,message){try{d_().u.logEvent({module:'CustomerContactInfoSync',action:'RECONCILE',status:status,requestId:clean_(r&&r['Request ID']),details:details||{},message:message||'',version:VERSION});}catch(e){}}
   function get_(ep){var x=d_().h.requestJson(ep,{method:'get',attempts:1,idempotent:true});return x&&x.json?x.json:{};}
   function post_(ep,payload){return d_().h.requestJson(ep,{method:'post',payload:payload,attempts:1,idempotent:false});}
