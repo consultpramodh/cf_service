@@ -671,7 +671,7 @@ function CF_20260930_queueTodayEndToEndOnce_() {
         !String(sheila['Work Order ID']||'').trim() &&
         String(sheila['Reconciliation Status']||'').toUpperCase()==='WORK_ORDER_PREFLIGHT_BLOCKED' &&
         String(sheila['Manual Review Reason']||'').indexOf('STANDARD_SERVICE_ITEM_ID_NOT_CONFIGURED')!==-1) {
-      CF.Util.clearRowDataValidations('SERVICE_REQUESTS',sheila.__rowNumber);
+      CF.Util.clearServiceRequestRowValidationsById(sheila['Request ID']);
       CF.Util.patchServiceRequestById(sheila['Request ID'],{
         'Updated At':CF.Util.nowString(),
         'Current Stage':'CUSTOMER STRUCTURE COMPLETE',
@@ -814,7 +814,7 @@ function doGet(e) {
           root.contactCreate.erroneousDuplicateReason='Created because Alt Phone was omitted from Contact duplicate guard and Contact matching incorrectly required all new primary identifiers to match.';
           root.contactCreate.canonicalExistingContactId='35697';
           root.contactCreate.correctionAppliedAt=CF.Util.nowString();
-          CF.Util.clearRowDataValidations('SERVICE_REQUESTS',les.__rowNumber);
+          CF.Util.clearServiceRequestRowValidationsById(les['Request ID']);
           CF.Util.patchServiceRequestById(les['Request ID'],{
             'Updated At':CF.Util.nowString(),
             'Created Contact ID':'',
@@ -4132,7 +4132,7 @@ function FIX_20260905_applyAutonomousResolutionPolicyAndResume() {
     function row_(id) { return CF.Util.findRecord('SERVICE_REQUESTS', 'Request ID', id); }
     function patch_(record, patch) {
       if (!record || !record.__rowNumber) throw new Error('Service Request row unavailable for patch.');
-      if (typeof CF.Util.clearRowDataValidations === 'function') CF.Util.clearRowDataValidations('SERVICE_REQUESTS', record.__rowNumber);
+      if (typeof CF.Util.clearRowDataValidations === 'function') CF.Util.clearServiceRequestRowValidationsById(record['Request ID']);
       CF.Util.patchServiceRequestById(record['Request ID'], patch);
       try { SpreadsheetApp.flush(); } catch (ignoredFlush) {}
     }
