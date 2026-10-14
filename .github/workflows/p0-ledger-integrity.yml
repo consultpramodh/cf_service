@@ -26,6 +26,8 @@ jobs:
           node tests/core-utilities-patch.test.mjs
           node tests/recent-gf-backstop.test.cjs
           node tests/queue-kick-liveness.test.cjs
+          for test_file in tests/*.cjs tests/*.mjs; do node "$test_file"; done
+          node scripts/release.mjs
       - name: Confirm approved patch scope against exact live checkpoint
         shell: bash
         run: |
