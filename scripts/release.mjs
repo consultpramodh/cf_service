@@ -209,21 +209,25 @@ const beforeInv = inventory(before);
 writeFileSync(resolve(work, 'before.sha256.json'), JSON.stringify(Object.fromEntries(beforeInv), null, 2) + '\n');
 console.log('Checkpoint: ' + before);
 
-// P0 safety: never overwrite a changed live project with an older GitHub copy.
-// Approved baseline was pulled read-only, scanned and saved under this branch.
-const approvedLiveRoot = resolve(root, 'backups', 'apps-script', 'p0-live-head-20261014');
-const approvedLiveFiles = files(approvedLiveRoot).filter(name => name !== 'manifest.json');
-if (approvedLiveFiles.length !== 17 || beforeInv.size !== 17) {
-  throw new Error('P0_LIVE_SOURCE_INVENTORY_DRIFT_STOP');
-}
-for (const name of approvedLiveFiles) {
+// Release 202 source is already preserved by this immutable GitHub commit.
+// Compare the live pull with the deployed source including the release transforms.
+// Any unexpected live edit stops the push; the older pre-P0 checkpoint is retained.
+const approvedSourceCommit = '6f971250952a1a055d6df04c4acffac7a7f0aa99';
+run('git', ['fetch', '--no-tags', '--depth=1', 'origin', approvedSourceCommit]);
+const approvedFiles = readdirSync(resolve(root, 'src')).filter(name => /\.(?:gs|json)$/.test(name)).sort();
+if (approvedFiles.length !== 17 || beforeInv.size !== 17) throw new Error('LIVE_SOURCE_INVENTORY_DRIFT_STOP');
+for (const name of approvedFiles) {
   const logical = logicalName(name);
   const actual = logical === 'appsscript.json' ? resolve(before, name) : findTarget(logical, before);
-  if (!existsSync(actual) || normalizedText(resolve(approvedLiveRoot, name)) !== normalizedText(actual)) {
-    throw new Error('P0_LIVE_SOURCE_BASELINE_DRIFT_STOP: ' + name);
-  }
+  const result = spawnSync('git', ['show', approvedSourceCommit + ':src/' + name], {cwd:root,encoding:'utf8',shell:false});
+  if (result.status !== 0) throw new Error('APPROVED_SOURCE_UNAVAILABLE: ' + name);
+  let expected = String(result.stdout).replace(/\r\n/g, '\n').trimEnd() + '\n';
+  if (logical === '01_Core_Utilities') expected = patchCoreUtilities(expected);
+  if (logical === '30_Striven_Data') expected = patchReadinessCounts(expected);
+  expected = normalizeReleaseMetadataText(expected).replace(/\r\n/g, '\n').trimEnd() + '\n';
+  if (!existsSync(actual) || expected !== normalizedText(actual)) throw new Error('LIVE_SOURCE_BASELINE_DRIFT_STOP: ' + name);
 }
-console.log('P0_LIVE_BASELINE_PARITY_PASS: exact approved 17-file checkpoint');
+console.log('LIVE_BASELINE_PARITY_PASS: immutable release-202 source, all 17 files');
 
 console.log('\n=== 4/10 Replace finalized modules + normalize live version metadata + remove obsolete V2 shadow generation ===');
 for (const base of PATCH_BASES) {
