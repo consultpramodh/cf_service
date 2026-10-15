@@ -4993,7 +4993,9 @@ function FIX_20260903_reconcileAllExistingOperatorQueue() {
     if(processComplete_(r)){
       if(processedRaw){
         lines.push('Sales Order created: '+formatDateTime_(processedRaw));
-        var dur=duration_(submittedRaw,processedRaw);if(dur)lines.push('Request to order: '+dur);
+        var startDate=parseDate_(submittedRaw),createdDate=parseDate_(processedRaw);
+        if(startDate&&createdDate&&createdDate.getTime()<startDate.getTime())lines.push('Existing Sales Order predates this request');
+        else {var dur=duration_(submittedRaw,processedRaw);if(dur)lines.push('Request to order: '+dur);}
       }else lines.push('Sales Order creation time: unavailable');
     }else{
       if(r['Last Striven Sync'])lines.push('Last activity: '+formatDateTime_(r['Last Striven Sync']));
