@@ -212,7 +212,7 @@ console.log('Checkpoint: ' + before);
 // Release 202 source is already preserved by this immutable GitHub commit.
 // Compare the live pull with the deployed source including the release transforms.
 // Any unexpected live edit stops the push; the older pre-P0 checkpoint is retained.
-const approvedSourceCommit = '6f971250952a1a055d6df04c4acffac7a7f0aa99';
+const approvedSourceCommit = '6682a24e5bd7f844ddbe112182ebbfc952ff077a';
 run('git', ['fetch', '--no-tags', '--depth=1', 'origin', approvedSourceCommit]);
 const approvedFiles = readdirSync(resolve(root, 'src')).filter(name => /\.(?:gs|json)$/.test(name)).sort();
 if (approvedFiles.length !== 17 || beforeInv.size !== 17) throw new Error('LIVE_SOURCE_INVENTORY_DRIFT_STOP');
