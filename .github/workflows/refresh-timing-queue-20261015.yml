@@ -1,0 +1,22 @@
+name: Refresh processing-time projection
+on:
+  push:
+    branches: [production]
+    paths: [.github/workflows/refresh-timing-queue-20261015.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Refresh existing queue projection
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsSL --max-time 360 --get \
+            --data-urlencode 'ops=status-warning-reconcile-refresh' \
+            --data-urlencode "nonce=${GITHUB_RUN_ID}" \
+            'https://script.google.com/macros/s/AKfycbwebnCvczGthe6Z_mvYmukLqFLB-9nk8hjNtNP3lR87CE1m_fEx2d9Bn_vpXMPCLUnPbA/exec' > result.json
+          node -e 'const x=require("./result.json"); console.log(JSON.stringify(x)); if(x.ok!==true) process.exit(2);'
