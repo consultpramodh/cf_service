@@ -5627,6 +5627,7 @@ var issues=[];
       orderStatus:statusName,
       itemId:itemId,
       requestSource855:actualCf['855']||'',
+      orderCreatedAt:clean_(body.dateCreated||body.DateCreated),
       checks:checks,
       issues:issues,
       blockingIssues:blockingIssues,
