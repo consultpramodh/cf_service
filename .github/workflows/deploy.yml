@@ -72,6 +72,8 @@ jobs:
 
       - name: Test intake and matching recovery boundaries
         run: |
+          node tests/processing-time.test.cjs
+          node tests/service-zone.test.cjs
           node tests/request-ledger-integrity.test.cjs
           node tests/recent-gf-backstop.test.cjs
           node tests/matching-cache-recovery.test.cjs
