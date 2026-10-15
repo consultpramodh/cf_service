@@ -2934,7 +2934,12 @@ var CF_SERVICEOPS_OPERATIONAL_LINK_RECONCILIATION_V51016_R1_ = (function () {
   return{
     version:VERSION,
     previewAll:previewAll,
-    reconcileAll:reconcileAll
+    reconcileAll:reconcileAll,
+    reconcileRequest:function(requestId){
+      var request=CF.Util.findRecord('SERVICE_REQUESTS','Request ID',clean_(requestId));
+      if(!request)return{ok:false,status:'REQUEST_NOT_FOUND',liveStrivenWriteExecuted:false};
+      return run_([request],CF.Util.readRecords('STRIVEN_OPERATIONAL_DATA'),{persist:true});
+    }
   };
 })();
 
@@ -4905,6 +4910,7 @@ function FIX_20260903_reconcileAllExistingOperatorQueue() {
     if(!v)return null;
     if(Object.prototype.toString.call(v)==='[object Date]')return isNaN(v.getTime())?null:v;
     var s=clean_(v),m;
+    if(/(?:Z|[+-]\d{2}:?\d{2})$/i.test(s)){var zoned=new Date(s);return isNaN(zoned.getTime())?null:zoned;}
     m=s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})[ T](\d{1,2}):(\d{2})(?::(\d{2}))?/);
     if(m)return new Date(Number(m[1]),Number(m[2])-1,Number(m[3]),Number(m[4]),Number(m[5]),Number(m[6]||0));
     m=s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})[ T](\d{1,2}):(\d{2})(?::(\d{2}))?/);
@@ -4919,7 +4925,16 @@ function FIX_20260903_reconcileAllExistingOperatorQueue() {
     if(days)parts.push(days+'d');if(hrs||days)parts.push(hrs+'h');parts.push(mins+'m');return parts.join(' ');
   }
   // CF_SERVICEOPS_V5_14_2_IDENTITY_CONFLICT_UI_R1
-  function processedValue_(r){return r['Last Striven Sync']||r['Completed At']||'';}
+  // Creation evidence is immutable; later sync/certification must not reset elapsed time.
+  function processedValue_(r){
+    var root=parseJournal_(r['Write Journal JSON']),order=root.salesOrderCreate||{},id=clean_(r['Work Order ID']);
+    if(!id||clean_(root.requestId||order.requestId)!==clean_(r['Request ID']))return '';
+    var cert=order.certification&&order.certification.result||{};
+    if(clean_(cert.salesOrderId)===id&&cert.orderCreatedAt)return cert.orderCreatedAt;
+    var verified=order.verification&&order.verification.result||{},body=verified.body||{};
+    if(clean_(body.id||body.Id)===id&&(body.dateCreated||body.DateCreated))return body.dateCreated||body.DateCreated;
+    return '';
+  }
   function processComplete_(r){return !!clean_(r['Work Order ID'])||upper_(r['Current Stage'])==='SALES ORDER CREATED'||upper_(r['Striven Sync Status'])==='SYNCED';}
   function matchEvidence_(r){
     var raw=r&&r['Match Evidence JSON'];
@@ -4975,10 +4990,16 @@ function FIX_20260903_reconcileAllExistingOperatorQueue() {
     var lines=[clean_(r['Current Stage']||r['Request Status'])];
     var submittedRaw=r['Submitted At']||r['Created At'],processedRaw=processedValue_(r),submitted=formatDateTime_(submittedRaw);
     if(submitted)lines.push('Submitted: '+submitted);
-    if(processedRaw){
-      lines.push((processComplete_(r)?'Processed: ':'Last processed: ')+formatDateTime_(processedRaw));
-      var dur=duration_(submittedRaw,processedRaw);if(dur)lines.push((processComplete_(r)?'Processing time: ':'Processing time so far: ')+dur);
-    }else lines.push('Processed: Pending');
+    if(processComplete_(r)){
+      if(processedRaw){
+        lines.push('Sales Order created: '+formatDateTime_(processedRaw));
+        var dur=duration_(submittedRaw,processedRaw);if(dur)lines.push('Request to order: '+dur);
+      }else lines.push('Sales Order creation time: unavailable');
+    }else{
+      if(r['Last Striven Sync'])lines.push('Last activity: '+formatDateTime_(r['Last Striven Sync']));
+      var age=duration_(submittedRaw,new Date(nowMs_()));if(age)lines.push('Elapsed since submission: '+age);
+      if(/CANCELLED|CANCELED|DUPLICATE/.test(upper_(r['Current Stage'])))lines.push('Closed without a Sales Order');
+    }
     lines=lines.concat(reviewLines_(r));
     return lines.filter(Boolean).join('\n');
   }
