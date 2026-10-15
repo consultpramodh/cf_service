@@ -1,0 +1,29 @@
+name: Reconcile Joop existing order 585968
+on:
+  push:
+    branches: [production]
+    paths: [.github/workflows/reconcile-joop-20261015.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  reconcile-existing:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Reconcile existing order only
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsSL --max-time 360 --get \
+            --data-urlencode 'ops=status-warning-reconcile-one' \
+            --data-urlencode 'id=SR-20261014113555-5519' \
+            --data-urlencode "nonce=${GITHUB_RUN_ID}" \
+            'https://script.google.com/macros/s/AKfycbwebnCvczGthe6Z_mvYmukLqFLB-9nk8hjNtNP3lR87CE1m_fEx2d9Bn_vpXMPCLUnPbA/exec' > result.json
+          node -e 'const x=require("./result.json"); console.log(JSON.stringify(x)); if(x.ok!==true) process.exit(2);'
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: joop-existing-order-reconciliation
+          path: result.json
+          retention-days: 14
