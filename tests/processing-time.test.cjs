@@ -6,6 +6,7 @@ const r={'Request ID':'r','Current Stage':'NEEDS REVIEW','Submitted At':'2026-10
 assert.match(ctx.statusText_(r),/Elapsed since submission: 3h 51m/);clock+=60000;assert.match(ctx.statusText_(r),/Elapsed since submission: 3h 52m/);
 const complete={...r,'Current Stage':'COMPLETED','Work Order ID':'1','Write Journal JSON':JSON.stringify({requestId:'r',salesOrderCreate:{certification:{result:{salesOrderId:'1',orderCreatedAt:'2026-10-15T14:00:00Z'}}}})};
 assert.match(ctx.statusText_(complete),/Request to order: 29m/);complete['Last Striven Sync']='2026-10-16T17:00:00Z';assert.match(ctx.statusText_(complete),/Request to order: 29m/);
+complete['Submitted At']='2026-10-16T13:31:00Z';assert.match(ctx.statusText_(complete),/predates this request/);assert.doesNotMatch(ctx.statusText_(complete),/Request to order: 0m/);
 complete['Write Journal JSON']=JSON.stringify({requestId:'other',salesOrderCreate:{certification:{result:{salesOrderId:'1',orderCreatedAt:'2026-10-15T14:00:00Z'}}}});assert.match(ctx.statusText_(complete),/creation time: unavailable/);assert.doesNotMatch(ctx.statusText_(complete),/Request to order:/);
 assert.equal(ctx.parseDate_('2026-10-15T09:31:00-04:00').getTime(),Date.parse('2026-10-15T13:31:00Z'));
 const start=src.indexOf('reconcileRequest:function(requestId)'),end=src.indexOf('\n    }',start)+6;let selected,called=0;
