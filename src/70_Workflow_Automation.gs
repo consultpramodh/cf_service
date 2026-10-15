@@ -717,6 +717,49 @@ CF.StrivenCustomLists = (function () {
   };
 })();
 
+/* CF_SERVICEOPS_CITY_ZONE_MAPPING_20261015
+ * Exact service-city lookup. No Striven requests and no geographic guessing.
+ * East/North/Other and ambiguous Toronto aliases await business boundaries.
+ */
+CF.ServiceZone = (function () {
+  function text(v) { return v == null ? '' : String(v).trim(); }
+  function key(v) { return text(v).toUpperCase().replace(/[.]/g, '').replace(/\s+/g, ' '); }
+  var cities = {WHITBY:'506', AJAX:'506', PICKERING:'506', OSHAWA:'506', TORONTO:'508'};
+  var labels = {'506':'Zone 1: Durham','507':'Zone 2: East','508':'Zone 3: Toronto','509':'Zone 4: North','510':'Zone 5: Other'};
+  function resolve(request, location) {
+    request = request || {}; location = location || {};
+    var locationId = text(request['Matched Location ID'] || request['Created Location ID']);
+    var customerId = text(request['Matched Customer ID'] || request['Created Customer ID']);
+    if (!locationId) return {status:'REVIEW', reason:'SERVICE_LOCATION_REQUIRED'};
+    if (text(location['Location ID']) && (text(location['Location ID']) !== locationId || text(location['Customer ID']) !== customerId))
+      return {status:'REVIEW', reason:'SERVICE_LOCATION_SCOPE_CONFLICT'};
+    var city = text(location.City || request.City);
+    var province = key(location.Province || request.Province);
+    var country = key(location.Country || request.Country);
+    if (province && province !== 'ON' && province !== 'ONTARIO') return {status:'REVIEW', reason:'SERVICE_PROVINCE_UNMAPPED', city:city};
+    if (country && ['CA','CAN','CANADA'].indexOf(country) === -1) return {status:'REVIEW', reason:'SERVICE_COUNTRY_UNMAPPED', city:city};
+    var id = Object.prototype.hasOwnProperty.call(cities,key(city)) ? cities[key(city)] : '';
+    return {status:id?'READY':'REVIEW', id:id, name:labels[id]||'', city:city, locationId:locationId,
+      source:location.City?'CUSTOMER_SCOPED_LOCATION_CACHE_CITY':'SERVICE_REQUEST_CITY',
+      reason:id?'EXACT_SERVICE_CITY_MAPPING':'SERVICE_CITY_UNMAPPED'};
+  }
+  function apply(draft, request, location) {
+    var result = resolve(request,location), f = draft.customFields && draft.customFields['798'];
+    if (!f) throw new Error('ZONE_DRAFT_FIELD_REQUIRED');
+    f.required = true; f.value = result.id || ''; f.status = result.status; f.source = result.source || result.reason;
+    draft.customListResolution = draft.customListResolution || {}; draft.customListResolution.zone = result;
+    ['lookupRequiredFieldIds','readyFieldIds','operatorRequiredFieldIds'].forEach(function(k){draft[k]=(draft[k]||[]).filter(function(id){return String(id)!=='798';});});
+    if (result.status === 'READY') draft.readyFieldIds.push('798');
+    else {
+      draft.operatorRequiredFieldIds.push('798'); draft.safeForPayloadOverlay=false; draft.ok=false;
+      draft.coreBlockers=draft.coreBlockers||[];
+      draft.coreBlockers.push({code:result.reason,message:'Zones (798): verify the service city and configure its explicit zone mapping. City: '+(result.city||'(blank)')});
+    }
+    return draft;
+  }
+  return {resolve:resolve,apply:apply};
+})();
+
 (function () {
   'use strict';
   if (!CF.SalesOrderDraft || typeof CF.SalesOrderDraft.build !== 'function') return;
@@ -772,6 +815,10 @@ CF.StrivenCustomLists = (function () {
       draft.customFields['653'].canonicalStatus = draft.customListResolution.preferredDays.status;
       draft.customFields['653'].canonicalListId = '105';
     }
+    var zoneRequest = CF.Util.findRecord('SERVICE_REQUESTS','Request ID',requestId) || {};
+    var zoneLocationId = text_(zoneRequest['Matched Location ID'] || zoneRequest['Created Location ID']);
+    var zoneLocation = zoneLocationId ? CF.Util.findRecord('STRIVEN_LOCATION_DATA','Location ID',zoneLocationId) : null;
+    CF.ServiceZone.apply(draft, zoneRequest, zoneLocation);
     return draft;
   };
 
