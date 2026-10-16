@@ -115,6 +115,15 @@ assert.equal(httpCalls,1);
 console.log('PASS: private-provider default-off privacy gate, exact OSM address guard, hashed durable geocache and one network call; distance is preview-only.');
 
 
+// Durable cache timestamps and coordinates are evidence, not trusted on label alone.
+const goodRow=cacheRows[1].slice();
+for (const [column,value] of [[1,'91'],[2,'181'],[6,new Date(Date.now()+86400000).toISOString()]]) {
+ cache.clear();cacheRows[1]=goodRow.slice();cacheRows[1][column]=value;
+ const before=httpCalls;
+ assert.equal(geo.evaluateRequest(request).reason,'GEO_RATE_LIMITED');
+ assert.equal(httpCalls,before,'invalid cached evidence cannot bypass provider rate gate');
+}
+cacheRows[1]=goodRow;cache.clear();
 // Adversarial regressions: unknown feature IDs must not collapse as one match.
 assert.equal(geo.previewProviderResult(request,[{...fixture,osm_type:'',osm_id:''}]).reason,'OSM_NO_EXACT_ADDRESS_MATCH');
 for (const host of ['127.0.0.1','localhost','10.0.0.1','nominatim.openstreetmap.org']) {
