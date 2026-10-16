@@ -14,6 +14,7 @@ const storeRows=[
 ];
 const headers=['Address SHA256','Latitude','Longitude','Municipality','OSM Type','OSM ID','Geocoded At','Provider','Match Status'];
 const cacheRows=[headers];
+let failPersist=false;
 let httpCalls=0,lookups=0;
 const geoSheet={
  getLastRow(){return cacheRows.length;},
@@ -27,7 +28,7 @@ const geoSheet={
       const i=cacheRows.findIndex((r,j)=>j>0&&r[0]===query);
       return i<0?null:{getRow:()=>i+1};
     }};},
-    setValues(values){assert.equal(width,headers.length);cacheRows[row-1]=values[0];}
+    setValues(values){if(failPersist)throw new Error("synthetic write failure");assert.equal(width,headers.length);cacheRows[row-1]=values[0];}
    };
  }
 };
@@ -45,6 +46,7 @@ const fakeProvider={
  getContentText:()=>JSON.stringify([fixture])
 };
 const ctx={
+ Utilities:{computeHmacSha256Signature:(value,key)=>Array.from(crypto.createHmac("sha256",key).update(value).digest())},
  CF:{Util:{
   getSpreadsheet:()=>({getSheetByName:n=>sheets[n]||null}),
   findRecord:(t,h,id)=>t==='SERVICE_REQUESTS'&&id==='SYNTHETIC'?request:null,
@@ -62,6 +64,8 @@ vm.runInNewContext(block('CF.ServiceGeo'),ctx);
 const geo=ctx.CF.ServiceGeo;
 const request={'Request ID':'SYNTHETIC',Street:'87 Island Road',City:'West Rouge',
  'Postal Code':'M1C 2P6',Province:'Ontario',Country:'Canada'};
+assert.equal(geo.evaluateRequest(request).reason,'GEO_CACHE_KEY_NOT_CONFIGURED');
+props.set('CF_SERVICE_GEO_CACHE_HMAC_KEY','synthetic-test-key-never-use-in-production-1234567890');
 const unconfigured=geo.evaluateRequest(request);
 assert.equal(unconfigured.status,'REVIEW');
 assert.equal(unconfigured.reason,'PRIVATE_GEO_PROVIDER_NOT_APPROVED');
@@ -72,6 +76,8 @@ props.set('CF_SERVICE_GEO_PRIVATE_ENDPOINT','https://nominatim.openstreetmap.org
 assert.equal(geo.evaluateRequest(request).reason,'PRIVATE_GEO_ENDPOINT_INVALID_OR_PUBLIC');
 assert.equal(httpCalls,0,'no private residential address to public Nominatim');
 props.set('CF_SERVICE_GEO_PRIVATE_ENDPOINT','https://private-geocode.example.test/search');
+assert.equal(geo.evaluateRequest(request).reason,'PRIVATE_GEO_HOST_NOT_ALLOWLISTED');
+props.set('CF_SERVICE_GEO_PRIVATE_ALLOWED_HOSTS','private-geocode.example.test');
 const first=geo.evaluateRequest(request);
 assert.equal(first.status,'PREVIEW_ONLY');
 assert.equal(first.municipality,'Toronto');
@@ -82,10 +88,12 @@ assert.equal(first.serviceEligibility,'NOT_AUTOMATICALLY_APPROVED');
 assert.equal(first.networkCalls,1);
 assert.equal(cacheRows.length,2);
 assert.equal(cacheRows[1][0].length,64);
+assert.equal(cacheRows[1][0],crypto.createHmac('sha256',props.get('CF_SERVICE_GEO_CACHE_HMAC_KEY')).update('87|ISLANDRD|WESTROUGE|M1C2P6|CA').digest('hex'));
 assert.equal(JSON.stringify(cacheRows).includes('87 Island Road'),false);
 assert.equal(httpCalls,1);
 const again=geo.evaluateRequest(request);
 assert.equal(again.fromCache,true);
+assert.equal(again.networkCalls,0);
 assert.equal(again.status,'PREVIEW_ONLY');
 assert.equal(httpCalls,1,'cache hit must avoid another HTTP');
 const rejectedPostal=geo.previewProviderResult({...request,'Postal Code':'M1C 2P7'},[fixture]);
@@ -105,3 +113,20 @@ assert.equal(distance.distanceKm,0);
 assert.equal(distance.administrativeZoneOption,'');
 assert.equal(httpCalls,1);
 console.log('PASS: private-provider default-off privacy gate, exact OSM address guard, hashed durable geocache and one network call; distance is preview-only.');
+
+
+// Adversarial regressions: unknown feature IDs must not collapse as one match.
+assert.equal(geo.previewProviderResult(request,[{...fixture,osm_type:'',osm_id:''}]).reason,'OSM_NO_EXACT_ADDRESS_MATCH');
+for (const host of ['127.0.0.1','localhost','10.0.0.1','nominatim.openstreetmap.org']) {
+ cache.clear();cacheRows.splice(1);props.set('CF_SERVICE_GEO_LAST_REQUEST_MS','0');
+ props.set('CF_SERVICE_GEO_PRIVATE_ENDPOINT','https://'+host+'/search');
+ props.set('CF_SERVICE_GEO_PRIVATE_ALLOWED_HOSTS',host);
+ const before=httpCalls;assert.equal(geo.evaluateRequest(request).status,'REVIEW');assert.equal(httpCalls,before);
+}
+props.set('CF_SERVICE_GEO_PRIVATE_ENDPOINT','https://private-geocode.example.test/search');
+props.set('CF_SERVICE_GEO_PRIVATE_ALLOWED_HOSTS','private-geocode.example.test');
+props.set('CF_SERVICE_GEO_LAST_REQUEST_MS','0');failPersist=true;
+const writeFailure=geo.evaluateRequest(request);
+assert.equal(writeFailure.networkCalls,1,'provider attempt remains counted when durable cache write fails');
+failPersist=false;
+console.log('PASS: HMAC key gate, exact host allowlist, explicit cached-call count, feature identity and post-fetch failure accounting.');

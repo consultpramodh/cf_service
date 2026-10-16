@@ -935,7 +935,7 @@ CF.ServiceGeo = (function () {
   var SHEET = '10 Service Geocodes — Private';
   var HEADERS = ['Address SHA256','Latitude','Longitude','Municipality','OSM Type',
     'OSM ID','Geocoded At','Provider','Match Status'];
-  var MEMORY_PREFIX = 'CF_GEO_R1_';
+  var MEMORY_PREFIX = 'CF_GEO_R2_';
   var LAST_CALL_KEY = 'CF_SERVICE_GEO_LAST_REQUEST_MS';
   var RATE_MILLIS = 15000; // no burst; conservative 4 per minute at most
   var MAX_CACHE_AGE_MS = 90 * 86400000;
@@ -966,9 +966,13 @@ CF.ServiceGeo = (function () {
       postal:postal,city:text_(request.City),query:street+', '+text_(request.City)+', Ontario, '+postal+', Canada'};
   }
   function addressHash_(parts) {
-    if (!CF.Util || typeof CF.Util.sha256 !== 'function') throw new Error('GEO_HASH_UNAVAILABLE');
-    // Normalized content hashes are identifiers only; do not log raw addresses.
-    return CF.Util.sha256(parts.house+'|'+parts.road+'|'+key_(parts.city)+'|'+parts.postal+'|CA');
+    var secret = text_(PropertiesService.getScriptProperties().getProperty('CF_SERVICE_GEO_CACHE_HMAC_KEY'));
+    if (secret.length < 32) throw new Error('GEO_CACHE_KEY_NOT_CONFIGURED');
+    // Secret-keyed identifier resists address enumeration; never persist the secret.
+    var value = parts.house+'|'+parts.road+'|'+key_(parts.city)+'|'+parts.postal+'|CA';
+    return Utilities.computeHmacSha256Signature(value,secret).map(function(b) {
+      return ('0'+((b+256)%256).toString(16)).slice(-2);
+    }).join('');
   }
   function sheet_() {
     if (!CF.Util || typeof CF.Util.getSpreadsheet !== 'function') throw new Error('GEO_SPREADSHEET_UNAVAILABLE');
@@ -998,6 +1002,8 @@ CF.ServiceGeo = (function () {
     }
     if (record.status!=='MATCHED_EXACT' ||
         !isFinite(record.lat) || !isFinite(record.lon) ||
+        record.lat<42 || record.lat>45 || record.lon<-81 || record.lon>-78 ||
+        Date.parse(record.geocodedAt)>Date.now() ||
         Date.now()-Date.parse(record.geocodedAt)>MAX_CACHE_AGE_MS ||
         !isFinite(Date.parse(record.geocodedAt))) return null;
     if(c) {try {c.put(MEMORY_PREFIX+key.slice(0,32),JSON.stringify(record),21600);} catch(e) {}}
@@ -1015,6 +1021,8 @@ CF.ServiceGeo = (function () {
   }
   function candidate_(parts,item) {
     if (!item || !item.address) return {ok:false,reason:'OSM_NO_ADDRESS_COMPONENTS'};
+    if (['node','way','relation'].indexOf(text_(item.osm_type))===-1 ||
+        !/^[1-9][0-9]*$/.test(text_(item.osm_id))) return {ok:false,reason:'OSM_FEATURE_ID_INVALID'};
     var a=item.address||{},house=key_(a.house_number),
         road=roadKey_(a.road||a.pedestrian||a.residential||''),
         postal=key_(a.postcode),country=key_(a.country_code),municipality=
@@ -1052,7 +1060,7 @@ CF.ServiceGeo = (function () {
       return {status:'REVIEW',reason:'OSM_MUNICIPALITY_CONFLICT',
         submittedMunicipality:requestedMunicipality,geocoderMunicipality:municipality,networkCalls:0};
     var distance=CF.ServiceZone.previewAddressDistance(record.lat,record.lon);
-    return {status:'PREVIEW_ONLY',provider:record.provider,fromCache:!!cached,
+    return {status:'PREVIEW_ONLY',provider:record.provider,fromCache:!!cached,networkCalls:0,
       municipality:municipality,latitude:record.lat,longitude:record.lon,
       osmType:record.osmType,osmId:record.osmId,geocodedAt:record.geocodedAt,
       administrativeZoneOption:'',serviceEligibility:'NOT_AUTOMATICALLY_APPROVED',
@@ -1070,6 +1078,12 @@ CF.ServiceGeo = (function () {
     if (!/^https:\/\/[A-Za-z0-9.-]+(?::443)?\/[A-Za-z0-9_\/.-]*search$/i.test(endpoint) ||
         /(^https:\/\/)(?:nominatim\.openstreetmap\.org|.*\.openstreetmap\.org|openstreetmap\.org)\b/i.test(endpoint))
       return {ok:false,reason:'PRIVATE_GEO_ENDPOINT_INVALID_OR_PUBLIC'};
+    var host=endpoint.replace(/^https:\/\//i,'').split('/')[0].replace(/:443$/,'').toLowerCase();
+    // Explicit approved-host equality; never accept IP literals or local names.
+    var allowed=text_(props.getProperty('CF_SERVICE_GEO_PRIVATE_ALLOWED_HOSTS')).toLowerCase()
+      .split(',').map(text_).filter(Boolean);
+    if (host.indexOf('.')<1 || /^[0-9.]+$/.test(host) || /(?:^|\.)(?:localhost|local|internal)$/.test(host) ||
+        allowed.indexOf(host)===-1) return {ok:false,reason:'PRIVATE_GEO_HOST_NOT_ALLOWLISTED'};
     return {ok:true,endpoint:endpoint,apiKey:text_(props.getProperty('CF_SERVICE_GEO_API_KEY'))};
   }
   function evaluateRequest(request) {
@@ -1078,11 +1092,12 @@ CF.ServiceGeo = (function () {
     try {
       var evidence=cached_(parts);
       if (evidence) return previewRecord_(request,evidence,true);
-    } catch(e) {return {status:'REVIEW',reason:'GEO_CACHE_UNAVAILABLE',networkCalls:0};}
+    } catch(e) {return {status:'REVIEW',reason:e&&e.message==='GEO_CACHE_KEY_NOT_CONFIGURED'?'GEO_CACHE_KEY_NOT_CONFIGURED':'GEO_CACHE_UNAVAILABLE',networkCalls:0};}
     var config;
     try { config=providerConfig_(); }
     catch(e) { return {status:'REVIEW',reason:'PRIVATE_GEO_PROVIDER_NOT_CONFIGURED',networkCalls:0}; }
     if(!config.ok) return {status:'REVIEW',reason:config.reason,networkCalls:0};
+    var networkCalls=0;
     var lock=LockService.getScriptLock();
     if(!lock.tryLock(100)) return {status:'REVIEW',reason:'GEO_RATE_LIMITED',networkCalls:0};
     try {
@@ -1099,7 +1114,7 @@ CF.ServiceGeo = (function () {
       if(config.apiKey) options.headers['X-API-Key']=config.apiKey;
       props.setProperty(LAST_CALL_KEY,String(now));
       var response;
-      try {response=UrlFetchApp.fetch(url,options);} catch(e) {
+      try {networkCalls=1;response=UrlFetchApp.fetch(url,options);} catch(e) {
         return {status:'REVIEW',reason:'PRIVATE_GEO_REQUEST_FAILED',networkCalls:1};}
       if(response.getResponseCode()!==200)
         return {status:'REVIEW',reason:'PRIVATE_GEO_HTTP_ERROR',networkCalls:1};
@@ -1121,7 +1136,7 @@ CF.ServiceGeo = (function () {
       preview.networkCalls=1;
       return preview;
     } catch(e) {
-      return {status:'REVIEW',reason:'PRIVATE_GEO_UNEXPECTED_ERROR',networkCalls:0};
+      return {status:'REVIEW',reason:'PRIVATE_GEO_UNEXPECTED_ERROR',networkCalls:networkCalls};
     } finally {lock.releaseLock();}
   }
   function evaluateRequestId(requestId) {
@@ -2047,6 +2062,7 @@ CF.StatusWarningReconciler=(function(){
   }
   return{version:VERSION,snapshot:snapshot,step:step,stepRequest:stepRequest,refreshQueue:refreshQueue};
 })();
+
 
 
 
