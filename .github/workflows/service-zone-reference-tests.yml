@@ -9,6 +9,7 @@ on:
       - tests/service-zone.test.cjs
       - tests/service-zone-sheet.test.cjs
       - data/service-area-municipalities-provisional-2026-10-16.csv
+      - .github/workflows/deploy.yml
       - .github/workflows/service-zone-reference-tests.yml
 permissions:
   contents: read
