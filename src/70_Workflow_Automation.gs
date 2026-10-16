@@ -717,47 +717,179 @@ CF.StrivenCustomLists = (function () {
   };
 })();
 
-/* CF_SERVICEOPS_CITY_ZONE_MAPPING_20261015
- * Exact service-city lookup. No Striven requests and no geographic guessing.
- * East/North/Other and ambiguous Toronto aliases await business boundaries.
+/* CF_SERVICEOPS_SHEET_BACKED_SERVICE_AREA_20261016
+ * Source of truth for PROVISIONAL municipality coverage:
+ *   08 Service Area — Provisional (main bound CF Service spreadsheet).
+ * Independent showroom addresses / coordinates:
+ *   09 Store Locations — Geo Pending.
+ * Only the previously approved five-city Striven mappings remain auto-ready.
+ * All new municipalities/aliases are reference-only until per-address geometry,
+ * exact showroom coordinates and zone option mapping are independently verified.
+ * No Striven API call or background report refresh occurs in this resolver.
  */
 CF.ServiceZone = (function () {
-  function text(v) { return v == null ? '' : String(v).trim(); }
-  function key(v) { return text(v).toUpperCase().replace(/[.]/g, '').replace(/\s+/g, ' '); }
-  var cities = {WHITBY:'506', AJAX:'506', PICKERING:'506', OSHAWA:'506', TORONTO:'508'};
+  'use strict';
+  var AREA_SHEET = '08 Service Area — Provisional';
+  var STORES_SHEET = '09 Store Locations — Geo Pending';
+  var AREA_CACHE = 'CF_SERVICE_AREA_REFERENCE_20261016_V1';
+  var CACHE_SECONDS = 900;
+  var cities = { WHITBY:'506', AJAX:'506', PICKERING:'506', OSHAWA:'506', TORONTO:'508' };
   var labels = {'506':'Zone 1: Durham','507':'Zone 2: East','508':'Zone 3: Toronto','509':'Zone 4: North','510':'Zone 5: Other'};
+
+  function text(v) { return v == null ? '' : String(v).trim(); }
+  function key(v) {
+    var value = text(v);
+    try { value = value.normalize('NFD').replace(/[\u0300-\u036f]/g, ''); } catch (e) {}
+    return value.toUpperCase().replace(/[^A-Z0-9]/g, '');
+  }
+  function cache_() {
+    try { return typeof CacheService === 'undefined' ? null : CacheService.getScriptCache(); }
+    catch (e) { return null; }
+  }
+  function spreadsheet_() {
+    if (!CF.Util || typeof CF.Util.getSpreadsheet !== 'function') throw new Error('SERVICE_AREA_SPREADSHEET_UNAVAILABLE');
+    return CF.Util.getSpreadsheet();
+  }
+  function readArea_(force) {
+    var cache = cache_();
+    if (cache && !force) {
+      try {
+        var cached = cache.get(AREA_CACHE);
+        if (cached) return JSON.parse(cached);
+      } catch (ignored) {}
+    }
+    var sheet = spreadsheet_().getSheetByName(AREA_SHEET);
+    if (!sheet) throw new Error('SERVICE_AREA_REFERENCE_SHEET_MISSING');
+    // One 27 x 8 read; rows 2–27 are the 26 municipalities, not the notes.
+    var values = sheet.getRange(1,1,27,8).getDisplayValues();
+    if (!values || values.length !== 27 || text(values[0][0]) !== 'Municipality / Geographic Area' ||
+        text(values[0][2]) !== 'Provisional Coverage Class')
+      throw new Error('SERVICE_AREA_REFERENCE_SCHEMA_MISMATCH');
+    var records = {}, seen = {}, count = 0;
+    for (var i = 1; i < values.length; i++) {
+      var row = values[i], name = text(row[0]), classification = text(row[2]);
+      if (!name || ['ENTIRELY_WITHIN_CORE','PARTLY_WITHIN_CORE','BUFFER_ONLY'].indexOf(classification) === -1)
+        throw new Error('SERVICE_AREA_REFERENCE_INVALID_ROW_' + (i+1));
+      var record = {municipality:name, classification:classification, notes:text(row[7]), aliases:text(row[5])};
+      var aliases = [name].concat(text(row[5]).split(';').map(text).filter(Boolean));
+      aliases.forEach(function(alias) {
+        var k = key(alias);
+        if (!k || (seen[k] && seen[k] !== name)) throw new Error('SERVICE_AREA_REFERENCE_DUPLICATE_ALIAS_' + k);
+        seen[k] = name;
+        records[k] = record;
+      });
+      count++;
+    }
+    if (count !== 26) throw new Error('SERVICE_AREA_REFERENCE_COUNT_MISMATCH');
+    var result = {source:AREA_SHEET, count:count, records:records};
+    if (cache) { try { cache.put(AREA_CACHE,JSON.stringify(result),CACHE_SECONDS); } catch (ignored2) {} }
+    return result;
+  }
+  function referenceCity_(city) {
+    try {
+      var dataset = readArea_(false);
+      return {ok:true, record:dataset.records[key(city)] || null, count:dataset.count};
+    } catch (e) {
+      return {ok:false, reason:text(e && e.message) || 'SERVICE_AREA_REFERENCE_UNAVAILABLE'};
+    }
+  }
   function resolve(request, location) {
     request = request || {}; location = location || {};
     var locationId = text(request['Matched Location ID'] || request['Created Location ID']);
     var customerId = text(request['Matched Customer ID'] || request['Created Customer ID']);
-    if (!locationId) return {status:'REVIEW', reason:'SERVICE_LOCATION_REQUIRED'};
-    if (text(location['Location ID']) && (text(location['Location ID']) !== locationId || text(location['Customer ID']) !== customerId))
-      return {status:'REVIEW', reason:'SERVICE_LOCATION_SCOPE_CONFLICT'};
+    if (!locationId) return {status:'REVIEW',reason:'SERVICE_LOCATION_REQUIRED'};
+    if (text(location['Location ID']) &&
+        (text(location['Location ID']) !== locationId || text(location['Customer ID']) !== customerId))
+      return {status:'REVIEW',reason:'SERVICE_LOCATION_SCOPE_CONFLICT'};
     var city = text(location.City || request.City);
     var province = key(location.Province || request.Province);
     var country = key(location.Country || request.Country);
-    if (province && province !== 'ON' && province !== 'ONTARIO') return {status:'REVIEW', reason:'SERVICE_PROVINCE_UNMAPPED', city:city};
-    if (country && ['CA','CAN','CANADA'].indexOf(country) === -1) return {status:'REVIEW', reason:'SERVICE_COUNTRY_UNMAPPED', city:city};
+    if (province && province !== 'ON' && province !== 'ONTARIO')
+      return {status:'REVIEW',reason:'SERVICE_PROVINCE_UNMAPPED',city:city};
+    if (country && ['CA','CAN','CANADA'].indexOf(country) === -1)
+      return {status:'REVIEW',reason:'SERVICE_COUNTRY_UNMAPPED',city:city};
     var id = Object.prototype.hasOwnProperty.call(cities,key(city)) ? cities[key(city)] : '';
-    return {status:id?'READY':'REVIEW', id:id, name:labels[id]||'', city:city, locationId:locationId,
-      source:location.City?'CUSTOMER_SCOPED_LOCATION_CACHE_CITY':'SERVICE_REQUEST_CITY',
-      reason:id?'EXACT_SERVICE_CITY_MAPPING':'SERVICE_CITY_UNMAPPED'};
+    if (id) {
+      return {status:'READY',id:id,name:labels[id],city:city,locationId:locationId,
+        source:location.City?'CUSTOMER_SCOPED_LOCATION_CACHE_CITY':'SERVICE_REQUEST_CITY',
+        reason:'EXACT_SERVICE_CITY_MAPPING'};
+    }
+    // New cities never become eligible from their city name alone.
+    var lookup = referenceCity_(city);
+    var match = lookup.record;
+    var reason = !lookup.ok ? 'SERVICE_AREA_REFERENCE_UNAVAILABLE'
+      : !match ? 'SERVICE_CITY_UNMAPPED'
+      : match.classification === 'BUFFER_ONLY' ? 'SERVICE_BUFFER_ADDRESS_REVIEW_REQUIRED'
+      : 'SERVICE_ADDRESS_BOUNDARY_NOT_VERIFIED';
+    return {status:'REVIEW',id:'',name:'',city:city,locationId:locationId,
+      municipality:match?match.municipality:'',coverageClass:match?match.classification:'',
+      referenceSheet:lookup.ok?AREA_SHEET:'',referenceError:lookup.ok?'':lookup.reason,
+      source:match?'SERVICE_AREA_SHEET_PROVISIONAL':'SERVICE_REQUEST_CITY',reason:reason};
   }
   function apply(draft, request, location) {
     var result = resolve(request,location), f = draft.customFields && draft.customFields['798'];
     if (!f) throw new Error('ZONE_DRAFT_FIELD_REQUIRED');
-    f.required = true; f.value = result.id || ''; f.status = result.status; f.source = result.source || result.reason;
-    draft.customListResolution = draft.customListResolution || {}; draft.customListResolution.zone = result;
-    ['lookupRequiredFieldIds','readyFieldIds','operatorRequiredFieldIds'].forEach(function(k){draft[k]=(draft[k]||[]).filter(function(id){return String(id)!=='798';});});
+    f.required = true; f.value = result.id || ''; f.status = result.status;
+    f.source = result.source || result.reason;
+    draft.customListResolution = draft.customListResolution || {};
+    draft.customListResolution.zone = result;
+    ['lookupRequiredFieldIds','readyFieldIds','operatorRequiredFieldIds'].forEach(function(k) {
+      draft[k] = (draft[k]||[]).filter(function(id){return String(id)!=='798';});
+    });
     if (result.status === 'READY') draft.readyFieldIds.push('798');
     else {
-      draft.operatorRequiredFieldIds.push('798'); draft.safeForPayloadOverlay=false; draft.ok=false;
-      draft.coreBlockers=draft.coreBlockers||[];
-      draft.coreBlockers.push({code:result.reason,message:'Zones (798): verify the service city and configure its explicit zone mapping. City: '+(result.city||'(blank)')});
+      draft.operatorRequiredFieldIds.push('798'); draft.safeForPayloadOverlay = false; draft.ok = false;
+      draft.coreBlockers = draft.coreBlockers || [];
+      draft.coreBlockers.push({code:result.reason,
+        message:'Zones (798): '+(result.municipality || result.city || '(blank)')+
+          ' — verify the full service address against the 25 km core / 30 km buffer and approve its Striven Zone option.'});
     }
     return draft;
   }
-  return {resolve:resolve,apply:apply};
+  function distanceKm_(lat1,lon1,lat2,lon2) {
+    var rad = Math.PI/180, dLat = (lat2-lat1)*rad, dLon = (lon2-lon1)*rad;
+    var a = Math.sin(dLat/2)*Math.sin(dLat/2)+
+      Math.cos(lat1*rad)*Math.cos(lat2*rad)*Math.sin(dLon/2)*Math.sin(dLon/2);
+    return 6371.0088 * 2 * Math.atan2(Math.sqrt(a),Math.sqrt(1-a));
+  }
+  function validCoords_(lat,lon) {
+    return isFinite(lat) && isFinite(lon) && lat>=42 && lat<=45 && lon>=-81 && lon<=-78;
+  }
+  // Diagnostic only. Caller must supply a independently geocoded SERVICE ADDRESS.
+  // Do not call from automatic draft building until exact store pins + zone policy
+  // are verified. The spreadsheet deliberately has blank coordinates for now.
+  function previewAddressDistance(serviceLatitude,serviceLongitude) {
+    var lat=Number(serviceLatitude),lon=Number(serviceLongitude);
+    if (serviceLatitude==null || serviceLongitude==null || text(serviceLatitude)==='' ||
+        text(serviceLongitude)==='' || !validCoords_(lat,lon))
+      return {status:'REVIEW',reason:'SERVICE_ADDRESS_COORDINATES_REQUIRED'};
+    try {
+      var sheet=spreadsheet_().getSheetByName(STORES_SHEET);
+      if (!sheet) return {status:'REVIEW',reason:'STORE_REFERENCE_SHEET_MISSING'};
+      var rows=sheet.getRange(2,1,5,11).getDisplayValues(), nearest=null;
+      for (var i=0;i<rows.length;i++) {
+        var r=rows[i], sLat=Number(r[6]),sLon=Number(r[7]);
+        if (!text(r[0]) || !text(r[6]) || !text(r[7]) || !validCoords_(sLat,sLon) ||
+            text(r[8]).indexOf('VERIFIED')!==0)
+          return {status:'REVIEW',reason:'STORE_COORDINATES_NOT_VERIFIED'};
+        var d=distanceKm_(lat,lon,sLat,sLon);
+        if (!nearest || d<nearest.distanceKm) nearest={showroom:text(r[0]),distanceKm:d};
+      }
+      if (!nearest) return {status:'REVIEW',reason:'STORE_COORDINATES_NOT_VERIFIED'};
+      var classification=nearest.distanceKm<=25?'CORE':nearest.distanceKm<=30?'BUFFER':'OUTSIDE';
+      return {status:'PREVIEW_ONLY',classification:classification,
+        nearestShowroom:nearest.showroom,distanceKm:Math.round(nearest.distanceKm*100)/100,
+        zoneOptionId:'',requiresZoneApproval:true,source:STORES_SHEET,
+        reason:'DISTANCE_ONLY_NO_AUTOMATIC_STRIVEN_ZONE_ASSIGNMENT'};
+    } catch (e) {
+      return {status:'REVIEW',reason:'STORE_REFERENCE_READ_FAILED',details:text(e&&e.message)};
+    }
+  }
+  return {resolve:resolve,apply:apply,previewAddressDistance:previewAddressDistance,
+    getCoverageReferenceStatus:function(force) {
+      try {var ref=readArea_(!!force);return {ok:true,count:ref.count,source:ref.source};}
+      catch (e) {return {ok:false,reason:text(e&&e.message)};}
+    }};
 })();
 
 (function () {
