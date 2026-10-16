@@ -50,7 +50,10 @@ assert.equal(referenceStatus.ok,true);assert.equal(referenceStatus.count,26);
 assert.equal(referenceStatus.source,'08 Service Area — Provisional');
 const sample = [['Newmarket','Newmarket','ENTIRELY_WITHIN_CORE'],['Scarborough','Toronto','PARTLY_WITHIN_CORE'],
   ['Courtice','Clarington','PARTLY_WITHIN_CORE'],['King City','King','PARTLY_WITHIN_CORE'],
-  ['Port Perry','Scugog','PARTLY_WITHIN_CORE'],['Brampton','Brampton','BUFFER_ONLY']];
+  ['Port Perry','Scugog','PARTLY_WITHIN_CORE'],['Brampton','Brampton','BUFFER_ONLY'],
+  ['Bradford','Bradford West Gwillimbury','ENTIRELY_WITHIN_CORE'],
+  ['Mount Albert','East Gwillimbury','ENTIRELY_WITHIN_CORE'],
+  ['West Rouge','Toronto','PARTLY_WITHIN_CORE']];
 for (const [input,municipality,coverageClass] of sample) {
   const r=zone.resolve(req(input));
   assert.equal(r.status,'REVIEW',input+' cannot be automatically approved');
@@ -59,6 +62,23 @@ for (const [input,municipality,coverageClass] of sample) {
   assert.equal(r.id,'');
 }
 assert.equal(areaReads,1,'one read with cache for all new names');
+// OSM node 356616702 for Black Dog Pub and business official postal M1C 2P6;
+// verified municipality Toronto, mapped to the existing Striven option 508.
+const verifiedWestRouge={...req('West Rouge'),Street:'87 Island Road','Postal Code':'M1C 2P6'};
+const zoneWestRouge=zone.resolve(verifiedWestRouge);
+assert.equal(zoneWestRouge.status,'READY');
+assert.equal(zoneWestRouge.id,'508');
+assert.equal(zoneWestRouge.municipality,'Toronto');
+assert.equal(zoneWestRouge.serviceEligibility,'NOT_ESTABLISHED_BY_ZONE_MAPPING');
+assert.equal(zoneWestRouge.zoneBasis,'VERIFIED_TORONTO_COMMUNITY_ALIAS');
+const verifiedScarborough=zone.resolve({...req('Scarborough'),Street:'116 Warden Avenue','Postal Code':'M1N 2Z4'});
+assert.equal(verifiedScarborough.id,'508');
+assert.equal(zone.resolve({...verifiedWestRouge,'Postal Code':'West Rouge'}).reason,'SERVICE_POSTAL_INVALID_OR_CONFLICT');
+assert.equal(zone.resolve({...verifiedWestRouge,'Postal Code':'L1T 2Z7'}).reason,'SERVICE_POSTAL_INVALID_OR_CONFLICT');
+assert.equal(zone.resolve({...verifiedWestRouge,Street:''}).reason,'SERVICE_STREET_ADDRESS_UNVERIFIED');
+assert.equal(zone.resolve({...verifiedWestRouge,Country:'USA'}).status,'REVIEW');
+assert.equal(zone.resolve({...req('Bradford'),Street:'25 Main Street','Postal Code':'L3Z 1A1'}).status,'REVIEW');
+assert.equal(areaReads,1,'repeated checked aliases are cached; no external geocoding/Striven calls');
 assert.equal(zone.resolve(req('Brampton')).reason,'SERVICE_BUFFER_ADDRESS_REVIEW_REQUIRED');
 assert.equal(zone.resolve(req('Unknown City')).reason,'SERVICE_CITY_UNMAPPED');
 assert.equal(zone.resolve({...req('Newmarket'),Province:'BC'}).reason,'SERVICE_PROVINCE_UNMAPPED');
@@ -68,7 +88,13 @@ const draft = {ok:true,safeForPayloadOverlay:true,customFields:{798:{}},
 zone.apply(draft,req('Scarborough'));
 assert.equal(draft.customFields[798].value,'');
 assert.equal(draft.ok,false);
-assert.equal(draft.coreBlockers[0].code,'SERVICE_ADDRESS_BOUNDARY_NOT_VERIFIED');
+assert.equal(draft.coreBlockers[0].code,'SERVICE_STREET_ADDRESS_UNVERIFIED');
+const correctedDraft={ok:true,safeForPayloadOverlay:true,customFields:{798:{}},
+  readyFieldIds:[],lookupRequiredFieldIds:['798'],operatorRequiredFieldIds:[],coreBlockers:[]};
+zone.apply(correctedDraft,verifiedWestRouge);
+assert.equal(correctedDraft.customFields[798].value,'508');
+assert.equal(correctedDraft.readyFieldIds.includes('798'),true);
+assert.equal(correctedDraft.coreBlockers.length,0);
 assert.equal(zone.previewAddressDistance(43.8,-79.2).reason,'STORE_COORDINATES_NOT_VERIFIED');
 assert.equal(zone.previewAddressDistance(null,-79.2).reason,'SERVICE_ADDRESS_COORDINATES_REQUIRED');
 // Synthetic coordinates exercise math only; they are not verified showroom positions.
