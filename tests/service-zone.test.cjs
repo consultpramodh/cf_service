@@ -13,5 +13,5 @@ assert.equal(z.resolve(req('Whitby'),{'Location ID':'2','Customer ID':'999',City
 assert.equal(z.resolve(req('Whitby'),{'Location ID':'2','Customer ID':'1',City:'Toronto'}).id,'508');
 function draft(){return {ok:true,safeForPayloadOverlay:true,customFields:{798:{}},readyFieldIds:['855'],lookupRequiredFieldIds:['798'],coreBlockers:[]};}
 let d=draft();z.apply(d,req('Whitby'));assert.equal(d.customFields[798].value,'506');assert.equal(d.customFields[798].required,true);assert.equal(d.safeForPayloadOverlay,true);assert.equal(d.lookupRequiredFieldIds.length,0);
-d=draft();z.apply(d,req('Newmarket'));assert.equal(d.safeForPayloadOverlay,false);assert.equal(d.ok,false);assert.equal(d.customFields[798].value,'');assert.equal(d.coreBlockers[0].code,'SERVICE_CITY_UNMAPPED');
+d=draft();z.apply(d,req('Newmarket'));assert.equal(d.safeForPayloadOverlay,false);assert.equal(d.ok,false);assert.equal(d.customFields[798].value,'');assert.equal(d.coreBlockers[0].code,'SERVICE_AREA_REFERENCE_UNAVAILABLE');
 console.log('PASS: service-city zones; scoped location precedence; blank, unknown, invalid scope and province guards.');
