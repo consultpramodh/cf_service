@@ -731,7 +731,7 @@ CF.ServiceZone = (function () {
   'use strict';
   var AREA_SHEET = '08 Service Area — Provisional';
   var STORES_SHEET = '09 Store Locations — Geo Pending';
-  var AREA_CACHE = 'CF_SERVICE_AREA_REFERENCE_20261016_V1';
+  var AREA_CACHE = 'CF_SERVICE_AREA_REFERENCE_20261016_V2';
   var CACHE_SECONDS = 900;
   var cities = { WHITBY:'506', AJAX:'506', PICKERING:'506', OSHAWA:'506', TORONTO:'508' };
   var labels = {'506':'Zone 1: Durham','507':'Zone 2: East','508':'Zone 3: Toronto','509':'Zone 4: North','510':'Zone 5: Other'};
@@ -814,9 +814,36 @@ CF.ServiceZone = (function () {
         source:location.City?'CUSTOMER_SCOPED_LOCATION_CACHE_CITY':'SERVICE_REQUEST_CITY',
         reason:'EXACT_SERVICE_CITY_MAPPING'};
     }
-    // New cities never become eligible from their city name alone.
+    // Canonical municipality comes from the verified area-reference sheet.
+    // Zone 798 is an administrative assignment, never proof of 25-km eligibility.
+    // Only Toronto's *existing verified option 508* is inherited by known Toronto
+    // community aliases; aliases to any other municipality remain REVIEW.
     var lookup = referenceCity_(city);
     var match = lookup.record;
+    if (lookup.ok && match && key(match.municipality) === 'TORONTO') {
+      var street = text(request.Street || location.Street);
+      var postal = key(location['Postal Code'] || request['Postal Code']);
+      var postalValid = /^[ABCEGHJ-NPRSTVXY][0-9][ABCEGHJ-NPRSTV-Z][0-9][ABCEGHJ-NPRSTV-Z][0-9]$/.test(postal);
+      // Postal FSA M is specific to Toronto. Do not auto-repair an invalid or
+      // missing postal, or infer street numbers from neighbourhood names.
+      if (!/^\d+[A-Z]?\s+\S/.test(street)) {
+        return {status:'REVIEW',id:'',city:city,locationId:locationId,
+          municipality:'Toronto',coverageClass:match.classification,referenceSheet:AREA_SHEET,
+          reason:'SERVICE_STREET_ADDRESS_UNVERIFIED'};
+      }
+      if (!postalValid || postal.charAt(0) !== 'M') {
+        return {status:'REVIEW',id:'',city:city,locationId:locationId,
+          municipality:'Toronto',coverageClass:match.classification,referenceSheet:AREA_SHEET,
+          reason:'SERVICE_POSTAL_INVALID_OR_CONFLICT'};
+      }
+      return {status:'READY',id:'508',name:labels['508'],city:city,locationId:locationId,
+        municipality:'Toronto',coverageClass:match.classification,
+        serviceEligibility:'NOT_ESTABLISHED_BY_ZONE_MAPPING',zoneBasis:'VERIFIED_TORONTO_COMMUNITY_ALIAS',
+        referenceSheet:AREA_SHEET,source:'SHEET_BACKED_TORONTO_ALIAS_WITH_VALID_ADDRESS',
+        reason:'TORONTO_MUNICIPAL_ZONE_VERIFIED_ADDRESS_GUARDS_PASS'};
+    }
+    // Other municipalities and out-of-area names remain review-only until
+    // their zone option and per-address service eligibility are approved.
     var reason = !lookup.ok ? 'SERVICE_AREA_REFERENCE_UNAVAILABLE'
       : !match ? 'SERVICE_CITY_UNMAPPED'
       : match.classification === 'BUFFER_ONLY' ? 'SERVICE_BUFFER_ADDRESS_REVIEW_REQUIRED'
