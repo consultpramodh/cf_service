@@ -45,7 +45,9 @@ for (const city of ['Whitby','Ajax','Pickering','Oshawa']) {
 }
 assert.equal(zone.resolve(req('Toronto')).id,'508');
 assert.equal(areaReads,0,'historically auto-ready cities must not incur new sheet reads');
-assert.deepEqual(zone.getCoverageReferenceStatus(),{ok:true,count:26,source:'08 Service Area — Provisional'});
+const referenceStatus=zone.getCoverageReferenceStatus();
+assert.equal(referenceStatus.ok,true);assert.equal(referenceStatus.count,26);
+assert.equal(referenceStatus.source,'08 Service Area — Provisional');
 const sample = [['Newmarket','Newmarket','ENTIRELY_WITHIN_CORE'],['Scarborough','Toronto','PARTLY_WITHIN_CORE'],
   ['Courtice','Clarington','PARTLY_WITHIN_CORE'],['King City','King','PARTLY_WITHIN_CORE'],
   ['Port Perry','Scugog','PARTLY_WITHIN_CORE'],['Brampton','Brampton','BUFFER_ONLY']];
