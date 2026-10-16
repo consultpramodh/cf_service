@@ -912,7 +912,7 @@ CF.ServiceZone = (function () {
       return {status:'REVIEW',reason:'STORE_REFERENCE_READ_FAILED',details:text(e&&e.message)};
     }
   }
-  return {resolve:resolve,apply:apply,previewAddressDistance:previewAddressDistance,
+  return {resolve:resolve,apply:apply,previewAddressDistance:previewAddressDistance,getMunicipalityReference:referenceCity_,
     getCoverageReferenceStatus:function(force) {
       try {var ref=readArea_(!!force);return {ok:true,count:ref.count,source:ref.source};}
       catch (e) {return {ok:false,reason:text(e&&e.message)};}
