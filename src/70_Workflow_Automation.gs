@@ -717,48 +717,469 @@ CF.StrivenCustomLists = (function () {
   };
 })();
 
-/* CF_SERVICEOPS_CITY_ZONE_MAPPING_20261015
- * Exact service-city lookup. No Striven requests and no geographic guessing.
- * East/North/Other and ambiguous Toronto aliases await business boundaries.
+/* CF_SERVICEOPS_SHEET_BACKED_SERVICE_AREA_20261016
+ * Source of truth for PROVISIONAL municipality coverage:
+ *   08 Service Area — Provisional (main bound CF Service spreadsheet).
+ * Independent showroom addresses / coordinates:
+ *   09 Store Locations — Geo Pending.
+ * Only the previously approved five-city Striven mappings remain auto-ready.
+ * All new municipalities/aliases are reference-only until per-address geometry,
+ * exact showroom coordinates and zone option mapping are independently verified.
+ * No Striven API call or background report refresh occurs in this resolver.
  */
 CF.ServiceZone = (function () {
-  function text(v) { return v == null ? '' : String(v).trim(); }
-  function key(v) { return text(v).toUpperCase().replace(/[.]/g, '').replace(/\s+/g, ' '); }
-  var cities = {WHITBY:'506', AJAX:'506', PICKERING:'506', OSHAWA:'506', TORONTO:'508'};
+  'use strict';
+  var AREA_SHEET = '08 Service Area — Provisional';
+  var STORES_SHEET = '09 Store Locations — Geo Pending';
+  var AREA_CACHE = 'CF_SERVICE_AREA_REFERENCE_20261016_V2';
+  var CACHE_SECONDS = 900;
+  var cities = { WHITBY:'506', AJAX:'506', PICKERING:'506', OSHAWA:'506', TORONTO:'508' };
   var labels = {'506':'Zone 1: Durham','507':'Zone 2: East','508':'Zone 3: Toronto','509':'Zone 4: North','510':'Zone 5: Other'};
+
+  function text(v) { return v == null ? '' : String(v).trim(); }
+  function key(v) {
+    var value = text(v);
+    try { value = value.normalize('NFD').replace(/[\u0300-\u036f]/g, ''); } catch (e) {}
+    return value.toUpperCase().replace(/[^A-Z0-9]/g, '');
+  }
+  function cache_() {
+    try { return typeof CacheService === 'undefined' ? null : CacheService.getScriptCache(); }
+    catch (e) { return null; }
+  }
+  function spreadsheet_() {
+    if (!CF.Util || typeof CF.Util.getSpreadsheet !== 'function') throw new Error('SERVICE_AREA_SPREADSHEET_UNAVAILABLE');
+    return CF.Util.getSpreadsheet();
+  }
+  function readArea_(force) {
+    var cache = cache_();
+    if (cache && !force) {
+      try {
+        var cached = cache.get(AREA_CACHE);
+        if (cached) return JSON.parse(cached);
+      } catch (ignored) {}
+    }
+    var sheet = spreadsheet_().getSheetByName(AREA_SHEET);
+    if (!sheet) throw new Error('SERVICE_AREA_REFERENCE_SHEET_MISSING');
+    // One 27 x 8 read; rows 2–27 are the 26 municipalities, not the notes.
+    var values = sheet.getRange(1,1,27,8).getDisplayValues();
+    if (!values || values.length !== 27 || text(values[0][0]) !== 'Municipality / Geographic Area' ||
+        text(values[0][2]) !== 'Provisional Coverage Class')
+      throw new Error('SERVICE_AREA_REFERENCE_SCHEMA_MISMATCH');
+    var records = {}, seen = {}, count = 0;
+    for (var i = 1; i < values.length; i++) {
+      var row = values[i], name = text(row[0]), classification = text(row[2]);
+      if (!name || ['ENTIRELY_WITHIN_CORE','PARTLY_WITHIN_CORE','BUFFER_ONLY'].indexOf(classification) === -1)
+        throw new Error('SERVICE_AREA_REFERENCE_INVALID_ROW_' + (i+1));
+      var record = {municipality:name, classification:classification, notes:text(row[7]), aliases:text(row[5])};
+      var aliases = [name].concat(text(row[5]).split(';').map(text).filter(Boolean));
+      aliases.forEach(function(alias) {
+        var k = key(alias);
+        if (!k || (seen[k] && seen[k] !== name)) throw new Error('SERVICE_AREA_REFERENCE_DUPLICATE_ALIAS_' + k);
+        seen[k] = name;
+        records[k] = record;
+      });
+      count++;
+    }
+    if (count !== 26) throw new Error('SERVICE_AREA_REFERENCE_COUNT_MISMATCH');
+    var result = {source:AREA_SHEET, count:count, records:records};
+    if (cache) { try { cache.put(AREA_CACHE,JSON.stringify(result),CACHE_SECONDS); } catch (ignored2) {} }
+    return result;
+  }
+  function referenceCity_(city) {
+    try {
+      var dataset = readArea_(false);
+      return {ok:true, record:dataset.records[key(city)] || null, count:dataset.count};
+    } catch (e) {
+      return {ok:false, reason:text(e && e.message) || 'SERVICE_AREA_REFERENCE_UNAVAILABLE'};
+    }
+  }
   function resolve(request, location) {
     request = request || {}; location = location || {};
     var locationId = text(request['Matched Location ID'] || request['Created Location ID']);
     var customerId = text(request['Matched Customer ID'] || request['Created Customer ID']);
-    if (!locationId) return {status:'REVIEW', reason:'SERVICE_LOCATION_REQUIRED'};
-    if (text(location['Location ID']) && (text(location['Location ID']) !== locationId || text(location['Customer ID']) !== customerId))
-      return {status:'REVIEW', reason:'SERVICE_LOCATION_SCOPE_CONFLICT'};
+    if (!locationId) return {status:'REVIEW',reason:'SERVICE_LOCATION_REQUIRED'};
+    if (text(location['Location ID']) &&
+        (text(location['Location ID']) !== locationId || text(location['Customer ID']) !== customerId))
+      return {status:'REVIEW',reason:'SERVICE_LOCATION_SCOPE_CONFLICT'};
     var city = text(location.City || request.City);
     var province = key(location.Province || request.Province);
     var country = key(location.Country || request.Country);
-    if (province && province !== 'ON' && province !== 'ONTARIO') return {status:'REVIEW', reason:'SERVICE_PROVINCE_UNMAPPED', city:city};
-    if (country && ['CA','CAN','CANADA'].indexOf(country) === -1) return {status:'REVIEW', reason:'SERVICE_COUNTRY_UNMAPPED', city:city};
+    if (province && province !== 'ON' && province !== 'ONTARIO')
+      return {status:'REVIEW',reason:'SERVICE_PROVINCE_UNMAPPED',city:city};
+    if (country && ['CA','CAN','CANADA'].indexOf(country) === -1)
+      return {status:'REVIEW',reason:'SERVICE_COUNTRY_UNMAPPED',city:city};
     var id = Object.prototype.hasOwnProperty.call(cities,key(city)) ? cities[key(city)] : '';
-    return {status:id?'READY':'REVIEW', id:id, name:labels[id]||'', city:city, locationId:locationId,
-      source:location.City?'CUSTOMER_SCOPED_LOCATION_CACHE_CITY':'SERVICE_REQUEST_CITY',
-      reason:id?'EXACT_SERVICE_CITY_MAPPING':'SERVICE_CITY_UNMAPPED'};
+    if (id) {
+      return {status:'READY',id:id,name:labels[id],city:city,locationId:locationId,
+        source:location.City?'CUSTOMER_SCOPED_LOCATION_CACHE_CITY':'SERVICE_REQUEST_CITY',
+        reason:'EXACT_SERVICE_CITY_MAPPING'};
+    }
+    // Canonical municipality comes from the verified area-reference sheet.
+    // Zone 798 is an administrative assignment, never proof of 25-km eligibility.
+    // Only Toronto's *existing verified option 508* is inherited by known Toronto
+    // community aliases; aliases to any other municipality remain REVIEW.
+    var lookup = referenceCity_(city);
+    var match = lookup.record;
+    if (lookup.ok && match && key(match.municipality) === 'TORONTO') {
+      var street = text(request.Street || location.Street);
+      var postal = key(location['Postal Code'] || request['Postal Code']);
+      var postalValid = /^[ABCEGHJ-NPRSTVXY][0-9][ABCEGHJ-NPRSTV-Z][0-9][ABCEGHJ-NPRSTV-Z][0-9]$/.test(postal);
+      // Postal FSA M is specific to Toronto. Do not auto-repair an invalid or
+      // missing postal, or infer street numbers from neighbourhood names.
+      if (!/^\d+[A-Z]?\s+\S/.test(street)) {
+        return {status:'REVIEW',id:'',city:city,locationId:locationId,
+          municipality:'Toronto',coverageClass:match.classification,referenceSheet:AREA_SHEET,
+          reason:'SERVICE_STREET_ADDRESS_UNVERIFIED'};
+      }
+      if (!postalValid || postal.charAt(0) !== 'M') {
+        return {status:'REVIEW',id:'',city:city,locationId:locationId,
+          municipality:'Toronto',coverageClass:match.classification,referenceSheet:AREA_SHEET,
+          reason:'SERVICE_POSTAL_INVALID_OR_CONFLICT'};
+      }
+      return {status:'READY',id:'508',name:labels['508'],city:city,locationId:locationId,
+        municipality:'Toronto',coverageClass:match.classification,
+        serviceEligibility:'NOT_ESTABLISHED_BY_ZONE_MAPPING',zoneBasis:'VERIFIED_TORONTO_COMMUNITY_ALIAS',
+        referenceSheet:AREA_SHEET,source:'SHEET_BACKED_TORONTO_ALIAS_WITH_VALID_ADDRESS',
+        reason:'TORONTO_MUNICIPAL_ZONE_VERIFIED_ADDRESS_GUARDS_PASS'};
+    }
+    // Other municipalities and out-of-area names remain review-only until
+    // their zone option and per-address service eligibility are approved.
+    var reason = !lookup.ok ? 'SERVICE_AREA_REFERENCE_UNAVAILABLE'
+      : !match ? 'SERVICE_CITY_UNMAPPED'
+      : match.classification === 'BUFFER_ONLY' ? 'SERVICE_BUFFER_ADDRESS_REVIEW_REQUIRED'
+      : 'SERVICE_ADDRESS_BOUNDARY_NOT_VERIFIED';
+    return {status:'REVIEW',id:'',name:'',city:city,locationId:locationId,
+      municipality:match?match.municipality:'',coverageClass:match?match.classification:'',
+      referenceSheet:lookup.ok?AREA_SHEET:'',referenceError:lookup.ok?'':lookup.reason,
+      source:match?'SERVICE_AREA_SHEET_PROVISIONAL':'SERVICE_REQUEST_CITY',reason:reason};
   }
   function apply(draft, request, location) {
     var result = resolve(request,location), f = draft.customFields && draft.customFields['798'];
     if (!f) throw new Error('ZONE_DRAFT_FIELD_REQUIRED');
-    f.required = true; f.value = result.id || ''; f.status = result.status; f.source = result.source || result.reason;
-    draft.customListResolution = draft.customListResolution || {}; draft.customListResolution.zone = result;
-    ['lookupRequiredFieldIds','readyFieldIds','operatorRequiredFieldIds'].forEach(function(k){draft[k]=(draft[k]||[]).filter(function(id){return String(id)!=='798';});});
+    f.required = true; f.value = result.id || ''; f.status = result.status;
+    f.source = result.source || result.reason;
+    draft.customListResolution = draft.customListResolution || {};
+    draft.customListResolution.zone = result;
+    ['lookupRequiredFieldIds','readyFieldIds','operatorRequiredFieldIds'].forEach(function(k) {
+      draft[k] = (draft[k]||[]).filter(function(id){return String(id)!=='798';});
+    });
     if (result.status === 'READY') draft.readyFieldIds.push('798');
     else {
-      draft.operatorRequiredFieldIds.push('798'); draft.safeForPayloadOverlay=false; draft.ok=false;
-      draft.coreBlockers=draft.coreBlockers||[];
-      draft.coreBlockers.push({code:result.reason,message:'Zones (798): verify the service city and configure its explicit zone mapping. City: '+(result.city||'(blank)')});
+      draft.operatorRequiredFieldIds.push('798'); draft.safeForPayloadOverlay = false; draft.ok = false;
+      draft.coreBlockers = draft.coreBlockers || [];
+      draft.coreBlockers.push({code:result.reason,
+        message:'Zones (798): '+(result.municipality || result.city || '(blank)')+
+          ' — verify the full service address against the 25 km core / 30 km buffer and approve its Striven Zone option.'});
     }
     return draft;
   }
-  return {resolve:resolve,apply:apply};
+  function distanceKm_(lat1,lon1,lat2,lon2) {
+    var rad = Math.PI/180, dLat = (lat2-lat1)*rad, dLon = (lon2-lon1)*rad;
+    var a = Math.sin(dLat/2)*Math.sin(dLat/2)+
+      Math.cos(lat1*rad)*Math.cos(lat2*rad)*Math.sin(dLon/2)*Math.sin(dLon/2);
+    return 6371.0088 * 2 * Math.atan2(Math.sqrt(a),Math.sqrt(1-a));
+  }
+  function validCoords_(lat,lon) {
+    return isFinite(lat) && isFinite(lon) && lat>=42 && lat<=45 && lon>=-81 && lon<=-78;
+  }
+  // Diagnostic only. Caller must supply a independently geocoded SERVICE ADDRESS.
+  // Do not call from automatic draft building until exact store pins + zone policy
+  // are verified. The spreadsheet deliberately has blank coordinates for now.
+  function previewAddressDistance(serviceLatitude,serviceLongitude) {
+    var lat=Number(serviceLatitude),lon=Number(serviceLongitude);
+    if (serviceLatitude==null || serviceLongitude==null || text(serviceLatitude)==='' ||
+        text(serviceLongitude)==='' || !validCoords_(lat,lon))
+      return {status:'REVIEW',reason:'SERVICE_ADDRESS_COORDINATES_REQUIRED'};
+    try {
+      var sheet=spreadsheet_().getSheetByName(STORES_SHEET);
+      if (!sheet) return {status:'REVIEW',reason:'STORE_REFERENCE_SHEET_MISSING'};
+      var rows=sheet.getRange(2,1,5,11).getDisplayValues(), nearest=null;
+      for (var i=0;i<rows.length;i++) {
+        var r=rows[i], sLat=Number(r[6]),sLon=Number(r[7]);
+        if (!text(r[0]) || !text(r[6]) || !text(r[7]) || !validCoords_(sLat,sLon) ||
+            text(r[8]).indexOf('VERIFIED')!==0)
+          return {status:'REVIEW',reason:'STORE_COORDINATES_NOT_VERIFIED'};
+        var d=distanceKm_(lat,lon,sLat,sLon);
+        if (!nearest || d<nearest.distanceKm) nearest={showroom:text(r[0]),distanceKm:d};
+      }
+      if (!nearest) return {status:'REVIEW',reason:'STORE_COORDINATES_NOT_VERIFIED'};
+      var classification=nearest.distanceKm<=25?'CORE':nearest.distanceKm<=30?'BUFFER':'OUTSIDE';
+      return {status:'PREVIEW_ONLY',classification:classification,
+        nearestShowroom:nearest.showroom,distanceKm:Math.round(nearest.distanceKm*100)/100,
+        zoneOptionId:'',requiresZoneApproval:true,source:STORES_SHEET,
+        reason:'DISTANCE_ONLY_NO_AUTOMATIC_STRIVEN_ZONE_ASSIGNMENT'};
+    } catch (e) {
+      return {status:'REVIEW',reason:'STORE_REFERENCE_READ_FAILED',details:text(e&&e.message)};
+    }
+  }
+  return {resolve:resolve,apply:apply,previewAddressDistance:previewAddressDistance,getMunicipalityReference:referenceCity_,
+    getCoverageReferenceStatus:function(force) {
+      try {var ref=readArea_(!!force);return {ok:true,count:ref.count,source:ref.source};}
+      catch (e) {return {ok:false,reason:text(e&&e.message)};}
+    }};
 })();
+
+
+/* CF_SERVICEOPS_OSM_PRIVATE_GEOGRAPHY_SHADOW_R1
+ * Opt-in, read-only service-geometry evidence. Not part of SO creation.
+ * No private customer addresses go to nominatim.openstreetmap.org.
+ * A vetted private/contracted OSM-based geocoder must be configured before
+ * enabling requests. Persistent cache stores only hash + geocode metadata,
+ * never original customer name, street text, phone or email.
+ * Public Nominatim usage/privacy policy:
+ * https://operations.osmfoundation.org/policies/nominatim/
+ * Data © OpenStreetMap contributors, ODbL 1.0 (https://osm.org/copyright).
+ */
+CF.ServiceGeo = (function () {
+  'use strict';
+  var SHEET = '10 Service Geocodes — Private';
+  var HEADERS = ['Address SHA256','Latitude','Longitude','Municipality','OSM Type',
+    'OSM ID','Geocoded At','Provider','Match Status'];
+  var MEMORY_PREFIX = 'CF_GEO_R2_';
+  var LAST_CALL_KEY = 'CF_SERVICE_GEO_LAST_REQUEST_MS';
+  var RATE_MILLIS = 15000; // no burst; conservative 4 per minute at most
+  var MAX_CACHE_AGE_MS = 90 * 86400000;
+
+  function text_(v) { return v == null ? '' : String(v).trim(); }
+  function key_(v) {
+    var s = text_(v);
+    try { s = s.normalize('NFD').replace(/[\u0300-\u036f]/g,''); } catch (e) {}
+    return s.toUpperCase().replace(/[^A-Z0-9]/g,'');
+  }
+  function roadKey_(v) {
+    return text_(v).toUpperCase().replace(/\b(ROAD)\b/g,'RD')
+      .replace(/\b(STREET)\b/g,'ST').replace(/\b(AVENUE)\b/g,'AVE')
+      .replace(/\b(BOULEVARD)\b/g,'BLVD').replace(/\b(DRIVE)\b/g,'DR')
+      .replace(/[^A-Z0-9]/g,'');
+  }
+  function requestParts_(request) {
+    request = request || {};
+    var street = text_(request.Street), m = street.match(/^\s*(\d+[A-Z]?)\s+(.+)$/i);
+    var postal = key_(request['Postal Code']);
+    if (!m || !/^[ABCEGHJ-NPRSTVXY]\d[ABCEGHJ-NPRSTV-Z]\d[ABCEGHJ-NPRSTV-Z]\d$/.test(postal))
+      return {ok:false,reason:'SERVICE_ADDRESS_INCOMPLETE_OR_INVALID'};
+    if (key_(request.Province) !== 'ON' && key_(request.Province) !== 'ONTARIO')
+      return {ok:false,reason:'SERVICE_PROVINCE_UNVERIFIED'};
+    if (['CA','CAN','CANADA'].indexOf(key_(request.Country))===-1)
+      return {ok:false,reason:'SERVICE_COUNTRY_UNVERIFIED'};
+    return {ok:true,house:key_(m[1]),road:roadKey_(m[2]),street:street,
+      postal:postal,city:text_(request.City),query:street+', '+text_(request.City)+', Ontario, '+postal+', Canada'};
+  }
+  function addressHash_(parts) {
+    var secret = text_(PropertiesService.getScriptProperties().getProperty('CF_SERVICE_GEO_CACHE_HMAC_KEY'));
+    if (secret.length < 32) throw new Error('GEO_CACHE_KEY_NOT_CONFIGURED');
+    // Secret-keyed identifier resists address enumeration; never persist the secret.
+    var value = parts.house+'|'+parts.road+'|'+key_(parts.city)+'|'+parts.postal+'|CA';
+    return Utilities.computeHmacSha256Signature(value,secret).map(function(b) {
+      return ('0'+((b+256)%256).toString(16)).slice(-2);
+    }).join('');
+  }
+  function sheet_() {
+    if (!CF.Util || typeof CF.Util.getSpreadsheet !== 'function') throw new Error('GEO_SPREADSHEET_UNAVAILABLE');
+    var s = CF.Util.getSpreadsheet().getSheetByName(SHEET);
+    if (!s) throw new Error('GEO_CACHE_SHEET_NOT_INSTALLED');
+    var first = s.getRange(1,1,1,HEADERS.length).getDisplayValues()[0];
+    if (first.join('|') !== HEADERS.join('|')) throw new Error('GEO_CACHE_SCHEMA_MISMATCH');
+    return s;
+  }
+  function cache_() {
+    try { return CacheService.getScriptCache(); } catch(e) { return null; }
+  }
+  function cached_(parts) {
+    var key = addressHash_(parts), c=cache_(), record=null;
+    if (c) {
+      try { var raw=c.get(MEMORY_PREFIX+key.slice(0,32)); if(raw) record=JSON.parse(raw); } catch(e) {}
+    }
+    if (!record) {
+      var sh=sheet_(), last=sh.getLastRow();
+      if (last<2) return null;
+      // Exact SHA match; no full-table read, no additional Striven API call.
+      var found=sh.getRange(2,1,last-1,1).createTextFinder(key).matchEntireCell(true).findNext();
+      if (!found) return null;
+      var row=sh.getRange(found.getRow(),1,1,HEADERS.length).getDisplayValues()[0];
+      record={lat:Number(row[1]),lon:Number(row[2]),municipality:row[3],
+        osmType:row[4],osmId:row[5],geocodedAt:row[6],provider:row[7],status:row[8]};
+    }
+    if (record.status!=='MATCHED_EXACT' ||
+        !isFinite(record.lat) || !isFinite(record.lon) ||
+        record.lat<42 || record.lat>45 || record.lon<-81 || record.lon>-78 ||
+        Date.parse(record.geocodedAt)>Date.now() ||
+        Date.now()-Date.parse(record.geocodedAt)>MAX_CACHE_AGE_MS ||
+        !isFinite(Date.parse(record.geocodedAt))) return null;
+    if(c) {try {c.put(MEMORY_PREFIX+key.slice(0,32),JSON.stringify(record),21600);} catch(e) {}}
+    return record;
+  }
+  function persist_(parts,record) {
+    var sh=sheet_(), key=addressHash_(parts);
+    var last=sh.getLastRow(), found=last>=2
+      ? sh.getRange(2,1,last-1,1).createTextFinder(key).matchEntireCell(true).findNext() : null;
+    var row=[key,record.lat,record.lon,record.municipality,record.osmType,
+      record.osmId,record.geocodedAt,record.provider,'MATCHED_EXACT'];
+    sh.getRange(found?found.getRow():last+1,1,1,HEADERS.length).setValues([row]);
+    var c=cache_();
+    if(c) {try {c.put(MEMORY_PREFIX+key.slice(0,32),JSON.stringify(record),21600);}catch(e) {}}
+  }
+  function candidate_(parts,item) {
+    if (!item || !item.address) return {ok:false,reason:'OSM_NO_ADDRESS_COMPONENTS'};
+    if (['node','way','relation'].indexOf(text_(item.osm_type))===-1 ||
+        !/^[1-9][0-9]*$/.test(text_(item.osm_id))) return {ok:false,reason:'OSM_FEATURE_ID_INVALID'};
+    var a=item.address||{},house=key_(a.house_number),
+        road=roadKey_(a.road||a.pedestrian||a.residential||''),
+        postal=key_(a.postcode),country=key_(a.country_code),municipality=
+          text_(a.city||a.town||a.municipality||a.village||'');
+    if (house!==parts.house || road!==parts.road || postal!==parts.postal || country!=='CA')
+      return {ok:false,reason:'OSM_ADDRESS_COMPONENT_MISMATCH'};
+    if (!municipality) return {ok:false,reason:'OSM_MUNICIPALITY_MISSING'};
+    var lat=Number(item.lat),lon=Number(item.lon);
+    if (!isFinite(lat)||!isFinite(lon)||lat<42||lat>45||lon<-81||lon>-78)
+      return {ok:false,reason:'OSM_COORDINATES_INVALID'};
+    return {ok:true,lat:lat,lon:lon,municipality:municipality,
+      osmType:text_(item.osm_type),osmId:text_(item.osm_id)};
+  }
+  function acceptedCandidate_(parts,results) {
+    if (!Array.isArray(results)) return {ok:false,reason:'OSM_RESPONSE_INVALID'};
+    var candidates=results.map(function(x){return candidate_(parts,x);}).filter(function(x){return x.ok;});
+    // Same exact point can appear twice: require one unique OSM feature.
+    var uniques={};
+    candidates.forEach(function(x){uniques[x.osmType+':'+x.osmId]=x;});
+    var matches=Object.keys(uniques);
+    if (!matches.length) return {ok:false,reason:'OSM_NO_EXACT_ADDRESS_MATCH'};
+    if (matches.length!==1) return {ok:false,reason:'OSM_MULTIPLE_EXACT_MATCHES'};
+    return uniques[matches[0]];
+  }
+  function previewRecord_(request,record,cached) {
+    var parts=requestParts_(request);
+    if(!parts.ok) return {status:'REVIEW',reason:parts.reason,networkCalls:0};
+    var municipality=record.municipality,zone=null;
+    if(CF.ServiceZone&&typeof CF.ServiceZone.getMunicipalityReference==='function')
+      zone=CF.ServiceZone.getMunicipalityReference(parts.city);
+    var requestedMunicipality=zone&&zone.ok&&zone.record?zone.record.municipality:'';
+    // A known alias MUST agree with the geocoder's city. OSM is evidence, not
+    // an authority to override a customer/location record without review.
+    if(requestedMunicipality && key_(requestedMunicipality)!==key_(municipality))
+      return {status:'REVIEW',reason:'OSM_MUNICIPALITY_CONFLICT',
+        submittedMunicipality:requestedMunicipality,geocoderMunicipality:municipality,networkCalls:0};
+    var distance=CF.ServiceZone.previewAddressDistance(record.lat,record.lon);
+    return {status:'PREVIEW_ONLY',provider:record.provider,fromCache:!!cached,networkCalls:0,
+      municipality:municipality,latitude:record.lat,longitude:record.lon,
+      osmType:record.osmType,osmId:record.osmId,geocodedAt:record.geocodedAt,
+      administrativeZoneOption:'',serviceEligibility:'NOT_AUTOMATICALLY_APPROVED',
+      distanceStatus:distance.status,classification:distance.classification||'',
+      nearestShowroom:distance.nearestShowroom||'',distanceKm:distance.distanceKm==null?null:distance.distanceKm,
+      reason:distance.reason||'',attribution:'© OpenStreetMap contributors (ODbL)',
+      attributionUrl:'https://www.openstreetmap.org/copyright'};
+  }
+  function providerConfig_() {
+    var props=PropertiesService.getScriptProperties();
+    if (props.getProperty('CF_SERVICE_GEO_PRIVATE_ENABLED')!=='true' ||
+        props.getProperty('CF_SERVICE_GEO_PRIVATE_ADDRESS_APPROVED')!=='true')
+      return {ok:false,reason:'PRIVATE_GEO_PROVIDER_NOT_APPROVED'};
+    var endpoint=text_(props.getProperty('CF_SERVICE_GEO_PRIVATE_ENDPOINT'));
+    if (!/^https:\/\/[A-Za-z0-9.-]+(?::443)?\/[A-Za-z0-9_\/.-]*search$/i.test(endpoint) ||
+        /(^https:\/\/)(?:nominatim\.openstreetmap\.org|.*\.openstreetmap\.org|openstreetmap\.org)\b/i.test(endpoint))
+      return {ok:false,reason:'PRIVATE_GEO_ENDPOINT_INVALID_OR_PUBLIC'};
+    var host=endpoint.replace(/^https:\/\//i,'').split('/')[0].replace(/:443$/,'').toLowerCase();
+    // Explicit approved-host equality; never accept IP literals or local names.
+    var allowed=text_(props.getProperty('CF_SERVICE_GEO_PRIVATE_ALLOWED_HOSTS')).toLowerCase()
+      .split(',').map(text_).filter(Boolean);
+    if (host.indexOf('.')<1 || /^[0-9.]+$/.test(host) || /(?:^|\.)(?:localhost|local|internal)$/.test(host) ||
+        allowed.indexOf(host)===-1) return {ok:false,reason:'PRIVATE_GEO_HOST_NOT_ALLOWLISTED'};
+    return {ok:true,endpoint:endpoint,apiKey:text_(props.getProperty('CF_SERVICE_GEO_API_KEY'))};
+  }
+  function evaluateRequest(request) {
+    var parts=requestParts_(request);
+    if (!parts.ok) return {status:'REVIEW',reason:parts.reason,networkCalls:0};
+    try {
+      var evidence=cached_(parts);
+      if (evidence) return previewRecord_(request,evidence,true);
+    } catch(e) {return {status:'REVIEW',reason:e&&e.message==='GEO_CACHE_KEY_NOT_CONFIGURED'?'GEO_CACHE_KEY_NOT_CONFIGURED':'GEO_CACHE_UNAVAILABLE',networkCalls:0};}
+    var config;
+    try { config=providerConfig_(); }
+    catch(e) { return {status:'REVIEW',reason:'PRIVATE_GEO_PROVIDER_NOT_CONFIGURED',networkCalls:0}; }
+    if(!config.ok) return {status:'REVIEW',reason:config.reason,networkCalls:0};
+    var networkCalls=0;
+    var lock=LockService.getScriptLock();
+    if(!lock.tryLock(100)) return {status:'REVIEW',reason:'GEO_RATE_LIMITED',networkCalls:0};
+    try {
+      // Lock covers repeat-cache recheck, throttling, HTTP and durable commit.
+      var again=cached_(parts);
+      if(again) return previewRecord_(request,again,true);
+      var props=PropertiesService.getScriptProperties(),now=Date.now(),
+          last=Number(props.getProperty(LAST_CALL_KEY)||0);
+      if(now-last<RATE_MILLIS) return {status:'REVIEW',reason:'GEO_RATE_LIMITED',networkCalls:0};
+      var url=config.endpoint+'?format=jsonv2&addressdetails=1&limit=3&countrycodes=ca&q='+
+        encodeURIComponent(parts.query);
+      var options={method:'get',muteHttpExceptions:true,followRedirects:false,
+        headers:{'Accept':'application/json','User-Agent':'CF-ServiceOps/5.14.4 (classicfireplace.ca; private geocoding)'}};
+      if(config.apiKey) options.headers['X-API-Key']=config.apiKey;
+      props.setProperty(LAST_CALL_KEY,String(now));
+      var response;
+      try {networkCalls=1;response=UrlFetchApp.fetch(url,options);} catch(e) {
+        return {status:'REVIEW',reason:'PRIVATE_GEO_REQUEST_FAILED',networkCalls:1};}
+      if(response.getResponseCode()!==200)
+        return {status:'REVIEW',reason:'PRIVATE_GEO_HTTP_ERROR',networkCalls:1};
+      var results;
+      try { results=JSON.parse(response.getContentText()); }
+      catch(e) {return {status:'REVIEW',reason:'PRIVATE_GEO_RESPONSE_UNREADABLE',networkCalls:1};}
+      var picked=acceptedCandidate_(parts,results);
+      if(!picked.ok) return {status:'REVIEW',reason:picked.reason,networkCalls:1};
+      var record={lat:picked.lat,lon:picked.lon,municipality:picked.municipality,
+        osmType:picked.osmType,osmId:picked.osmId,geocodedAt:new Date().toISOString(),
+        provider:'APPROVED_PRIVATE_OSM_PROVIDER',status:'MATCHED_EXACT'};
+      // Never record mismatch as exact, or persist on ambiguous OSM municipality.
+      var reference=CF.ServiceZone.getMunicipalityReference(parts.city);
+      if(reference.ok&&reference.record&&
+         key_(reference.record.municipality)!==key_(record.municipality))
+        return {status:'REVIEW',reason:'OSM_MUNICIPALITY_CONFLICT',networkCalls:1};
+      persist_(parts,record);
+      var preview=previewRecord_(request,record,false);
+      preview.networkCalls=1;
+      return preview;
+    } catch(e) {
+      return {status:'REVIEW',reason:'PRIVATE_GEO_UNEXPECTED_ERROR',networkCalls:networkCalls};
+    } finally {lock.releaseLock();}
+  }
+  function evaluateRequestId(requestId) {
+    if (!CF.Util || typeof CF.Util.findRecord!=='function') return {status:'REVIEW',reason:'GEO_REQUEST_LOOKUP_UNAVAILABLE'};
+    var req=CF.Util.findRecord('SERVICE_REQUESTS','Request ID',text_(requestId));
+    if(!req) return {status:'REVIEW',reason:'GEO_REQUEST_NOT_FOUND'};
+    return evaluateRequest(req);
+  }
+  return {evaluateRequest:evaluateRequest,evaluateRequestId:evaluateRequestId,
+    previewProviderResult:function(request,results) {
+      var parts=requestParts_(request);
+      if(!parts.ok) return {status:'REVIEW',reason:parts.reason,networkCalls:0};
+      var match=acceptedCandidate_(parts,results);
+      if(!match.ok) return {status:'REVIEW',reason:match.reason,networkCalls:0};
+      return previewRecord_(request,{lat:match.lat,lon:match.lon,municipality:match.municipality,
+        osmType:match.osmType,osmId:match.osmId,geocodedAt:new Date().toISOString(),
+        provider:'OSM_FIXTURE',status:'MATCHED_EXACT'},false);
+    }};
+})();
+
+
+/* Manual read-only geo preview from an Operator Queue row. Run directly in the
+ * Apps Script editor with a queue row selected. Does not create/update SOs.
+ * Provider HTTP can occur once on an eligible cache miss only when explicitly
+ * approved private-provider Script Properties have been configured. */
+function GEO_TEST_selectedQueueRequest() {
+  var ss=SpreadsheetApp.getActiveSpreadsheet();
+  var sh=ss && ss.getActiveSheet();
+  var range=sh && sh.getActiveRange();
+  if(!sh || sh.getName()!=='03 Operator Queue' || !range || range.getRow()<2)
+    return {status:'REVIEW',reason:'SELECT_OPERATOR_QUEUE_REQUEST_ROW'};
+  var requestId=String(sh.getRange(range.getRow(),1).getDisplayValue()||'').trim();
+  if(!/^SR-\d{14}-\d{4}$/.test(requestId))
+    return {status:'REVIEW',reason:'INVALID_QUEUE_REQUEST_ID'};
+  var outcome=CF.ServiceGeo.evaluateRequestId(requestId);
+  var summary={requestId:requestId,status:outcome.status,reason:outcome.reason||'',
+    municipality:outcome.municipality||'',classification:outcome.classification||'',
+    nearestShowroom:outcome.nearestShowroom||'',distanceKm:outcome.distanceKm,
+    provider:outcome.provider||'',fromCache:outcome.fromCache===true,
+    networkCalls:Number(outcome.networkCalls||0),strivenApiCalls:0,salesOrdersWritten:0};
+  Logger.log(JSON.stringify(summary));
+  return summary;
+}
 
 (function () {
   'use strict';
@@ -1641,6 +2062,7 @@ CF.StatusWarningReconciler=(function(){
   }
   return{version:VERSION,snapshot:snapshot,step:step,stepRequest:stepRequest,refreshQueue:refreshQueue};
 })();
+
 
 
 
