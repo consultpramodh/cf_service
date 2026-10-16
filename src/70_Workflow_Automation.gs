@@ -1142,6 +1142,30 @@ CF.ServiceGeo = (function () {
     }};
 })();
 
+
+/* Manual read-only geo preview from an Operator Queue row. Run directly in the
+ * Apps Script editor with a queue row selected. Does not create/update SOs.
+ * Provider HTTP can occur once on an eligible cache miss only when explicitly
+ * approved private-provider Script Properties have been configured. */
+function GEO_TEST_selectedQueueRequest() {
+  var ss=SpreadsheetApp.getActiveSpreadsheet();
+  var sh=ss && ss.getActiveSheet();
+  var range=sh && sh.getActiveRange();
+  if(!sh || sh.getName()!=='03 Operator Queue' || !range || range.getRow()<2)
+    return {status:'REVIEW',reason:'SELECT_OPERATOR_QUEUE_REQUEST_ROW'};
+  var requestId=String(sh.getRange(range.getRow(),1).getDisplayValue()||'').trim();
+  if(!/^SR-\d{14}-\d{4}$/.test(requestId))
+    return {status:'REVIEW',reason:'INVALID_QUEUE_REQUEST_ID'};
+  var outcome=CF.ServiceGeo.evaluateRequestId(requestId);
+  var summary={requestId:requestId,status:outcome.status,reason:outcome.reason||'',
+    municipality:outcome.municipality||'',classification:outcome.classification||'',
+    nearestShowroom:outcome.nearestShowroom||'',distanceKm:outcome.distanceKm,
+    provider:outcome.provider||'',fromCache:outcome.fromCache===true,
+    networkCalls:Number(outcome.networkCalls||0),strivenApiCalls:0,salesOrdersWritten:0};
+  Logger.log(JSON.stringify(summary));
+  return summary;
+}
+
 (function () {
   'use strict';
   if (!CF.SalesOrderDraft || typeof CF.SalesOrderDraft.build !== 'function') return;
