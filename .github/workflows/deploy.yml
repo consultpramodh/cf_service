@@ -89,6 +89,7 @@ jobs:
           node tests/missing-request-source.test.cjs
           node tests/service-zone.test.cjs
           node tests/service-zone-sheet.test.cjs
+          node tests/service-geo-private.test.cjs
 
       - name: Require existing clasp authorization
         shell: bash
