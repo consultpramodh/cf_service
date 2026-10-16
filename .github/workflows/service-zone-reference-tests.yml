@@ -1,0 +1,28 @@
+name: Verify service-area reference (no deployment)
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feat/service-area-sheet-reference-20261016
+    paths:
+      - src/70_Workflow_Automation.gs
+      - tests/service-zone.test.cjs
+      - tests/service-zone-sheet.test.cjs
+      - data/service-area-municipalities-provisional-2026-10-16.csv
+      - .github/workflows/service-zone-reference-tests.yml
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Syntax check full Apps Script automation source
+        run: node -e "new (require('node:vm').Script)(require('node:fs').readFileSync('src/70_Workflow_Automation.gs','utf8'))"
+      - name: Test legacy zone behavior
+        run: node tests/service-zone.test.cjs
+      - name: Test sheet-backed municipal reference and geo preview guards
+        run: node tests/service-zone-sheet.test.cjs
