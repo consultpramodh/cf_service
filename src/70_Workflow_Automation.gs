@@ -919,6 +919,229 @@ CF.ServiceZone = (function () {
     }};
 })();
 
+
+/* CF_SERVICEOPS_OSM_PRIVATE_GEOGRAPHY_SHADOW_R1
+ * Opt-in, read-only service-geometry evidence. Not part of SO creation.
+ * No private customer addresses go to nominatim.openstreetmap.org.
+ * A vetted private/contracted OSM-based geocoder must be configured before
+ * enabling requests. Persistent cache stores only hash + geocode metadata,
+ * never original customer name, street text, phone or email.
+ * Public Nominatim usage/privacy policy:
+ * https://operations.osmfoundation.org/policies/nominatim/
+ * Data © OpenStreetMap contributors, ODbL 1.0 (https://osm.org/copyright).
+ */
+CF.ServiceGeo = (function () {
+  'use strict';
+  var SHEET = '10 Service Geocodes — Private';
+  var HEADERS = ['Address SHA256','Latitude','Longitude','Municipality','OSM Type',
+    'OSM ID','Geocoded At','Provider','Match Status'];
+  var MEMORY_PREFIX = 'CF_GEO_R1_';
+  var LAST_CALL_KEY = 'CF_SERVICE_GEO_LAST_REQUEST_MS';
+  var RATE_MILLIS = 15000; // no burst; conservative 4 per minute at most
+  var MAX_CACHE_AGE_MS = 90 * 86400000;
+
+  function text_(v) { return v == null ? '' : String(v).trim(); }
+  function key_(v) {
+    var s = text_(v);
+    try { s = s.normalize('NFD').replace(/[\u0300-\u036f]/g,''); } catch (e) {}
+    return s.toUpperCase().replace(/[^A-Z0-9]/g,'');
+  }
+  function roadKey_(v) {
+    return text_(v).toUpperCase().replace(/\b(ROAD)\b/g,'RD')
+      .replace(/\b(STREET)\b/g,'ST').replace(/\b(AVENUE)\b/g,'AVE')
+      .replace(/\b(BOULEVARD)\b/g,'BLVD').replace(/\b(DRIVE)\b/g,'DR')
+      .replace(/[^A-Z0-9]/g,'');
+  }
+  function requestParts_(request) {
+    request = request || {};
+    var street = text_(request.Street), m = street.match(/^\s*(\d+[A-Z]?)\s+(.+)$/i);
+    var postal = key_(request['Postal Code']);
+    if (!m || !/^[ABCEGHJ-NPRSTVXY]\d[ABCEGHJ-NPRSTV-Z]\d[ABCEGHJ-NPRSTV-Z]\d$/.test(postal))
+      return {ok:false,reason:'SERVICE_ADDRESS_INCOMPLETE_OR_INVALID'};
+    if (key_(request.Province) !== 'ON' && key_(request.Province) !== 'ONTARIO')
+      return {ok:false,reason:'SERVICE_PROVINCE_UNVERIFIED'};
+    if (['CA','CAN','CANADA'].indexOf(key_(request.Country))===-1)
+      return {ok:false,reason:'SERVICE_COUNTRY_UNVERIFIED'};
+    return {ok:true,house:key_(m[1]),road:roadKey_(m[2]),street:street,
+      postal:postal,city:text_(request.City),query:street+', '+text_(request.City)+', Ontario, '+postal+', Canada'};
+  }
+  function addressHash_(parts) {
+    if (!CF.Util || typeof CF.Util.sha256 !== 'function') throw new Error('GEO_HASH_UNAVAILABLE');
+    // Normalized content hashes are identifiers only; do not log raw addresses.
+    return CF.Util.sha256(parts.house+'|'+parts.road+'|'+key_(parts.city)+'|'+parts.postal+'|CA');
+  }
+  function sheet_() {
+    if (!CF.Util || typeof CF.Util.getSpreadsheet !== 'function') throw new Error('GEO_SPREADSHEET_UNAVAILABLE');
+    var s = CF.Util.getSpreadsheet().getSheetByName(SHEET);
+    if (!s) throw new Error('GEO_CACHE_SHEET_NOT_INSTALLED');
+    var first = s.getRange(1,1,1,HEADERS.length).getDisplayValues()[0];
+    if (first.join('|') !== HEADERS.join('|')) throw new Error('GEO_CACHE_SCHEMA_MISMATCH');
+    return s;
+  }
+  function cache_() {
+    try { return CacheService.getScriptCache(); } catch(e) { return null; }
+  }
+  function cached_(parts) {
+    var key = addressHash_(parts), c=cache_(), record=null;
+    if (c) {
+      try { var raw=c.get(MEMORY_PREFIX+key.slice(0,32)); if(raw) record=JSON.parse(raw); } catch(e) {}
+    }
+    if (!record) {
+      var sh=sheet_(), last=sh.getLastRow();
+      if (last<2) return null;
+      // Exact SHA match; no full-table read, no additional Striven API call.
+      var found=sh.getRange(2,1,last-1,1).createTextFinder(key).matchEntireCell(true).findNext();
+      if (!found) return null;
+      var row=sh.getRange(found.getRow(),1,1,HEADERS.length).getDisplayValues()[0];
+      record={lat:Number(row[1]),lon:Number(row[2]),municipality:row[3],
+        osmType:row[4],osmId:row[5],geocodedAt:row[6],provider:row[7],status:row[8]};
+    }
+    if (record.status!=='MATCHED_EXACT' ||
+        !isFinite(record.lat) || !isFinite(record.lon) ||
+        Date.now()-Date.parse(record.geocodedAt)>MAX_CACHE_AGE_MS ||
+        !isFinite(Date.parse(record.geocodedAt))) return null;
+    if(c) {try {c.put(MEMORY_PREFIX+key.slice(0,32),JSON.stringify(record),21600);} catch(e) {}}
+    return record;
+  }
+  function persist_(parts,record) {
+    var sh=sheet_(), key=addressHash_(parts);
+    var last=sh.getLastRow(), found=last>=2
+      ? sh.getRange(2,1,last-1,1).createTextFinder(key).matchEntireCell(true).findNext() : null;
+    var row=[key,record.lat,record.lon,record.municipality,record.osmType,
+      record.osmId,record.geocodedAt,record.provider,'MATCHED_EXACT'];
+    sh.getRange(found?found.getRow():last+1,1,1,HEADERS.length).setValues([row]);
+    var c=cache_();
+    if(c) {try {c.put(MEMORY_PREFIX+key.slice(0,32),JSON.stringify(record),21600);}catch(e) {}}
+  }
+  function candidate_(parts,item) {
+    if (!item || !item.address) return {ok:false,reason:'OSM_NO_ADDRESS_COMPONENTS'};
+    var a=item.address||{},house=key_(a.house_number),
+        road=roadKey_(a.road||a.pedestrian||a.residential||''),
+        postal=key_(a.postcode),country=key_(a.country_code),municipality=
+          text_(a.city||a.town||a.municipality||a.village||'');
+    if (house!==parts.house || road!==parts.road || postal!==parts.postal || country!=='CA')
+      return {ok:false,reason:'OSM_ADDRESS_COMPONENT_MISMATCH'};
+    if (!municipality) return {ok:false,reason:'OSM_MUNICIPALITY_MISSING'};
+    var lat=Number(item.lat),lon=Number(item.lon);
+    if (!isFinite(lat)||!isFinite(lon)||lat<42||lat>45||lon<-81||lon>-78)
+      return {ok:false,reason:'OSM_COORDINATES_INVALID'};
+    return {ok:true,lat:lat,lon:lon,municipality:municipality,
+      osmType:text_(item.osm_type),osmId:text_(item.osm_id)};
+  }
+  function acceptedCandidate_(parts,results) {
+    if (!Array.isArray(results)) return {ok:false,reason:'OSM_RESPONSE_INVALID'};
+    var candidates=results.map(function(x){return candidate_(parts,x);}).filter(function(x){return x.ok;});
+    // Same exact point can appear twice: require one unique OSM feature.
+    var uniques={};
+    candidates.forEach(function(x){uniques[x.osmType+':'+x.osmId]=x;});
+    var matches=Object.keys(uniques);
+    if (!matches.length) return {ok:false,reason:'OSM_NO_EXACT_ADDRESS_MATCH'};
+    if (matches.length!==1) return {ok:false,reason:'OSM_MULTIPLE_EXACT_MATCHES'};
+    return uniques[matches[0]];
+  }
+  function previewRecord_(request,record,cached) {
+    var parts=requestParts_(request);
+    if(!parts.ok) return {status:'REVIEW',reason:parts.reason,networkCalls:0};
+    var municipality=record.municipality,zone=null;
+    if(CF.ServiceZone&&typeof CF.ServiceZone.getMunicipalityReference==='function')
+      zone=CF.ServiceZone.getMunicipalityReference(parts.city);
+    var requestedMunicipality=zone&&zone.ok&&zone.record?zone.record.municipality:'';
+    // A known alias MUST agree with the geocoder's city. OSM is evidence, not
+    // an authority to override a customer/location record without review.
+    if(requestedMunicipality && key_(requestedMunicipality)!==key_(municipality))
+      return {status:'REVIEW',reason:'OSM_MUNICIPALITY_CONFLICT',
+        submittedMunicipality:requestedMunicipality,geocoderMunicipality:municipality,networkCalls:0};
+    var distance=CF.ServiceZone.previewAddressDistance(record.lat,record.lon);
+    return {status:'PREVIEW_ONLY',provider:record.provider,fromCache:!!cached,
+      municipality:municipality,latitude:record.lat,longitude:record.lon,
+      osmType:record.osmType,osmId:record.osmId,geocodedAt:record.geocodedAt,
+      administrativeZoneOption:'',serviceEligibility:'NOT_AUTOMATICALLY_APPROVED',
+      distanceStatus:distance.status,classification:distance.classification||'',
+      nearestShowroom:distance.nearestShowroom||'',distanceKm:distance.distanceKm==null?null:distance.distanceKm,
+      reason:distance.reason||'',attribution:'© OpenStreetMap contributors (ODbL)',
+      attributionUrl:'https://www.openstreetmap.org/copyright'};
+  }
+  function providerConfig_() {
+    var props=PropertiesService.getScriptProperties();
+    if (props.getProperty('CF_SERVICE_GEO_PRIVATE_ENABLED')!=='true' ||
+        props.getProperty('CF_SERVICE_GEO_PRIVATE_ADDRESS_APPROVED')!=='true')
+      return {ok:false,reason:'PRIVATE_GEO_PROVIDER_NOT_APPROVED'};
+    var endpoint=text_(props.getProperty('CF_SERVICE_GEO_PRIVATE_ENDPOINT'));
+    if (!/^https:\/\/[A-Za-z0-9.-]+(?::443)?\/[A-Za-z0-9_\/.-]*search$/i.test(endpoint) ||
+        /(^https:\/\/)(?:nominatim\.openstreetmap\.org|.*\.openstreetmap\.org|openstreetmap\.org)\b/i.test(endpoint))
+      return {ok:false,reason:'PRIVATE_GEO_ENDPOINT_INVALID_OR_PUBLIC'};
+    return {ok:true,endpoint:endpoint,apiKey:text_(props.getProperty('CF_SERVICE_GEO_API_KEY'))};
+  }
+  function evaluateRequest(request) {
+    var parts=requestParts_(request);
+    if (!parts.ok) return {status:'REVIEW',reason:parts.reason,networkCalls:0};
+    try {
+      var evidence=cached_(parts);
+      if (evidence) return previewRecord_(request,evidence,true);
+    } catch(e) {return {status:'REVIEW',reason:'GEO_CACHE_UNAVAILABLE',networkCalls:0};}
+    var config;
+    try { config=providerConfig_(); }
+    catch(e) { return {status:'REVIEW',reason:'PRIVATE_GEO_PROVIDER_NOT_CONFIGURED',networkCalls:0}; }
+    if(!config.ok) return {status:'REVIEW',reason:config.reason,networkCalls:0};
+    var lock=LockService.getScriptLock();
+    if(!lock.tryLock(100)) return {status:'REVIEW',reason:'GEO_RATE_LIMITED',networkCalls:0};
+    try {
+      // Lock covers repeat-cache recheck, throttling, HTTP and durable commit.
+      var again=cached_(parts);
+      if(again) return previewRecord_(request,again,true);
+      var props=PropertiesService.getScriptProperties(),now=Date.now(),
+          last=Number(props.getProperty(LAST_CALL_KEY)||0);
+      if(now-last<RATE_MILLIS) return {status:'REVIEW',reason:'GEO_RATE_LIMITED',networkCalls:0};
+      var url=config.endpoint+'?format=jsonv2&addressdetails=1&limit=3&countrycodes=ca&q='+
+        encodeURIComponent(parts.query);
+      var options={method:'get',muteHttpExceptions:true,followRedirects:false,
+        headers:{'Accept':'application/json','User-Agent':'CF-ServiceOps/5.14.4 (classicfireplace.ca; private geocoding)'}};
+      if(config.apiKey) options.headers['X-API-Key']=config.apiKey;
+      props.setProperty(LAST_CALL_KEY,String(now));
+      var response;
+      try {response=UrlFetchApp.fetch(url,options);} catch(e) {
+        return {status:'REVIEW',reason:'PRIVATE_GEO_REQUEST_FAILED',networkCalls:1};}
+      if(response.getResponseCode()!==200)
+        return {status:'REVIEW',reason:'PRIVATE_GEO_HTTP_ERROR',networkCalls:1};
+      var results;
+      try { results=JSON.parse(response.getContentText()); }
+      catch(e) {return {status:'REVIEW',reason:'PRIVATE_GEO_RESPONSE_UNREADABLE',networkCalls:1};}
+      var picked=acceptedCandidate_(parts,results);
+      if(!picked.ok) return {status:'REVIEW',reason:picked.reason,networkCalls:1};
+      var record={lat:picked.lat,lon:picked.lon,municipality:picked.municipality,
+        osmType:picked.osmType,osmId:picked.osmId,geocodedAt:new Date().toISOString(),
+        provider:'APPROVED_PRIVATE_OSM_PROVIDER',status:'MATCHED_EXACT'};
+      // Never record mismatch as exact, or persist on ambiguous OSM municipality.
+      var reference=CF.ServiceZone.getMunicipalityReference(parts.city);
+      if(reference.ok&&reference.record&&
+         key_(reference.record.municipality)!==key_(record.municipality))
+        return {status:'REVIEW',reason:'OSM_MUNICIPALITY_CONFLICT',networkCalls:1};
+      persist_(parts,record);
+      var preview=previewRecord_(request,record,false);
+      preview.networkCalls=1;
+      return preview;
+    } catch(e) {
+      return {status:'REVIEW',reason:'PRIVATE_GEO_UNEXPECTED_ERROR',networkCalls:0};
+    } finally {lock.releaseLock();}
+  }
+  function evaluateRequestId(requestId) {
+    if (!CF.Util || typeof CF.Util.findRecord!=='function') return {status:'REVIEW',reason:'GEO_REQUEST_LOOKUP_UNAVAILABLE'};
+    var req=CF.Util.findRecord('SERVICE_REQUESTS','Request ID',text_(requestId));
+    if(!req) return {status:'REVIEW',reason:'GEO_REQUEST_NOT_FOUND'};
+    return evaluateRequest(req);
+  }
+  return {evaluateRequest:evaluateRequest,evaluateRequestId:evaluateRequestId,
+    previewProviderResult:function(request,results) {
+      var parts=requestParts_(request);
+      if(!parts.ok) return {status:'REVIEW',reason:parts.reason,networkCalls:0};
+      var match=acceptedCandidate_(parts,results);
+      if(!match.ok) return {status:'REVIEW',reason:match.reason,networkCalls:0};
+      return previewRecord_(request,{lat:match.lat,lon:match.lon,municipality:match.municipality,
+        osmType:match.osmType,osmId:match.osmId,geocodedAt:new Date().toISOString(),
+        provider:'OSM_FIXTURE',status:'MATCHED_EXACT'},false);
+    }};
+})();
+
 (function () {
   'use strict';
   if (!CF.SalesOrderDraft || typeof CF.SalesOrderDraft.build !== 'function') return;
