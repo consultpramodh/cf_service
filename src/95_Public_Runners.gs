@@ -724,6 +724,16 @@ function TESTING_20_recoverTechnicalAssociationsReadOnly() {
   });
 }
 
+/* One-case ledger recovery. Performs Contact GET only; never changes Striven. */
+function FIX_20260929_verifyContact57285ForRequest5779() {
+  return CF.PublicRunners.run('VERIFY ALTERNATE CONTACT 57285', function () {
+    var out=CF.StrivenControlledContactCreate.reconcileVerifiedAlternateContactReadOnly(
+      'SR-20260928130430-5779','56565','57285');
+    console.log('Alternate Contact recovery: '+JSON.stringify(out));
+    return out;
+  });
+}
+
 function TESTING_17_previewSalesOrderCertificationSelectedRow() {
   return CF.PublicRunners.run('TEST 17 - READ ONLY Sales Order Certification Preview', function () {
     var requestId=TESTING_selectedRequestId_();
