@@ -85,10 +85,19 @@ jobs:
           done
           printf '%s' '{"scriptId":"1QZp4NAFeA8LmWBN31ylJYdK4XFepBX1h2lP_APaR-d1lTAC-d8LA9x3g","rootDir":"."}' > "$RUNNER_TEMP/serviceops-live/.clasp.json"
           (cd "$RUNNER_TEMP/serviceops-live" && npx -y @google/clasp@3.3.0 pull >/dev/null)
+          # Compare current production source, including its known release transform.
+          # The October 14 checkpoint remains historical; it is not the live baseline.
+          node --input-type=module - <<'JS'
+          import fs from 'node:fs';
+          import path from 'node:path';
+          import {patchReadinessCounts} from './scripts/readiness-patch.mjs';
+          const file=path.join(process.env.RUNNER_TEMP,'serviceops-base','30_Striven_Data.gs');
+          fs.writeFileSync(file,patchReadinessCounts(fs.readFileSync(file,'utf8')));
+          JS
           python3 - <<'PY'
           import os,json,hashlib,pathlib,sys
           live=pathlib.Path(os.environ['RUNNER_TEMP'])/'serviceops-live'
-          expected=pathlib.Path('backups/apps-script/p0-live-head-20261014')
+          expected=pathlib.Path(os.environ['RUNNER_TEMP'])/'serviceops-base'
           def inventory(root):
               out={}
               for path in root.iterdir():
@@ -113,8 +122,8 @@ jobs:
           if len(a)!=17 or missing or extra:
               print('LIVE_SOURCE_INVENTORY_FAIL');sys.exit(2)
           if different:
-              print('LIVE_SOURCE_CHANGED_SINCE_CHECKPOINT_STOP');sys.exit(3)
-          print('LIVE_SOURCE_PARITY_WITH_APPROVED_BACKUP_PASS')
+              print('LIVE_SOURCE_DIFFERS_FROM_CURRENT_PRODUCTION_STOP');sys.exit(3)
+          print('LIVE_SOURCE_PARITY_WITH_CURRENT_PRODUCTION_PASS')
           PY
 
       - name: Preserve exact current source in isolated P0 backup branch
@@ -126,7 +135,7 @@ jobs:
         run: |
           set -euo pipefail
           if [ "$HEAD_REPO" != "$EXPECTED_HEAD_REPO" ]; then echo "SOURCE_SNAPSHOT_SKIPPED_EXTERNAL_PR"; exit 0; fi
-          export SNAPSHOT_DIR='backups/apps-script/p0-live-head-20261014'
+          export SNAPSHOT_DIR="backups/apps-script/live-head-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           python3 - <<'PY'
           import pathlib,os,re,hashlib,json,sys
           live=pathlib.Path(os.environ['RUNNER_TEMP'])/'serviceops-live'
@@ -157,8 +166,21 @@ jobs:
           git add "$SNAPSHOT_DIR"
           if git diff --cached --quiet; then echo "SOURCE_SNAPSHOT_ALREADY_PRESENT"; exit 0; fi
           git commit -m 'Back up current live ServiceOps HEAD for P0 repair [skip ci]'
-          git push origin HEAD:refs/heads/fix/p0-request-ledger-integrity-20261014
-          echo "SOURCE_SNAPSHOT_COMMITTED_TO_FIX_BRANCH"
+          SNAPSHOT_BRANCH="backup/live-serviceops-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          git push origin "HEAD:refs/heads/$SNAPSHOT_BRANCH"
+          git fetch --no-tags --depth=1 origin "$SNAPSHOT_BRANCH"
+          test "$(git rev-parse HEAD)" = "$(git rev-parse FETCH_HEAD)"
+          python3 - <<'PYVERIFY'
+          import pathlib,os,json,hashlib,subprocess
+          root=pathlib.Path(os.environ['SNAPSHOT_DIR'])
+          manifest=json.loads(subprocess.check_output(['git','show','FETCH_HEAD:'+str(root/'manifest.json')]))
+          for item in manifest['files']:
+              raw=subprocess.check_output(['git','show','FETCH_HEAD:'+str(root/item['file'])])
+              if hashlib.sha256(raw).hexdigest()!=item['sha256']:
+                  raise RuntimeError('REMOTE_SOURCE_SNAPSHOT_HASH_MISMATCH '+item['file'])
+          print('REMOTE_SOURCE_SNAPSHOT_VERIFIED files='+str(len(manifest['files'])))
+          PYVERIFY
+          echo "SOURCE_SNAPSHOT_COMMITTED branch=$SNAPSHOT_BRANCH"
 
       - name: Preserve hash-only parity manifest
         if: always()
@@ -167,3 +189,4 @@ jobs:
           name: p0-live-source-hashes
           path: ${{ runner.temp }}/serviceops-parity/manifest.json
           retention-days: 14
+

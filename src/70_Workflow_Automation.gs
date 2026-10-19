@@ -719,12 +719,14 @@ CF.StrivenCustomLists = (function () {
 
 /* CF_SERVICEOPS_CITY_ZONE_MAPPING_20261015
  * Exact service-city lookup. No Striven requests and no geographic guessing.
- * East/North/Other and ambiguous Toronto aliases await business boundaries.
+ * User-approved 2026-10-19: unmapped Ontario/Canada cities use Other (510).
+ * Toronto community aliases retain 508. Province/country/identity guards remain.
+ * Administrative zone assignment does not establish geographic eligibility.
  */
 CF.ServiceZone = (function () {
   function text(v) { return v == null ? '' : String(v).trim(); }
   function key(v) { return text(v).toUpperCase().replace(/[.]/g, '').replace(/\s+/g, ' '); }
-  var cities = {WHITBY:'506', AJAX:'506', PICKERING:'506', OSHAWA:'506', TORONTO:'508'};
+  var cities = {WHITBY:'506', AJAX:'506', PICKERING:'506', OSHAWA:'506', TORONTO:'508', SCARBOROUGH:'508', 'NORTH YORK':'508', 'EAST YORK':'508', ETOBICOKE:'508', 'WEST ROUGE':'508'};
   var labels = {'506':'Zone 1: Durham','507':'Zone 2: East','508':'Zone 3: Toronto','509':'Zone 4: North','510':'Zone 5: Other'};
   function resolve(request, location) {
     request = request || {}; location = location || {};
@@ -738,10 +740,15 @@ CF.ServiceZone = (function () {
     var country = key(location.Country || request.Country);
     if (province && province !== 'ON' && province !== 'ONTARIO') return {status:'REVIEW', reason:'SERVICE_PROVINCE_UNMAPPED', city:city};
     if (country && ['CA','CAN','CANADA'].indexOf(country) === -1) return {status:'REVIEW', reason:'SERVICE_COUNTRY_UNMAPPED', city:city};
-    var id = Object.prototype.hasOwnProperty.call(cities,key(city)) ? cities[key(city)] : '';
-    return {status:id?'READY':'REVIEW', id:id, name:labels[id]||'', city:city, locationId:locationId,
+    if (!city) return {status:'REVIEW', reason:'SERVICE_CITY_REQUIRED', city:city};
+    if (!province) return {status:'REVIEW', reason:'SERVICE_PROVINCE_REQUIRED', city:city};
+    if (!country) return {status:'REVIEW', reason:'SERVICE_COUNTRY_REQUIRED', city:city};
+    var mapped = Object.prototype.hasOwnProperty.call(cities,key(city));
+    var id = mapped ? cities[key(city)] : '510';
+    return {status:'READY', id:id, name:labels[id]||'', city:city, locationId:locationId,
       source:location.City?'CUSTOMER_SCOPED_LOCATION_CACHE_CITY':'SERVICE_REQUEST_CITY',
-      reason:id?'EXACT_SERVICE_CITY_MAPPING':'SERVICE_CITY_UNMAPPED'};
+      serviceEligibility:'NOT_ESTABLISHED_BY_ZONE_MAPPING',
+      reason:mapped?'EXACT_SERVICE_CITY_MAPPING':'SERVICE_CITY_DEFAULT_OTHER_USER_APPROVED'};
   }
   function apply(draft, request, location) {
     var result = resolve(request,location), f = draft.customFields && draft.customFields['798'];
