@@ -209,10 +209,10 @@ const beforeInv = inventory(before);
 writeFileSync(resolve(work, 'before.sha256.json'), JSON.stringify(Object.fromEntries(beforeInv), null, 2) + '\n');
 console.log('Checkpoint: ' + before);
 
-// Release 202 source is already preserved by this immutable GitHub commit.
+// Current production baseline independently reconciled against the 2026-10-16 live snapshot.
 // Compare the live pull with the deployed source including the release transforms.
 // Any unexpected live edit stops the push; the older pre-P0 checkpoint is retained.
-const approvedSourceCommit = '6682a24e5bd7f844ddbe112182ebbfc952ff077a';
+const approvedSourceCommit = '60d2a6f6089cd5ffe5266427ec8a87030036b8c4';
 run('git', ['fetch', '--no-tags', '--depth=1', 'origin', approvedSourceCommit]);
 const approvedFiles = readdirSync(resolve(root, 'src')).filter(name => /\.(?:gs|json)$/.test(name)).sort();
 if (approvedFiles.length !== 17 || beforeInv.size !== 17) throw new Error('LIVE_SOURCE_INVENTORY_DRIFT_STOP');
@@ -227,7 +227,7 @@ for (const name of approvedFiles) {
   expected = normalizeReleaseMetadataText(expected).replace(/\r\n/g, '\n').trimEnd() + '\n';
   if (!existsSync(actual) || expected !== normalizedText(actual)) throw new Error('LIVE_SOURCE_BASELINE_DRIFT_STOP: ' + name);
 }
-console.log('LIVE_BASELINE_PARITY_PASS: immutable release-202 source, all 17 files');
+console.log('LIVE_BASELINE_PARITY_PASS: verified 2026-10-16 production baseline, all 17 files');
 
 console.log('\n=== 4/10 Replace finalized modules + normalize live version metadata + remove obsolete V2 shadow generation ===');
 for (const base of PATCH_BASES) {
@@ -396,4 +396,5 @@ console.log('');
 console.log('The existing watchdog trigger uses the same public watchdog function name.');
 console.log('On its next run it will normalize the trigger topology, recover the recent queue,');
 console.log('and schedule AUTO_FINAL_ServiceOps. Verify with FINALIZE_20260930_verifySingleServiceOpsModel().');
+
 
