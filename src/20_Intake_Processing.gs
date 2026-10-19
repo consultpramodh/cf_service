@@ -2677,13 +2677,32 @@ function buildRecords_(
           }
         );
 
-      /* CF_SERVICEOPS_V5_10_8_HANDLEPOST_EVENT_KICK_R1 */
-      if (result && result.ok === true && result.duplicate !== true && CF.EventDrivenServiceAutomation && typeof CF.EventDrivenServiceAutomation.kick === 'function') {
+      /* A duplicate delivery can repair a failed first kick, but only while
+       * the durable request is still untouched NEW INTAKE. Never requeue a
+       * progressed request merely because Gravity Forms resent its webhook. */
+      var retryDuplicateKick = false;
+      if (result && result.ok === true && result.duplicate === true) {
+        try {
+          var duplicateRow = d.util.findRecord('SERVICE_REQUESTS', 'Request ID', result.requestId);
+          retryDuplicateKick = !!duplicateRow &&
+            String(duplicateRow['Current Stage'] || '').trim().toUpperCase() === 'NEW INTAKE' &&
+            String(duplicateRow['Request Status'] || '').trim().toUpperCase() === 'OPEN' &&
+            String(duplicateRow['Manual Review?'] || '').trim().toUpperCase() !== 'YES' &&
+            String(duplicateRow['Duplicate Risk Status'] || '').trim().toUpperCase() === 'NONE' &&
+            !String(duplicateRow['Write Journal JSON'] || '').trim();
+        } catch (duplicateLookupError) {
+          try { console.error('CF ServiceOps duplicate kick eligibility lookup failed: ' + duplicateLookupError); } catch (ignoredLookupConsole) {}
+        }
+      }
+      if (result && result.ok === true && (result.duplicate !== true || retryDuplicateKick) && CF.EventDrivenServiceAutomation && typeof CF.EventDrivenServiceAutomation.kick === 'function') {
         try {
           result.automationKick = CF.EventDrivenServiceAutomation.kick(result.requestId);
         } catch (automationError) {
           result.automationKick = { ok:false, scheduled:false, error:automationError && automationError.message ? automationError.message : String(automationError), liveWriteExecuted:false };
           try { console.error('CF ServiceOps event automation kick failed: ' + result.automationKick.error); } catch (ignoredAutomationConsole) {}
+        }
+        if (result.automationKick && result.automationKick.ok === false) {
+          try { d.util.logEvent({module:MODULE_NAME,action:'WEBHOOK_AUTOMATION_KICK',status:'FAILED',requestId:result.requestId,details:{duplicateRetry:retryDuplicateKick,scheduled:false},message:result.automationKick.error || 'Worker kick failed.',version:VERSION}); } catch (ignoredKickLog) {}
         }
       }
 
