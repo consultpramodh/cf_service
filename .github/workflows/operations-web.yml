@@ -10,6 +10,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   operations-web:
+    if: contains(github.event.head_commit.message, '[deploy-operations]')
     runs-on: ubuntu-latest
     env:
       CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
