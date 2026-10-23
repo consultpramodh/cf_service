@@ -1,0 +1,53 @@
+name: Deploy authenticated Operations Web v1.1.0
+on:
+  push:
+    branches: [feat/operations-web-20261023]
+    paths: ['operations-web/**', '.github/workflows/operations-web.yml']
+permissions:
+  contents: read
+concurrency:
+  group: cf-serviceops-production-v2
+  cancel-in-progress: false
+jobs:
+  operations-web:
+    runs-on: ubuntu-latest
+    env:
+      CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Check isolated interface and security behavior
+        run: node operations-web/test.cjs
+      - name: Authenticate and pull live source
+        run: |
+          set -euo pipefail
+          test -n "$CLASPRC_JSON"
+          umask 077
+          printf '%s' "$CLASPRC_JSON" > "$HOME/.clasprc.json"
+          node operations-web/release.mjs prepare
+      - name: Back up complete live source before mutation
+        uses: actions/upload-artifact@v4
+        with:
+          name: operations-web-before-${{ github.run_id }}
+          path: |
+            .operations-release/before/*
+            .operations-release/hashes-before.json
+            .operations-release/deployments-before.txt
+          retention-days: 90
+          if-no-files-found: error
+      - name: Deploy separate domain-authenticated interface and verify source
+        run: node operations-web/release.mjs deploy
+      - name: Restore checkpoint on failure
+        if: failure()
+        run: node operations-web/release.mjs rollback
+      - name: Save deployment result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: operations-web-result-${{ github.run_id }}
+          path: |
+            .operations-release/result.json
+            .operations-release/new-deployment.json
+          if-no-files-found: warn
