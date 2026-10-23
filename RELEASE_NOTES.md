@@ -1,3 +1,11 @@
+# v5.14.5 — Durable frontend refresh
+
+Request-scoped updates now invalidate the Operator Queue. Pending generations survive lock contention, scheduling failures and refresh failures; concurrent mutations remain pending until verified. The existing five-minute watchdog checks frontend freshness independently of business backlog. Refresh results fail when request parity or the dashboard fails.
+
+Changes to Apps Script are limited to the queue module, the watchdog integration, and release version labels in public runners. Intake, identity matching, Striven writes and duplicate guards are preserved. Deployment checkpoints all 17 live files before mutation, changes three files, verifies remote hashes and the live queue, and restores the checkpoint on failure.
+
+Validation: all 16 Node test files, JavaScript syntax checks and workflow YAML parsing passed locally. Live deployment verification is required before declaring release success.
+
 # Release Notes — v5.14.4
 
 ## Version metadata normalization

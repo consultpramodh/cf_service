@@ -3,7 +3,7 @@
 /************************************************************
  * APPS SCRIPT — 50_Operator_Queue.gs
  * CF ServiceOps — Operator Queue + Service Snapshot
- * Version: 5.14.4
+ * Version: 5.14.5
  *
  * OPERATOR CONTRACT
  * - Dashboard is read-only and shows service-wide KPIs/snapshots.
@@ -18,7 +18,7 @@ CF.OperatorQueue = (function () {
   'use strict';
 
   var MODULE_NAME = '50_Operator_Queue';
-  var VERSION = '5.14.4';
+  var VERSION = '5.14.5';
 
   var STAGE_PRIORITY = {
     'NEEDS REVIEW': 1,
@@ -1514,9 +1514,9 @@ function salesOrderText_(row,operationalIndex){
         module: MODULE_NAME, action: 'FAST_RESOLVE_AMBIGUOUS_CANDIDATE', status: 'COMPLETE',
         requestId: record['Request ID'], correlationId: record['Correlation ID'], actor: actor_(),
         details: { entityType: entityType, entityId: entityId, resolvedName: resolvedName, resultingStage: stage, queueRefreshDeferred: true, simpleTriggerSafe: true },
-        version: '5.14.4'
+        version: '5.14.5'
       });
-      return { ok: true, version: '5.14.4', requestId: record['Request ID'], selectedEntity: entityType.toUpperCase(), selectedId: entityId, stage: stage, queueRefreshDeferred: true, liveWritesAllowed: false };
+      return { ok: true, version: '5.14.5', requestId: record['Request ID'], selectedEntity: entityType.toUpperCase(), selectedId: entityId, stage: stage, queueRefreshDeferred: true, liveWritesAllowed: false };
     }, 3000);
   }
 
@@ -2059,7 +2059,7 @@ var CF_SERVICEOPS_OPERATIONAL_PROJECTION_V5100_R6_ = (function () {
     SpreadsheetApp.flush();
     return {
       ok: true,
-      version: '5.14.4',
+      version: '5.14.5',
       mode: 'OPERATIONAL_PROJECTION_R6',
       queueRows: queueRows,
       workOrdersInCache: workOrders.length,
@@ -2087,7 +2087,7 @@ var CF_SERVICEOPS_OPERATIONAL_PROJECTION_V5100_R6_ = (function () {
     } catch (error) {
       projection = {
         ok: false,
-        version: '5.14.4',
+        version: '5.14.5',
         mode: 'OPERATIONAL_PROJECTION_R6',
         error: error && error.message ? error.message : String(error)
       };
@@ -2111,7 +2111,7 @@ var CF_SERVICEOPS_OPERATIONAL_PROJECTION_V5100_R6_ = (function () {
 /************************************************************
  * CF_SERVICEOPS_V5_10_15_LEAN_QUEUE_SNAPSHOT_R1
  * CF ServiceOps — Authoritative Lean Operator Queue Snapshot
- * Version: 5.14.4
+ * Version: 5.14.5
  *
  * This block is intentionally appended AFTER all historical
  * Queue/projection wrappers. It supersedes the legacy refresh
@@ -2129,7 +2129,7 @@ var CF_SERVICEOPS_OPERATIONAL_PROJECTION_V5100_R6_ = (function () {
 var CF_SERVICEOPS_LEAN_QUEUE_V51015_R1_ = (function () {
   'use strict';
 
-  var VERSION='5.14.4';
+  var VERSION='5.14.5';
   var LAYOUT_PROPERTY='CF_OPERATOR_QUEUE_LAYOUT_V51015_R1';
 
   function clean_(v){return String(v===null||v===undefined?'':v).trim();}
@@ -2581,7 +2581,7 @@ var CF_SERVICEOPS_LEAN_QUEUE_V51015_R1_ = (function () {
 /************************************************************
  * CF_SERVICEOPS_V5_10_16_ALL_REQUEST_OPERATIONAL_RECONCILIATION_R1
  * CF ServiceOps — All-Request Operational Link Reconciliation
- * Version: 5.14.4
+ * Version: 5.14.5
  *
  * PURPOSE
  * Permanently link Service Requests to existing Striven
@@ -2599,7 +2599,7 @@ var CF_SERVICEOPS_LEAN_QUEUE_V51015_R1_ = (function () {
 var CF_SERVICEOPS_OPERATIONAL_LINK_RECONCILIATION_V51016_R1_ = (function () {
   'use strict';
 
-  var VERSION='5.14.4';
+  var VERSION='5.14.5';
   var DAY_MS=24*60*60*1000;
   var MAX_AFTER_DAYS=120;
   var MAX_BEFORE_MS=1*DAY_MS;
@@ -2946,7 +2946,7 @@ var CF_SERVICEOPS_OPERATIONAL_LINK_RECONCILIATION_V51016_R1_ = (function () {
 /************************************************************
  * CF_SERVICEOPS_V5_12_1_AUTO_SO_TASK_QUEUE_RECONCILIATION_R1
  * CF ServiceOps — Automatic Existing SO/Task Queue Reconciliation
- * Version: 5.14.4
+ * Version: 5.14.5
  *
  * PURPOSE
  * - After a successful Striven Operational Data refresh, automatically:
@@ -2971,7 +2971,7 @@ var CF_SERVICEOPS_OPERATIONAL_LINK_RECONCILIATION_V51016_R1_ = (function () {
 (function CF_SERVICEOPS_INSTALL_AUTO_SO_TASK_QUEUE_RECONCILIATION_V5121_R1_() {
   'use strict';
 
-  var VERSION = '5.14.4';
+  var VERSION = '5.14.5';
   var MODULE = '50_Operator_Queue';
   var HISTORICAL_CUTOFF_ISO = '2026-09-03T13:30:00-04:00';
   var HISTORICAL_CUTOFF_MS = new Date(HISTORICAL_CUTOFF_ISO).getTime();
@@ -3175,7 +3175,7 @@ var CF_SERVICEOPS_OPERATIONAL_LINK_RECONCILIATION_V51016_R1_ = (function () {
 /************************************************************
  * CF_SERVICEOPS_V5_12_2_ALL_EXISTING_QUEUE_RECONCILIATION_R1
  * CF ServiceOps — All Existing Operator Queue SO/Task Reconciliation
- * Version: 5.14.4
+ * Version: 5.14.5
  *
  * PURPOSE
  * - Ignore request dates for Operator Queue reconciliation.
@@ -3199,7 +3199,7 @@ var CF_SERVICEOPS_OPERATIONAL_LINK_RECONCILIATION_V51016_R1_ = (function () {
 var CF_SERVICEOPS_ALL_EXISTING_QUEUE_RECONCILIATION_V5122_R1_ = (function () {
   'use strict';
 
-  var VERSION = '5.14.4';
+  var VERSION = '5.14.5';
   var MODULE = '50_Operator_Queue';
   var ORDER_COLUMN = 8;
   var TASK_COLUMN = 9;
@@ -3717,7 +3717,7 @@ var CF_SERVICEOPS_ALL_EXISTING_QUEUE_RECONCILIATION_V5122_R1_ = (function () {
 
 (function CF_SERVICEOPS_INSTALL_ALL_EXISTING_QUEUE_RECONCILIATION_V5122_R1_() {
   'use strict';
-  var VERSION = '5.14.4';
+  var VERSION = '5.14.5';
 
   if (
     typeof CF === 'undefined' ||
@@ -3815,7 +3815,7 @@ function FIX_20260903_reconcileAllExistingOperatorQueue() {
   var result = CF.OperatorQueue.refresh();
   return {
     ok: !result || result.ok !== false,
-    version:'5.14.4',
+    version:'5.14.5',
     status:'ALL_EXISTING_OPERATOR_QUEUE_RECONCILED',
     queueRefresh:result || null,
     liveWriteExecuted:false,
@@ -3827,7 +3827,7 @@ function FIX_20260903_reconcileAllExistingOperatorQueue() {
 /************************************************************
  * CF_SERVICEOPS_V5_12_4_TEMPORAL_IDENTITY_TIEBREAK_R1
  * CF ServiceOps — Temporal Identity Tiebreak + Newsletter Tracking foundation
- * Version: 5.14.4
+ * Version: 5.14.5
  *
  * PURPOSE
  * - Keep every existing Operator Queue row in scope regardless of date.
@@ -3854,7 +3854,7 @@ function FIX_20260903_reconcileAllExistingOperatorQueue() {
 var CF_SERVICEOPS_ALL_EXISTING_QUEUE_RECONCILIATION_V5124_R1_ = (function () {
   'use strict';
 
-  var VERSION = '5.14.4';
+  var VERSION = '5.14.5';
   var MODULE = '50_Operator_Queue';
   var ORDER_COLUMN = 8;
   var TASK_COLUMN = 9;
@@ -4439,7 +4439,7 @@ var CF_SERVICEOPS_ALL_EXISTING_QUEUE_RECONCILIATION_V5124_R1_ = (function () {
 
 (function CF_SERVICEOPS_INSTALL_TEMPORAL_IDENTITY_TIEBREAK_V5124_R1_() {
   'use strict';
-  var VERSION = '5.14.4';
+  var VERSION = '5.14.5';
 
   if (
     typeof CF === 'undefined' || !CF.OperatorQueue || typeof CF.OperatorQueue.refresh !== 'function' ||
@@ -4475,7 +4475,7 @@ var CF_SERVICEOPS_ALL_EXISTING_QUEUE_RECONCILIATION_V5124_R1_ = (function () {
 /************************************************************
  * CF_SERVICEOPS_V5_12_4_NEWSLETTER_TRACKING_DASHBOARD_R1
  * CF ServiceOps — Early Bird newsletter attribution tracking
- * Version: 5.14.4
+ * Version: 5.14.5
  *
  * PURPOSE
  * - Preserve Newsletter 2's supplied tracking contract even when
@@ -4494,7 +4494,7 @@ var CF_SERVICEOPS_ALL_EXISTING_QUEUE_RECONCILIATION_V5124_R1_ = (function () {
 var CF_SERVICEOPS_NEWSLETTER_TRACKING_V5124_R1_ = (function () {
   'use strict';
 
-  var VERSION = '5.14.4';
+  var VERSION = '5.14.5';
   var MODULE = '50_Operator_Queue';
   var DASHBOARD_START_ROW = 36;
   var DASHBOARD_START_COL = 1;
@@ -4781,7 +4781,7 @@ var CF_SERVICEOPS_NEWSLETTER_TRACKING_V5124_R1_ = (function () {
 
 (function CF_SERVICEOPS_INSTALL_NEWSLETTER_TRACKING_V5124_R1_() {
   'use strict';
-  var VERSION = '5.14.4';
+  var VERSION = '5.14.5';
   if (typeof CF === 'undefined' || !CF.Util || !CF.OperatorQueue || typeof CF.OperatorQueue.refresh !== 'function') {
     throw new Error('NEWSLETTER_TRACKING_SETUP_REQUIRED | CF.Util and CF.OperatorQueue.refresh are required.');
   }
@@ -4859,7 +4859,7 @@ function FIX_20260903_reconcileAllExistingOperatorQueue() {
   var result = CF.OperatorQueue.refresh();
   return {
     ok:(!result || result.ok !== false) && backfill.ok !== false,
-    version:'5.14.4',
+    version:'5.14.5',
     status:'QUEUE_RECONCILED_AND_NEWSLETTER_TRACKING_BACKFILLED',
     queueRefresh:result || null,
     newsletterBackfill:backfill,
@@ -4884,7 +4884,7 @@ function FIX_20260903_reconcileAllExistingOperatorQueue() {
   if(typeof CF==='undefined'||!CF.OperatorQueue||!CF.Util) throw new Error('QUEUE_TIMING_HARDENING_SETUP_REQUIRED');
   if(CF.OperatorQueue.__queueTimingHardeningV5131R1===true) return;
 
-  var VERSION='5.14.4';
+  var VERSION='5.14.5';
   var baseRefresh=CF.OperatorQueue.refresh;
   var baseApply=CF.OperatorQueue.applyOperatorDecision;
   var basePatchRow=CF.Util.patchRow;
@@ -5124,18 +5124,21 @@ function FIX_20260903_reconcileAllExistingOperatorQueue() {
     return{ok:issues.length===0,requestId:requestId,rowNumber:row,expectedStatus:expectedStatus,actualStatus:actualStatus,sourceNextAction:expectedNext,queueNextAction:actualNext,workOrderNumber:n,issues:issues};
   }
   function verifyRecent_(limit){limit=Math.max(1,Number(limit||20));var rows=CF.Util.readRecords('SERVICE_REQUESTS').slice();function ms_(r){var v=r['Submitted At']||r['Created At'];var d=v instanceof Date?v:new Date(v),t=d.getTime();return isNaN(t)?0:t;}rows.sort(function(a,b){return ms_(b)-ms_(a);});var checked=[],mismatches=[];rows.slice(0,limit).forEach(function(r){var id=clean_(r['Request ID']);if(!id)return;var p=verifyRequest_(id);checked.push(p);if(!p.ok)mismatches.push(p);});return{ok:mismatches.length===0,version:VERSION,limit:limit,checked:checked.length,mismatchCount:mismatches.length,mismatches:mismatches};}
-  function refreshAll_(options){options=options||{};SpreadsheetApp.flush();var out=baseRefresh.apply(CF.OperatorQueue,[]);SpreadsheetApp.flush();var timing=applyStatusTimingProjectionAll_();SpreadsheetApp.flush();var parity=verifyRecent_(options.verifyLimit||20);if(out&&typeof out==='object'){out.commitFlushBeforeRead=true;out.commitFlushAfterWrite=true;out.statusTimingProjection=timing;out.recentParity=parity;out.versionQueueCommitParity=VERSION;}try{if(CF.Util&&typeof CF.Util.logEvent==='function')CF.Util.logEvent({module:'50_Operator_Queue',action:'QUEUE_TIMING_HARDENING_REFRESH',status:parity.ok?'COMPLETE':'PARITY_FAILED',details:{timing:timing,parity:parity},version:VERSION});}catch(e){}return out||{ok:parity.ok,statusTimingProjection:timing,recentParity:parity,versionQueueCommitParity:VERSION};}
+  function refreshAll_(options){options=options||{};SpreadsheetApp.flush();var out=baseRefresh.apply(CF.OperatorQueue,[]);SpreadsheetApp.flush();var timing=applyStatusTimingProjectionAll_();SpreadsheetApp.flush();var parity=verifyRecent_(options.verifyLimit||20);if(out&&typeof out==='object'){out.commitFlushBeforeRead=true;out.commitFlushAfterWrite=true;out.statusTimingProjection=timing;out.recentParity=parity;out.ok=out.ok!==false&&parity.ok===true;out.versionQueueCommitParity=VERSION;out.frontendRevision="20261023-R1";}try{if(CF.Util&&typeof CF.Util.logEvent==='function')CF.Util.logEvent({module:'50_Operator_Queue',action:'QUEUE_TIMING_HARDENING_REFRESH',status:parity.ok?'COMPLETE':'PARITY_FAILED',details:{timing:timing,parity:parity},version:VERSION});}catch(e){}return out||{ok:parity.ok,statusTimingProjection:timing,recentParity:parity,versionQueueCommitParity:VERSION};}
   function unsafeWriteReason_(r,action){action=upper_(action);if(['CREATE CUSTOMER','CREATE CONTACT','CREATE LOCATION','APPROVE PROPOSED ACTION'].indexOf(action)<0)return'';if(clean_(r['Work Order ID'])||upper_(r['Current Stage'])==='SALES ORDER CREATED')return'DURABLE_SALES_ORDER_ALREADY_EXISTS';var sync=upper_(r['Striven Sync Status']),recon=upper_(r['Reconciliation Status']),next=upper_(r['Next Action']),block=upper_(r['Blocking Issue']);if(sync==='RECONCILE REQUIRED'||next.indexOf('RECONCILE')===0||recon.indexOf('UNCERTAIN')>=0||recon.indexOf('RECONCILE')>=0||block.indexOf('PRIOR WRITE MAY HAVE SUCCEEDED')>=0||block.indexOf('DO NOT RETRY')>=0)return'RECONCILE_REQUIRED_DO_NOT_RETRY';return'';}
   
   /* CF_SERVICEOPS_V5_13_3_QUEUE_TRIGGER_HYGIENE_R1_HELPER */
   function CF_V5133_createDedupedOneShot_(handlerName,delayMs){
     handlerName=String(handlerName||'');var existing=[];try{existing=ScriptApp.getProjectTriggers().filter(function(t){try{return t.getEventType()===ScriptApp.EventType.CLOCK&&t.getHandlerFunction()===handlerName;}catch(e){return false;}});}catch(e){}
-    if(existing.length>1){for(var i=1;i<existing.length;i++){try{ScriptApp.deleteTrigger(existing[i]);}catch(ignored){}}try{if(CF.Util&&CF.Util.logEvent)CF.Util.logEvent({module:'50_Operator_Queue',action:'QUEUE_TRIGGER_DEDUPED',status:'COMPLETE',details:{handler:handlerName,removed:existing.length-1},version:'5.14.4'});}catch(logErr){}}
+    if(existing.length>1){for(var i=1;i<existing.length;i++){try{ScriptApp.deleteTrigger(existing[i]);}catch(ignored){}}try{if(CF.Util&&CF.Util.logEvent)CF.Util.logEvent({module:'50_Operator_Queue',action:'QUEUE_TRIGGER_DEDUPED',status:'COMPLETE',details:{handler:handlerName,removed:existing.length-1},version:'5.14.5'});}catch(logErr){}}
     if(existing.length)return existing[0];
     try{return ScriptApp.newTrigger(handlerName).timeBased().after(Math.max(1000,Number(delayMs)||5000)).create();}
-    catch(e){var msg=String(e&&e.message||e);if(/too many triggers|trigger.*quota|quota.*trigger/i.test(msg)){try{if(CF.Util&&CF.Util.logEvent)CF.Util.logEvent({module:'50_Operator_Queue',action:'QUEUE_TRIGGER_QUOTA_FAIL_SOFT',status:'SKIPPED',message:msg,details:{handler:handlerName,queueStatePreserved:true,businessWriteNotFailed:true},version:'5.14.4'});}catch(logErr2){}return{getUniqueId:function(){return'';},getHandlerFunction:function(){return handlerName;},getEventType:function(){return ScriptApp.EventType.CLOCK;},__cfV5133QuotaDeferred:true};}throw e;}
+    catch(e){var msg=String(e&&e.message||e);if(/too many triggers|trigger.*quota|quota.*trigger/i.test(msg)){try{if(CF.Util&&CF.Util.logEvent)CF.Util.logEvent({module:'50_Operator_Queue',action:'QUEUE_TRIGGER_QUOTA_FAIL_SOFT',status:'SKIPPED',message:msg,details:{handler:handlerName,queueStatePreserved:true,businessWriteNotFailed:true},version:'5.14.5'});}catch(logErr2){}return{getUniqueId:function(){return'';},getHandlerFunction:function(){return handlerName;},getEventType:function(){return ScriptApp.EventType.CLOCK;},__cfV5133QuotaDeferred:true};}throw e;}
   }
-function scheduleDirtyRow_(rowNumber){rowNumber=Number(rowNumber||0);if(!rowNumber)return;var lock=LockService.getScriptLock();if(!lock.tryLock(1000))return;try{var p=PropertiesService.getScriptProperties(),rows=[];try{rows=JSON.parse(p.getProperty(DIRTY_ROWS_PROP)||'[]');}catch(e){rows=[];}if(!Array.isArray(rows))rows=[];if(rows.indexOf(rowNumber)<0)rows.push(rowNumber);if(rows.length>100)rows=rows.slice(-100);p.setProperty(DIRTY_ROWS_PROP,JSON.stringify(rows));var scheduled=Number(p.getProperty(SCHEDULED_AT_PROP)||0),stale=!scheduled||(nowMs_()-scheduled>120000);if(stale){CF_V5133_createDedupedOneShot_(TRIGGER,5000);p.setProperty(SCHEDULED_AT_PROP,String(nowMs_()));}}finally{lock.releaseLock();}}
+function scheduleDirtyRow_(rowNumber){
+    // Durable invalidation owns scheduling; avoid nested script-lock acquisition.
+    if(CF.OperatorQueue.markFrontendDirtyRow)CF.OperatorQueue.markFrontendDirtyRow(rowNumber);
+  }
   function flushPending_(){var p=PropertiesService.getScriptProperties(),rows=[];try{rows=JSON.parse(p.getProperty(DIRTY_ROWS_PROP)||'[]');}catch(e){rows=[];}p.deleteProperty(DIRTY_ROWS_PROP);p.deleteProperty(SCHEDULED_AT_PROP);if(!Array.isArray(rows)||!rows.length)return{ok:true,status:'NO_DIRTY_ROWS',version:VERSION};SpreadsheetApp.flush();if(rows.length>8){var full=refreshAll_({verifyLimit:25});return{ok:!full||full.ok!==false,status:'COALESCED_FULL_REFRESH',dirtyRows:rows.length,fullRefresh:full,version:VERSION};}var sheet=CF.Util.requireSheet('SERVICE_REQUESTS'),headers=CF.Util.getActualHeaders(sheet),idCol=headers.indexOf('Request ID')+1,results=[];rows.forEach(function(row){if(row<2||row>sheet.getLastRow()||!idCol)return;var id=clean_(sheet.getRange(row,idCol).getDisplayValue());if(id)results.push(refreshRequest_(id,{fullFallback:true,verifyLimit:25}));});var ok=results.every(function(x){return x&&x.ok!==false;});return{ok:ok,status:ok?'DIRTY_ROWS_REFRESHED':'DIRTY_ROW_REFRESH_FAILED',dirtyRows:rows.length,results:results,version:VERSION};}
 
   CF.OperatorQueue.refresh=function(){return refreshAll_({verifyLimit:20});};
@@ -5155,7 +5158,7 @@ function AUTO_CF_QUEUE_SYNC_AFTER_SERVICE_REQUEST_MUTATION(e){return(typeof CF!=
 
 function TESTING_CF_QUEUE_VERIFY_RECENT_20(){
   if(typeof CF==='undefined'||!CF.OperatorQueue)throw new Error('CF.OperatorQueue unavailable.');
-  var refresh=CF.OperatorQueue.refresh(),parity=CF.OperatorQueue.verifyRecentParity(20),out={ok:parity.ok,version:'5.14.4',status:parity.ok?'RECENT_20_QUEUE_TIMING_PARITY_VERIFIED':'QUEUE_PARITY_FAILED',parity:parity,refresh:refresh,liveStrivenWriteExecuted:false};
+  var refresh=CF.OperatorQueue.refresh(),parity=CF.OperatorQueue.verifyRecentParity(20),out={ok:parity.ok,version:'5.14.5',status:parity.ok?'RECENT_20_QUEUE_TIMING_PARITY_VERIFIED':'QUEUE_PARITY_FAILED',parity:parity,refresh:refresh,liveStrivenWriteExecuted:false};
   console.log(JSON.stringify(out));if(!parity.ok)throw new Error('QUEUE_PARITY_FAILED | '+JSON.stringify(parity));return out;
 }
 
@@ -5166,7 +5169,7 @@ function TESTING_CF_V5131_RELEASE_ACCEPTANCE(){
   var taxContractOk=lines[0]&&lines[0].Taxable===true&&lines[1]&&lines[1].Taxable===true&&!Object.prototype.hasOwnProperty.call(lines[2]||{},'Taxable');
   var historicalTaxAudit=CF.ServiceOrderTaxContract.auditRecent(20);
   var refresh=CF.OperatorQueue.refresh(),parity=CF.OperatorQueue.verifyRecentParity(20);
-  var out={ok:taxContractOk&&parity.ok,version:'5.14.4',status:(taxContractOk&&parity.ok)?'RELEASE_ACCEPTANCE_CLEAR':'RELEASE_ACCEPTANCE_REVIEW_REQUIRED',taxContractSampleOk:taxContractOk,historicalTaxAudit:historicalTaxAudit,queueParity:parity,queueRefresh:refresh,liveStrivenWriteExecuted:false};
+  var out={ok:taxContractOk&&parity.ok,version:'5.14.5',status:(taxContractOk&&parity.ok)?'RELEASE_ACCEPTANCE_CLEAR':'RELEASE_ACCEPTANCE_REVIEW_REQUIRED',taxContractSampleOk:taxContractOk,historicalTaxAudit:historicalTaxAudit,queueParity:parity,queueRefresh:refresh,liveStrivenWriteExecuted:false};
   console.log(JSON.stringify(out));if(!taxContractOk)throw new Error('TAX_CONTRACT_SAMPLE_FAILED');if(!parity.ok)throw new Error('QUEUE_PARITY_FAILED | '+JSON.stringify(parity));return out;
 }
 /* END CF_SERVICEOPS_V5_13_1_QUEUE_TIMING_HARDENING_R1 */
@@ -5175,7 +5178,7 @@ function TESTING_CF_V5131_RELEASE_ACCEPTANCE(){
 /* CF_SERVICEOPS_V5_14_3_DASHBOARD_LIVE_PROJECTION_R1 */
 /************************************************************
  * CF ServiceOps — Dashboard Live Projection
- * Version: 5.14.4
+ * Version: 5.14.5
  *
  * Restores 00 Dashboard refresh AFTER the lean queue/timing
  * wrappers intentionally stopped rebuilding it.
@@ -5192,7 +5195,7 @@ function TESTING_CF_V5131_RELEASE_ACCEPTANCE(){
   }
   if(CF.OperatorQueue.__dashboardLiveProjectionV5143R1===true)return;
 
-  var VERSION='5.14.4';
+  var VERSION='5.14.5';
   var baseRefresh=CF.OperatorQueue.refresh;
   var baseFlush=typeof CF.OperatorQueue.flushPendingMutationSync==='function'
     ?CF.OperatorQueue.flushPendingMutationSync:null;
@@ -5226,6 +5229,7 @@ function TESTING_CF_V5131_RELEASE_ACCEPTANCE(){
     if(out&&typeof out==='object'){
       out.dashboardLiveProjection=dashboard;
       out.dashboardRefreshed=dashboard.ok===true;
+      out.ok=out.ok!==false&&dashboard.ok===true;
     }
     return out||dashboard;
   };
@@ -5239,6 +5243,7 @@ function TESTING_CF_V5131_RELEASE_ACCEPTANCE(){
         if(out&&typeof out==='object'){
           out.dashboardLiveProjection=dashboard;
           out.dashboardRefreshed=dashboard.ok===true;
+      out.ok=out.ok!==false&&dashboard.ok===true;
         }
       }
       return out;
@@ -5262,10 +5267,76 @@ function FIX_20261006_refreshDashboardLive(){
   var result=CF.OperatorQueue.refresh();
   return{
     ok:!result||result.ok!==false,
-    version:'5.14.4',
+    version:'5.14.5',
     status:'QUEUE_AND_DASHBOARD_REFRESHED',
     queueRefresh:result||null,
     liveWriteExecuted:false,
     liveStrivenWriteExecuted:false
   };
 }
+
+/* CF_FRONTEND_DURABLE_REFRESH_20261023_R1 */
+// Google Apps Script: frontend projection only; no matching or Striven calls.
+(function () {
+  'use strict';
+  var api=CF.OperatorQueue, util=CF.Util;
+  var DIRTY='CF_FRONTEND_DIRTY_', ACK='CF_FRONTEND_ACK_';
+  var LAST='CF_FRONTEND_LAST_VERIFIED_MS', ERROR='CF_FRONTEND_REFRESH_ERROR';
+  var LEGACY='CF_QUEUE_DIRTY_SERVICE_REQUEST_ROWS_V5131';
+  var baseById=util.patchServiceRequestById, baseRow=util.patchRow;
+  function props(){return PropertiesService.getScriptProperties();}
+  function mark(id){
+    id=String(id||'').trim();if(!id)return;
+    // Independent keys avoid a shared read/modify/write queue and nested locks.
+    props().setProperty(DIRTY+id,Utilities.getUuid());
+    try {
+      var handler='AUTO_CF_QUEUE_SYNC_AFTER_SERVICE_REQUEST_MUTATION';
+      var found=ScriptApp.getProjectTriggers().some(function(t){return t.getHandlerFunction()===handler;});
+      if(!found)ScriptApp.newTrigger(handler).timeBased().after(30000).create();
+    } catch(e) {
+      // Durable marker survives trigger quota errors; existing watchdog retries.
+      props().setProperty(ERROR,'SCHEDULE_DEFERRED: '+String(e&&e.message||e));
+    }
+  }
+  function markRow(row){
+    var sheet=util.requireSheet('SERVICE_REQUESTS'),headers=util.getActualHeaders(sheet);
+    var col=headers.indexOf('Request ID')+1;
+    if(col&&row>=2&&row<=sheet.getLastRow())mark(sheet.getRange(row,col).getDisplayValue());
+  }
+  function safeMark(id){try{mark(id);}catch(e){console.error('Frontend marker failed: '+String(e&&e.message||e));}}
+  function safeMarkRow(row){try{markRow(row);}catch(e){console.error('Frontend row marker failed: '+String(e&&e.message||e));}}
+  function flush(options){
+    options=options||{};
+    var lock=LockService.getScriptLock();
+    if(!lock.tryLock(1000))return{ok:false,status:'FRONTEND_REFRESH_DEFERRED_LOCK',retryPending:true};
+    try {
+      var p=props(),snapshot=p.getProperties(),dirty=Object.keys(snapshot).filter(function(k){return k.indexOf(DIRTY)===0&&snapshot[k]!==snapshot[ACK+k.slice(DIRTY.length)];});
+      var legacy=snapshot[LEGACY];
+      var due=Date.now()-Number(snapshot[LAST]||0)>=300000;
+      if(!dirty.length&&!legacy&&!(options.periodic&&due))return{ok:true,status:'NO_DIRTY_ROWS',frontendRevision:'20261023-R1'};
+      // Always rebuild the complete cached projection, including task and rich links.
+      // No read/create/update calls to Striven are performed here.
+      SpreadsheetApp.flush();
+      var result=api.refresh();
+      if(!result||result.ok!==true||!result.recentParity||result.recentParity.ok!==true||result.dashboardRefreshed!==true){
+        throw new Error('FRONTEND_PARITY_OR_DASHBOARD_FAILED');
+      }
+      // Acknowledge the captured generation, never delete the latest generation.
+      // A concurrent mutation therefore remains dirty even during acknowledgement.
+      dirty.forEach(function(k){p.setProperty(ACK+k.slice(DIRTY.length),snapshot[k]);});
+      if(legacy&&p.getProperty(LEGACY)===legacy)p.deleteProperty(LEGACY);
+      p.setProperty(LAST,String(Date.now()));p.deleteProperty(ERROR);
+      return{ok:true,status:'FRONTEND_REFRESH_VERIFIED',frontendRevision:'20261023-R1',acknowledged:dirty.length,recentParity:result.recentParity,dashboardRefreshed:true,liveStrivenWriteExecuted:false};
+    } catch(e) {
+      props().setProperty(ERROR,String(e&&e.message||e));
+      return{ok:false,status:'FRONTEND_REFRESH_FAILED',error:String(e&&e.message||e),retryPending:true,frontendRevision:'20261023-R1',liveStrivenWriteExecuted:false};
+    } finally {lock.releaseLock();}
+  }
+  // patchServiceRequestById closes over the original local patchRow. Hook both
+  // public entry points so request-scoped writes cannot bypass invalidation.
+  util.patchServiceRequestById=function(id,patch){var out=baseById.apply(util,arguments);safeMark(id);return out;};
+  util.patchRow=function(key,row,patch){var out=baseRow.apply(util,arguments);if(String(key).toUpperCase()==='SERVICE_REQUESTS')safeMarkRow(row);return out;};
+  api.markFrontendDirtyRow=safeMarkRow;
+  api.flushPendingMutationSync=function(){return flush({periodic:false});};
+  api.syncFrontendIfDue=function(){return flush({periodic:true});};
+})();

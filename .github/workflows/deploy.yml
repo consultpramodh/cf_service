@@ -31,7 +31,7 @@ concurrency:
 jobs:
   production_source_check:
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/production'
+    if: github.ref == 'refs/heads/production' && !contains(github.event.head_commit.message, '[frontend-only]')
     outputs:
       current: ${{ steps.source.outputs.current }}
     steps:
@@ -281,4 +281,3 @@ jobs:
             .release-v5.14.4/deployed-version.txt
           retention-days: 30
           if-no-files-found: warn
-

@@ -1,0 +1,88 @@
+name: Deploy verified frontend refresh
+on:
+  push:
+    branches: [production]
+    paths:
+      - src/50_Operator_Queue.gs
+      - src/70_Workflow_Automation.gs
+      - scripts/frontend-release.mjs
+      - tests/frontend-refresh.test.cjs
+      - .github/workflows/frontend-refresh-release.yml
+permissions:
+  contents: read
+concurrency:
+  group: cf-serviceops-production-v2
+  cancel-in-progress: false
+jobs:
+  deploy-frontend:
+    if: contains(github.event.head_commit.message, '[frontend-only]')
+    runs-on: ubuntu-latest
+    env:
+      FRONTEND_BASE_SHA: dfc6688344b41dd77f0264c4ac07b568c44bc7b6
+      CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
+      FRONTEND_URL: https://script.google.com/macros/s/AKfycbwebnCvczGthe6Z_mvYmukLqFLB-9nk8hjNtNP3lR87CE1m_fEx2d9Bn_vpXMPCLUnPbA/exec
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Test existing pipeline and frontend failure recovery
+        run: |
+          set -euo pipefail
+          for f in tests/*.cjs tests/*.mjs; do node "$f"; done
+          node --check scripts/frontend-release.mjs
+          git fetch --no-tags origin production
+          test "$(git rev-parse FETCH_HEAD)" = "$GITHUB_SHA" || { echo SUPERSEDED_RELEASE_STOP; exit 2; }
+      - name: Authenticate and pull exact live baseline
+        run: |
+          set -euo pipefail
+          test -n "$CLASPRC_JSON" || { echo LIVE_SOURCE_ACCESS_REQUIRED; exit 2; }
+          umask 077
+          printf '%s' "$CLASPRC_JSON" > "$HOME/.clasprc.json"
+          node scripts/frontend-release.mjs prepare
+      - name: Back up complete live source before any mutation
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-live-before-${{ github.run_id }}
+          path: |
+            .frontend-release/before/*
+            .frontend-release/before-hashes.json
+            .frontend-release/previous-version.txt
+          if-no-files-found: error
+          retention-days: 90
+      - name: Apply three-file patch and verify remote source hashes
+        run: node scripts/frontend-release.mjs apply
+      - name: Verify live queue and dashboard against request ledger
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            if curl -fsSL --max-time 180 --get --data-urlencode ops=status-warning-reconcile-refresh --data-urlencode "nonce=$GITHUB_RUN_ID-$attempt" "$FRONTEND_URL" > .frontend-release/frontend-verification.json; then
+              if node --input-type=module - <<'JS'
+          import fs from 'node:fs';
+          const x=JSON.parse(fs.readFileSync('.frontend-release/frontend-verification.json','utf8'));
+          const r=x.refresh;
+          if(x.ok!==true||!r||r.ok!==true||r.frontendRevision!=='20261023-R1'||r.recentParity?.ok!==true||r.dashboardRefreshed!==true)process.exit(2);
+          console.log('LIVE_FRONTEND_PARITY_PASS',JSON.stringify({revision:r.frontendRevision,checked:r.recentParity.checked,mismatchCount:r.recentParity.mismatchCount,dashboardRefreshed:r.dashboardRefreshed}));
+          JS
+              then exit 0; fi
+            fi
+          done
+          echo LIVE_FRONTEND_VERIFICATION_FAILED
+          exit 2
+      - name: Restore verified checkpoint if deployment or runtime verification failed
+        if: failure()
+        run: node scripts/frontend-release.mjs rollback
+      - name: Preserve deployment verification
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-release-verification-${{ github.run_id }}
+          path: |
+            .frontend-release/verify/*
+            .frontend-release/deployed-version.txt
+            .frontend-release/frontend-verification.json
+          retention-days: 30
+          if-no-files-found: warn

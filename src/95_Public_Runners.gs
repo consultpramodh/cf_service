@@ -4,7 +4,7 @@
 /************************************************************
  * APPS SCRIPT — 95_Public_Runners.gs
  * CF ServiceOps — Public Entry Points
- * Version: 5.14.4
+ * Version: 5.14.5
  *
  * MENU DESIGN
  * Keep the daily operator menu intentionally small:
@@ -21,7 +21,7 @@ var CF = CF || {};
 CF.PublicRunners = (function () {
   'use strict';
 
-  var VERSION = '5.14.4';
+  var VERSION = '5.14.5';
 
   function util_() {
     if (!CF.Util || !CF.Config) throw new Error('CF.Util and CF.Config are required.');
@@ -333,10 +333,10 @@ function WRITE_processApproved() {
     ].join('\n');
     var ui = SpreadsheetApp.getUi();
     var response = ui.alert('Manual Sales Order Create', message, ui.ButtonSet.YES_NO);
-    if (response !== ui.Button.YES) return { ok: false, version: '5.14.4', status: 'CANCELLED_BY_OPERATOR', requestId: requestId, liveWriteExecuted: false };
+    if (response !== ui.Button.YES) return { ok: false, version: '5.14.5', status: 'CANCELLED_BY_OPERATOR', requestId: requestId, liveWriteExecuted: false };
     var approval = CF.OrderPreflight.approveRequest(requestId);
     var execution = CF.OrderPreflight.executeApproved(requestId, { executionToken: CF.OrderPreflight.executionToken });
-    return { ok: execution && execution.ok === true, version: '5.14.4', mode: 'MANUAL_SELECTED_SALES_ORDER_CREATE', requestId: requestId, approval: approval, execution: execution, automaticStatusTransition: false, liveWriteExecuted: !!(execution && execution.liveWriteExecuted) };
+    return { ok: execution && execution.ok === true, version: '5.14.5', mode: 'MANUAL_SELECTED_SALES_ORDER_CREATE', requestId: requestId, approval: approval, execution: execution, automaticStatusTransition: false, liveWriteExecuted: !!(execution && execution.liveWriteExecuted) };
   });
 }
 
@@ -354,7 +354,7 @@ function WRITE_processApproved() {
  */
 CF.OpenStatus = (function () {
   'use strict';
-  var VERSION = '5.14.4';
+  var VERSION = '5.14.5';
   function clean_(v) { return v === null || v === undefined ? '' : String(v).trim(); }
   function sheetName_(key, fallback) {
     try { var n=CF.Config && CF.Config.getSheetName ? clean_(CF.Config.getSheetName(key)) : ''; if(n)return n; } catch(ignored) {}
@@ -444,7 +444,7 @@ function TESTING_11_selectedSingleQueueRequestId_() {
 function TESTING_11_e2eSnapshot_(requestId) {
   requestId = CF.Util.cleanText(requestId);
   var record = CF.Util.findRecord('SERVICE_REQUESTS', 'Request ID', requestId);
-  if (!record) return {ok:false,version:'5.14.4',status:'SERVICE_REQUEST_NOT_FOUND',requestId:requestId,readOnly:true,liveWriteExecuted:false};
+  if (!record) return {ok:false,version:'5.14.5',status:'SERVICE_REQUEST_NOT_FOUND',requestId:requestId,readOnly:true,liveWriteExecuted:false};
 
   var queued=[];
   try {
@@ -485,7 +485,7 @@ function TESTING_11_e2eSnapshot_(requestId) {
     : 'IN_PROGRESS_OR_READY_TO_RERUN';
 
   return {
-    ok:true,version:'5.14.4',status:'RECHECK_COMPLETE',mode:'READ_ONLY_SELECTED_ROW_E2E_RECHECK',requestId:requestId,
+    ok:true,version:'5.14.5',status:'RECHECK_COMPLETE',mode:'READ_ONLY_SELECTED_ROW_E2E_RECHECK',requestId:requestId,
     currentStage:stage,requestStatus:requestStatus,customerStructureStatus:structureStatus,
     manualReview:manualReview,duplicateRiskStatus:duplicateRisk,
     customerId:CF.Util.cleanText(record['Created Customer ID']||record['Matched Customer ID']),
@@ -525,14 +525,14 @@ function TESTING_12_rerunSelectedEndToEnd() {
     if (before.salesOrderDurable) {
       var durableRefresh=null;
       try{durableRefresh=CF.OperatorQueue&&typeof CF.OperatorQueue.refresh==='function'?CF.OperatorQueue.refresh():null;}catch(ignoredRefresh){}
-      var durableOut={ok:true,version:'5.14.4',status:'ALREADY_DURABLE_NO_RERUN_NEEDED',mode:'SELECTED_ROW_E2E_RERUN',requestId:requestId,workOrderId:before.workOrderId,workOrderNumber:before.workOrderNumber,before:before,operatorQueueRefresh:durableRefresh,writeAttempted:false,liveWriteExecuted:false};
+      var durableOut={ok:true,version:'5.14.5',status:'ALREADY_DURABLE_NO_RERUN_NEEDED',mode:'SELECTED_ROW_E2E_RERUN',requestId:requestId,workOrderId:before.workOrderId,workOrderNumber:before.workOrderNumber,before:before,operatorQueueRefresh:durableRefresh,writeAttempted:false,liveWriteExecuted:false};
       try{SpreadsheetApp.getActive().toast('Already durable · no duplicate Sales Order attempted','E2E Rerun',10);}catch(ignoredDurableToast){}
       console.log('Selected Row E2E Rerun: '+JSON.stringify(durableOut));
       return durableOut;
     }
 
     if (before.otherQueuedRequestIds && before.otherQueuedRequestIds.length) {
-      var busy={ok:false,version:'5.14.4',status:'BUSY_OTHER_REQUESTS_QUEUED_NO_RERUN',mode:'SELECTED_ROW_E2E_RERUN',requestId:requestId,otherQueuedRequestIds:before.otherQueuedRequestIds,before:before,writeAttempted:false,liveWriteExecuted:false};
+      var busy={ok:false,version:'5.14.5',status:'BUSY_OTHER_REQUESTS_QUEUED_NO_RERUN',mode:'SELECTED_ROW_E2E_RERUN',requestId:requestId,otherQueuedRequestIds:before.otherQueuedRequestIds,before:before,writeAttempted:false,liveWriteExecuted:false};
       try{SpreadsheetApp.getActive().toast('Another incoming request is already queued. Rerun not started.','E2E Rerun',10);}catch(ignoredBusyToast){}
       console.log('Selected Row E2E Rerun: '+JSON.stringify(busy));
       return busy;
@@ -544,7 +544,7 @@ function TESTING_12_rerunSelectedEndToEnd() {
     if (!kick || kick.ok===false) throw new Error('Could not enqueue selected request for E2E rerun: '+JSON.stringify(kick||{}));
     var after=TESTING_11_e2eSnapshot_(requestId);
     var out={
-      ok:true,version:'5.14.4',status:'RERUN_QUEUED',mode:'SELECTED_ROW_E2E_RERUN',requestId:requestId,
+      ok:true,version:'5.14.5',status:'RERUN_QUEUED',mode:'SELECTED_ROW_E2E_RERUN',requestId:requestId,
       before:before,kick:kick,after:after,salesOrderDurableAfter:!!after.salesOrderDurable,
       workerStartedImmediately:false,continuationExpected:!!(kick&&kick.scheduled===true),
       writeAttempted:false,liveWriteExecuted:false
@@ -582,7 +582,7 @@ function TESTING_14_previewRealtimePerformanceSelectedRow() {
     var customerId=clean(row['Matched Customer ID']||row['Created Customer ID']);
     var contactId=clean(row['Matched Contact ID']||row['Created Contact ID']);
     var locationId=clean(row['Matched Location ID']||row['Created Location ID']);
-    var out={ok:true,version:'5.14.4',status:'REALTIME_PERFORMANCE_PREVIEW',mode:'READ_ONLY',requestId:requestId,timezone:'America/Toronto',createdAt:clean(row['Created At']),submittedAt:clean(row['Submitted At']),customerId:customerId,contactId:contactId,locationId:locationId,unitDetailsPresent:!!clean(row['Unit Details']),fastPathInternalQueueRebuilds:'SUPPRESSED',continuationOnlyFinalQueueRefresh:'DEFERRED',liveWriteAndTerminalQueueRefresh:'PRESERVED',operationalRefreshLogic:'PRESERVED_UNCHANGED',uncertainInfoWriteHandling:'AUTOMATIC_READ_ONLY_RECONCILIATION_ONLY',automaticPostRetry:false,writeAttempted:false,liveWriteExecuted:false};
+    var out={ok:true,version:'5.14.5',status:'REALTIME_PERFORMANCE_PREVIEW',mode:'READ_ONLY',requestId:requestId,timezone:'America/Toronto',createdAt:clean(row['Created At']),submittedAt:clean(row['Submitted At']),customerId:customerId,contactId:contactId,locationId:locationId,unitDetailsPresent:!!clean(row['Unit Details']),fastPathInternalQueueRebuilds:'SUPPRESSED',continuationOnlyFinalQueueRefresh:'DEFERRED',liveWriteAndTerminalQueueRefresh:'PRESERVED',operationalRefreshLogic:'PRESERVED_UNCHANGED',uncertainInfoWriteHandling:'AUTOMATIC_READ_ONLY_RECONCILIATION_ONLY',automaticPostRetry:false,writeAttempted:false,liveWriteExecuted:false};
     console.log('Realtime Performance Preview: '+JSON.stringify(out));
     try{SpreadsheetApp.getActive().toast('Read-only performance preview complete','Realtime Performance',8);}catch(ignoredToast){}
     return out;
@@ -609,7 +609,7 @@ function TESTING_15_previewSelfHealingRecoverySelectedRow() {
     var cStatus=String(customerJournal.status||'').toUpperCase();
     var customerCfBypass=/CUSTOM_FIELD.*BYPASS|ENRICHMENT_SKIPPED|REJECTED_VALIDATION_CUSTOM_FIELDS/.test(cStatus)||/Invalid Custom Fields|Custom Field Id\s+\d+/i.test(String(customerJournal.error||row['Striven Sync Error']||''));
     var plan=duplicateIds.length===1?'AUTO_RECONCILE_EXISTING_CONTACT_ID':duplicateIds.length>1?'MANUAL_REVIEW_MULTIPLE_CONTACT_IDS':customerCfBypass?'AUTO_SKIP_UNSAFE_CUSTOMER_ENRICHMENT_CONTINUE_CONTACT':'NORMAL_E2E_GUARDS';
-    var out={ok:true,version:'5.14.4',status:'SELF_HEALING_RECOVERY_PREVIEW',mode:'READ_ONLY',requestId:requestId,currentStage:clean(row['Current Stage']),requestStatus:clean(row['Request Status']),customerId:clean(row['Matched Customer ID']||row['Created Customer ID']),contactId:clean(row['Matched Contact ID']||row['Created Contact ID']),locationId:clean(row['Matched Location ID']||row['Created Location ID']),existingDuplicateContactIds:duplicateIds,existingDuplicateContactId:duplicateIds.length===1?duplicateIds[0]:'',customerCustomFieldEnrichmentBypass:customerCfBypass,recoveryPlan:plan,automaticPostRetry:false,duplicateCreatePostRetry:false,writeAttempted:false,liveWriteExecuted:false};
+    var out={ok:true,version:'5.14.5',status:'SELF_HEALING_RECOVERY_PREVIEW',mode:'READ_ONLY',requestId:requestId,currentStage:clean(row['Current Stage']),requestStatus:clean(row['Request Status']),customerId:clean(row['Matched Customer ID']||row['Created Customer ID']),contactId:clean(row['Matched Contact ID']||row['Created Contact ID']),locationId:clean(row['Matched Location ID']||row['Created Location ID']),existingDuplicateContactIds:duplicateIds,existingDuplicateContactId:duplicateIds.length===1?duplicateIds[0]:'',customerCustomFieldEnrichmentBypass:customerCfBypass,recoveryPlan:plan,automaticPostRetry:false,duplicateCreatePostRetry:false,writeAttempted:false,liveWriteExecuted:false};
     console.log('Self-Healing Recovery Preview: '+JSON.stringify(out));
     try{SpreadsheetApp.getActive().toast('Read-only recovery preview complete','Self-Healing Recovery',8);}catch(ignoredToast){}
     return out;
@@ -645,7 +645,7 @@ function TESTING_16_previewLocationSelfHealingSelectedRow() {
     var streetPostal=matches.filter(function(x){var st=semStreet(x['Location Name']||String(clean(x['Full Address'])).split(',')[0]);var pc=semPostal(x['Normalized Postal']||x['Postal Code']);return reqStreet&&reqPostal&&st===reqStreet&&pc===reqPostal;});
     var selected=exact.length?exact:(semantic.length?semantic:streetPostal);
     var method=exact.length?'CUSTOMER_ID + EXACT_NORMALIZED_ADDRESS':semantic.length?'CUSTOMER_ID + SEMANTIC_FULL_ADDRESS':streetPostal.length?'CUSTOMER_ID + EXACT_STREET + POSTAL':'NO_MATCH';
-    var out={ok:true,version:'5.14.4',status:'LOCATION_SELF_HEALING_PREVIEW',mode:'READ_ONLY',requestId:requestId,customerId:customerId,currentStage:clean(row['Current Stage']),requestNormalizedAddress:normalized,requestSemanticAddress:reqSem,exactLocationIds:exact.map(function(x){return clean(x['Location ID']);}),semanticLocationIds:semantic.map(function(x){return clean(x['Location ID']);}),streetPostalLocationIds:streetPostal.map(function(x){return clean(x['Location ID']);}),selectedCandidateIds:selected.map(function(x){return clean(x['Location ID']);}),selectedMatchMethod:method,safeAutoReconcile:selected.length===1,ambiguous:selected.length>1,automaticLocationCreate:false,automaticWriteRetry:false,writeAttempted:false,liveWriteExecuted:false};
+    var out={ok:true,version:'5.14.5',status:'LOCATION_SELF_HEALING_PREVIEW',mode:'READ_ONLY',requestId:requestId,customerId:customerId,currentStage:clean(row['Current Stage']),requestNormalizedAddress:normalized,requestSemanticAddress:reqSem,exactLocationIds:exact.map(function(x){return clean(x['Location ID']);}),semanticLocationIds:semantic.map(function(x){return clean(x['Location ID']);}),streetPostalLocationIds:streetPostal.map(function(x){return clean(x['Location ID']);}),selectedCandidateIds:selected.map(function(x){return clean(x['Location ID']);}),selectedMatchMethod:method,safeAutoReconcile:selected.length===1,ambiguous:selected.length>1,automaticLocationCreate:false,automaticWriteRetry:false,writeAttempted:false,liveWriteExecuted:false};
     console.log('Location Self-Healing Preview: '+JSON.stringify(out));
     return out;
   });
@@ -692,7 +692,7 @@ function CF_20260930_queueTodayEndToEndOnce_() {
         requestId:sheilaId,
         message:'Recovered deterministic item.id/itemId preflight defect; no Sales Order write had occurred.',
         details:{workOrderWriteExecuted:false,restoredStage:'CUSTOMER STRUCTURE COMPLETE'},
-        version:'5.14.4'
+        version:'5.14.5'
       });
     }
   } catch (recoverError) {
@@ -1021,7 +1021,7 @@ function doGet(e) {
   return ContentService.createTextOutput(JSON.stringify({
     ok: true,
     service: 'CF ServiceOps',
-    version: '5.14.4',
+    version: '5.14.5',
     automationModel: 'SINGLE',
     singleModelVerified: verification.singleModel,
     automationEnabled: verification.enabled,
@@ -1259,7 +1259,7 @@ function PHASE5D_executeTestContactCreate() {
 function AUTO_previewCustomerStructure() {
   return CF.PublicRunners.run('Final ServiceOps status', function () {
     if(!CF.EventDrivenServiceAutomation||typeof CF.EventDrivenServiceAutomation.inspect!=='function') {
-      throw new Error('Final ServiceOps v5.14.4 is not loaded.');
+      throw new Error('Final ServiceOps v5.14.5 is not loaded.');
     }
     return CF.EventDrivenServiceAutomation.inspect();
   });
@@ -1276,9 +1276,9 @@ function AUTO_removeCustomerStructureAutomation() {
 }
 
 function FINALIZE_20260930_activateCanonicalServiceOps() {
-  return CF.PublicRunners.run('Activate final ServiceOps v5.14.4', function () {
+  return CF.PublicRunners.run('Activate final ServiceOps v5.14.5', function () {
     if(!CF.EventDrivenServiceAutomation||typeof CF.EventDrivenServiceAutomation.activate!=='function') {
-      throw new Error('Final ServiceOps v5.14.4 is not loaded.');
+      throw new Error('Final ServiceOps v5.14.5 is not loaded.');
     }
     return CF.EventDrivenServiceAutomation.activate();
   });
@@ -1287,7 +1287,7 @@ function FINALIZE_20260930_activateCanonicalServiceOps() {
 function FINALIZE_20260930_verifySingleServiceOpsModel() {
   return CF.PublicRunners.run('Verify single ServiceOps model', function () {
     if(!CF.EventDrivenServiceAutomation||typeof CF.EventDrivenServiceAutomation.inspect!=='function') {
-      throw new Error('Final ServiceOps v5.14.4 is not loaded.');
+      throw new Error('Final ServiceOps v5.14.5 is not loaded.');
     }
     var state=CF.EventDrivenServiceAutomation.inspect();
     var automationHandlers=[];
@@ -1307,7 +1307,7 @@ function FINALIZE_20260930_verifySingleServiceOpsModel() {
       Number(counts.AUTO_FINAL_ServiceOps||0)<=1;
     return{
       ok:ok,
-      version:'5.14.4',
+      version:'5.14.5',
       status:ok?'SINGLE_SERVICEOPS_MODEL_VERIFIED':'SINGLE_SERVICEOPS_MODEL_NOT_VERIFIED',
       state:state,
       activeAutomationHandlers:automationHandlers,
@@ -1338,7 +1338,7 @@ function AUTO_FINAL_ServiceOps(e) {
 
 function AUTO_98_E2E_Recovery_Watchdog(e) {
   if(!CF.EventDrivenServiceAutomation||typeof CF.EventDrivenServiceAutomation.recoveryWatchdog!=='function') {
-    return {ok:false,version:'5.14.4',status:'RECOVERY_WATCHDOG_MODULE_MISSING',liveWriteExecuted:false};
+    return {ok:false,version:'5.14.5',status:'RECOVERY_WATCHDOG_MODULE_MISSING',liveWriteExecuted:false};
   }
   return CF.EventDrivenServiceAutomation.recoveryWatchdog(e||{});
 }
@@ -1486,7 +1486,7 @@ function TESTING_07_previewSelectedSalesOrderDraft() {
     }
     return {
       ok: draft && draft.customListInspection && draft.customListInspection.ok === true,
-      version: '5.14.4',
+      version: '5.14.5',
       mode: 'READ_ONLY_SALES_ORDER_DRAFT_CUSTOM_LIST_TEST',
       requestId: requestId,
       salesOrderDraft: draft,
@@ -1557,7 +1557,7 @@ function MATCH_recheckSelectedRequest() {
       var result = {
         ok: matchingResult && matchingResult.ok !== false,
 
-        version: '5.14.4',
+        version: '5.14.5',
 
         mode: 'CONTROLLED_SINGLE_REQUEST_RECHECK',
 
@@ -1649,7 +1649,7 @@ function REPROCESS_GordonPonRequest() {
       if (clean(request['Work Order ID'])) {
         return {
           ok: true,
-          version: '5.14.4',
+          version: '5.14.5',
           status: 'ALREADY_HAS_DURABLE_SALES_ORDER',
           requestId: REQUEST_ID,
           workOrderId: clean(request['Work Order ID']),
@@ -1754,7 +1754,7 @@ function REPROCESS_GordonPonRequest() {
 
       var result = {
         ok: kick && kick.ok !== false,
-        version: '5.14.4',
+        version: '5.14.5',
         mode: 'CONTROLLED_EXISTING_REQUEST_REPROCESS',
         requestId: REQUEST_ID,
 
@@ -1850,7 +1850,7 @@ function DIAG_readGordonSalesOrderInternalNotes() {
 
       var result = {
         ok: true,
-        version: '5.14.4',
+        version: '5.14.5',
         mode: 'READ_ONLY_INTERNAL_NOTES_CONTRACT_DIAGNOSTIC',
 
         salesOrderId: SALES_ORDER_ID,
@@ -1890,7 +1890,7 @@ function AUTO_refreshDashboardSnapshot() {
     var result = CF.OperatorQueue.refreshDashboard();
     var out = {
       ok: result && result.ok !== false,
-      version: '5.14.4',
+      version: '5.14.5',
       mode: 'DASHBOARD_SNAPSHOT_ONLY',
       dashboard: result,
       durationMs: Date.now() - started,
@@ -1949,7 +1949,7 @@ function OPERATIONAL_reconcileAllRequestLinks() {
 
     var out = {
       ok: reconciliation && reconciliation.ok !== false,
-      version: '5.14.4',
+      version: '5.14.5',
       mode: 'ALL_REQUEST_OPERATIONAL_LINK_RECONCILIATION',
       reconciliation: reconciliation,
       queueRefresh: queue,
@@ -2059,7 +2059,7 @@ function DIAG_previewShelleyInternalNotesPayload() {
           textLooksCorrect &&
           customField_(855) === '570',
 
-        version: '5.14.4',
+        version: '5.14.5',
         mode:
           'READ_ONLY_INTERNAL_NOTES_HTML_PAYLOAD_PREVIEW',
 
@@ -2416,7 +2416,7 @@ function TEST_createShelleyAndVerifyInternalNotes() {
           notesHtmlConfirmed &&
           requestSourceConfirmed,
 
-        version: '5.14.4',
+        version: '5.14.5',
 
         mode:
           'CONTROLLED_LIVE_INTERNAL_NOTES_PERSISTENCE_TEST',
@@ -2733,7 +2733,7 @@ function DIAG_previewSO26425InternalNotesReplacement() {
 
       var result = {
         ok: identityConfirmed && replacementFormatValid,
-        version: '5.14.4',
+        version: '5.14.5',
         mode: 'READ_ONLY_EXISTING_SALES_ORDER_INTERNAL_NOTES_SEMANTIC_VERIFICATION',
         requestId: REQUEST_ID,
         salesOrderId: SALES_ORDER_ID,
@@ -2809,7 +2809,7 @@ function TEST_replaceSO26425InternalNotes() {
       if (verified !== 'TRUE' || !method || !template || !payloadMode) {
         return {
           ok: false,
-          version: '5.14.4',
+          version: '5.14.5',
           status: 'BLOCKED_NO_VERIFIED_STRIVEN_UPDATE_CONTRACT',
           requestId: REQUEST_ID,
           salesOrderId: SALES_ORDER_ID,
@@ -2965,7 +2965,7 @@ function TEST_replaceSO26425InternalNotes() {
       if (already.matches) {
         return {
           ok: true,
-          version: '5.14.4',
+          version: '5.14.5',
           status: 'NO_WRITE_REQUIRED_INTERNAL_NOTES_ALREADY_SEMANTICALLY_MATCH',
           requestId: REQUEST_ID,
           salesOrderId: SALES_ORDER_ID,
@@ -2995,7 +2995,7 @@ function TEST_replaceSO26425InternalNotes() {
 
       return {
         ok: semantic.matches,
-        version: '5.14.4',
+        version: '5.14.5',
         status: semantic.matches
           ? 'EXISTING_SALES_ORDER_INTERNAL_NOTES_REPLACED_AND_SEMANTICALLY_VERIFIED'
           : 'WRITE_RETURNED_BUT_INTERNAL_NOTES_SEMANTIC_VERIFICATION_FAILED',
@@ -3076,7 +3076,7 @@ function DIAG_verifyProductionInternalNotesSemanticReconciliation() {
 
       var result = {
         ok: identityConfirmed && semantic.matches && argumentPathResult === true,
-        version: '5.14.4',
+        version: '5.14.5',
         mode: 'READ_ONLY_PRODUCTION_INTERNAL_NOTES_SEMANTIC_RECONCILIATION_VERIFICATION',
         requestId: REQUEST_ID,
         salesOrderId: SALES_ORDER_ID,
@@ -3238,7 +3238,7 @@ function TESTING_verifyInternalNotesForRequest_(requestId) {
   var semantic = CF.InternalNotesSemantic.compare(expectedNotes, actualNotes);
   return {
     ok: identityConfirmed && semantic.matches === true,
-    version: '5.14.4',
+    version: '5.14.5',
     mode: 'READ_ONLY_SELECTED_QUEUE_INTERNAL_NOTES_SEMANTIC_VERIFICATION',
     requestId: requestId,
     salesOrderId: String(salesOrderId),
@@ -3283,7 +3283,7 @@ function TESTING_09_verifySelectedInternalNotes() {
 
     var output = {
       ok: failCount === 0,
-      version: '5.14.4',
+      version: '5.14.5',
       mode: 'READ_ONLY_SELECTED_QUEUE_INTERNAL_NOTES_SEMANTIC_VERIFICATION_BATCH',
       selectedCount: requestIds.length,
       passCount: passCount,
@@ -3475,7 +3475,7 @@ function TESTING_10_replaceInternalNotesForRequest_(requestId) {
 
   return {
     ok:verified,
-    version:'5.14.4',
+    version:'5.14.5',
     mode:'GUARDED_EXISTING_SALES_ORDER_INTERNAL_NOTES_REPLACEMENT',
     requestId:requestId,
     salesOrderId:String(salesOrderId),
@@ -3514,7 +3514,7 @@ function TESTING_10_replaceSelectedInternalNotes() {
       ui.ButtonSet.YES_NO
     );
     if (answer !== ui.Button.YES) {
-      return { ok:false, version:'5.14.4', status:'CANCELLED_BY_OPERATOR', selectedCount:requestIds.length, strivenMutationExecuted:false, liveWriteExecuted:false };
+      return { ok:false, version:'5.14.5', status:'CANCELLED_BY_OPERATOR', selectedCount:requestIds.length, strivenMutationExecuted:false, liveWriteExecuted:false };
     }
 
     var results = [];
@@ -3543,7 +3543,7 @@ function TESTING_10_replaceSelectedInternalNotes() {
 
     var output = {
       ok:failCount === 0,
-      version:'5.14.4',
+      version:'5.14.5',
       mode:'GUARDED_SELECTED_QUEUE_EXISTING_SALES_ORDER_INTERNAL_NOTES_REPLACEMENT_BATCH',
       selectedCount:requestIds.length,
       processedCount:results.length,
@@ -3652,7 +3652,7 @@ function TESTING_10_prepareSelectedInternalNotes() {
 
     var result = {
       ok:true,
-      version:'5.14.4',
+      version:'5.14.5',
       mode:'READ_ONLY_PREPARE_SELECTED_QUEUE_INTERNAL_NOTES',
       selectedCount:requestIds.length,
       preparedCount:good,
@@ -3772,7 +3772,7 @@ function TESTING_10_updateInternalNotesViaOfficialApiTest() {
     try { SpreadsheetApp.getActive().toast(summary,'Internal Notes',10); } catch (ignoredToast) {}
     var anyWriteAttempted=results.some(function(r){return r&&r.writeAttempted===true;});
     var anyLiveWrite=results.some(function(r){return r&&r.liveWriteExecuted===true;});
-    var output={ok:failed===0,version:'5.14.4',mode:'OFFICIAL_API_SELECTED_QUEUE_INTERNAL_NOTES_RECONCILIATION',selectedCount:requestIds.length,processedCount:results.length,updated:updated,alreadyCorrect:already,failed:failed,results:results,officialApi:true,apiGetEndpoint:'/v1/sales-orders/{id}',apiPostEndpoint:'/v1/sales-orders',customFieldsPolicy:'SEND_REQUIRED_NON_ATTACHMENT_WRITE_DTO_VERIFY_ALL_UNCHANGED_AFTER_GET',operatorConfirmationRequired:false,blockingResultDialog:false,writeAttempted:anyWriteAttempted,automaticPostRetry:false,liveWriteExecuted:anyLiveWrite};
+    var output={ok:failed===0,version:'5.14.5',mode:'OFFICIAL_API_SELECTED_QUEUE_INTERNAL_NOTES_RECONCILIATION',selectedCount:requestIds.length,processedCount:results.length,updated:updated,alreadyCorrect:already,failed:failed,results:results,officialApi:true,apiGetEndpoint:'/v1/sales-orders/{id}',apiPostEndpoint:'/v1/sales-orders',customFieldsPolicy:'SEND_REQUIRED_NON_ATTACHMENT_WRITE_DTO_VERIFY_ALL_UNCHANGED_AFTER_GET',operatorConfirmationRequired:false,blockingResultDialog:false,writeAttempted:anyWriteAttempted,automaticPostRetry:false,liveWriteExecuted:anyLiveWrite};
     console.log('Selected Queue Internal Notes Official API Reconciliation: '+JSON.stringify(output));
     return output;
   });
@@ -3868,7 +3868,7 @@ function TESTING_10_unsupportedSnapshotEqual_(beforeList, afterList) {
 /* CF_SERVICEOPS_V5_12_6_WORKFLOW_STABILITY_REPROCESS_RUNNER_R1 */
 function FIX_20260905_applyWorkflowStabilityAndResumeRecentIncomplete() {
   return CF.PublicRunners.run('FIX 20260905 - Workflow stability + resume recent incomplete', function () {
-    var VERSION = '5.14.4';
+    var VERSION = '5.14.5';
     var targets = [
       {
         requestId: 'SR-20260905061831-2571',
@@ -4087,7 +4087,7 @@ function TESTING_20260905_workflowStabilityStatus() {
     });
     return {
       ok: !!a.__workflowStabilityV5126R1,
-      version: '5.14.4',
+      version: '5.14.5',
       config: cfg,
       queuedWork: typeof a.describeQueuedWork === 'function' ? a.describeQueuedWork() : null,
       recentRequests: rows,
@@ -4111,7 +4111,7 @@ var CF = CF || {};
  */
 function FIX_20260905_applyAutonomousResolutionPolicyAndResume() {
   return CF.PublicRunners.run('FIX 20260905 - Autonomous resolution + minimal review', function () {
-    var VERSION = '5.14.4';
+    var VERSION = '5.14.5';
     var OLD_SO_REVIEW_REASON = 'Sales Order created and reconciled as Quoted. Manual operator review is required.';
     var successReviewIds = [
       'SR-20260905134007-9457', // Stephanie Kerr
@@ -4276,7 +4276,7 @@ function TESTING_20260905_autonomousResolutionStatus() {
     var a = CF.EventDrivenServiceAutomation || {};
     return {
       ok: true,
-      version: '5.14.4',
+      version: '5.14.5',
       policy: {
         tertiaryOnlySafeCreate: true,
         verifiedQuotedSalesOrderNoManualReview: true,
@@ -4343,12 +4343,12 @@ function TESTING_20260905_autonomousResolutionStatus() {
       }
       results.push({requestId:id,localRepair:local,after:snapshot_(row_(id)),kick:kick});
     });
-    return{ok:true,version:'5.14.4',mode:'RECENT_15_LOCAL_REPAIR_RECHECK_AND_QUEUE',results:results,runnerDirectStrivenWriteExecuted:false,downstreamNormalWorkflowMayWrite:true};
+    return{ok:true,version:'5.14.5',mode:'RECENT_15_LOCAL_REPAIR_RECHECK_AND_QUEUE',results:results,runnerDirectStrivenWriteExecuted:false,downstreamNormalWorkflowMayWrite:true};
   }
   
   function TESTING_20260908_recent15EndToEndStatus(){
     var queued={};try{queued=CF.EventDrivenServiceAutomation&&typeof CF.EventDrivenServiceAutomation.describeQueuedWork==='function'?CF.EventDrivenServiceAutomation.describeQueuedWork():{};}catch(e){queued={error:String(e&&e.message||e)};}
-    return{ok:true,version:'5.14.4',policy:{technicalSloCreatesManualReview:false,newKickPreservesPendingWorker:true,verifiedSalesOrderMonotonic:true,standaloneLocationGuarded:true,dualExactContactIdentityAutoLink:true,noProgressQueueFairness:true},queuedWork:queued,recent15:IDS.map(function(id){return snapshot_(row_(id));}),liveWriteExecuted:false};
+    return{ok:true,version:'5.14.5',policy:{technicalSloCreatesManualReview:false,newKickPreservesPendingWorker:true,verifiedSalesOrderMonotonic:true,standaloneLocationGuarded:true,dualExactContactIdentityAutoLink:true,noProgressQueueFairness:true},queuedWork:queued,recent15:IDS.map(function(id){return snapshot_(row_(id));}),liveWriteExecuted:false};
   }
   this.FIX_20260908_repairRecent15AndResume=FIX_20260908_repairRecent15AndResume;
   this.TESTING_20260908_recent15EndToEndStatus=TESTING_20260908_recent15EndToEndStatus;
@@ -4372,7 +4372,7 @@ function TESTING_CURRENT_runReadOnlyStatusCheck() {
 /* CF_SERVICEOPS_V5_12_9_ASSOCIATION_IDENTITY_RECOVERY_R1 */
 (function(){
   'use strict';
-  var VERSION='5.14.4';
+  var VERSION='5.14.5';
   var IDS=[
     'SR-20260908093552-3155', /* Hossein Masooly */
     'SR-20260907150227-9928', /* Philipp Klaussner */
