@@ -12,7 +12,7 @@
 
 /************************************************************
  * CF ServiceOps — Customer Structure Engine
- * Version: 5.14.4
+ * Version: 5.14.5
  *
  * Internal request-scoped helper only. It owns no triggers.
  ************************************************************/
@@ -20,7 +20,7 @@ var CF = CF || {};
 
 CF.CustomerStructureEngine = (function () {
   'use strict';
-  var VERSION='5.14.4';
+  var VERSION='5.14.5';
   function deps_(){if(!CF.Config||!CF.Util||!CF.Matching||!CF.StrivenControlledCustomerCreate||!CF.StrivenControlledContactCreate)throw new Error('CUSTOMER_STRUCTURE_SETUP_REQUIRED');return{config:CF.Config,util:CF.Util,matching:CF.Matching,customer:CF.StrivenControlledCustomerCreate,contact:CF.StrivenControlledContactCreate};}
   function clean_(v){return deps_().util.cleanText(v);}
   function upper_(v){return clean_(v).toUpperCase();}
@@ -120,7 +120,7 @@ var CF = CF || {};
 CF.SalesOrderDraft = (function () {
   'use strict';
 
-  var VERSION = '5.14.4';
+  var VERSION = '5.14.5';
   var CUSTOM_FIELD = {
     CUSTOMER_NOTES_PRINTABLE: '598',
     MANUFACTURER_MODEL: '651',
@@ -533,7 +533,7 @@ if (
 CF.StrivenCustomLists = (function () {
   'use strict';
 
-  var VERSION = '5.14.4';
+  var VERSION = '5.14.5';
   var CACHE_KEY = 'CF_V5103_STRIVEN_CUSTOM_LISTS';
   var CACHE_SECONDS = 1800;
   var DEFINITIONS = [
@@ -851,7 +851,7 @@ CF.ServiceZone = (function () {
 /* CF_SERVICEOPS_V5_14_1_SINGLE_AUTOMATION_MODEL_R1 */
 CF.EventDrivenServiceAutomation = (function () {
   'use strict';
-  var VERSION='5.14.4';
+  var VERSION='5.14.5';
   var FINAL_HANDLER='AUTO_FINAL_ServiceOps';
   var WATCHDOG_HANDLER='AUTO_98_E2E_Recovery_Watchdog';
   var ENABLED='CF_EVENT_DRIVEN_SERVICE_AUTOMATION_ENABLED';
@@ -1243,7 +1243,7 @@ CF.EventDrivenServiceAutomation = (function () {
    * reconciliation is NEVER executed from this 5-minute production path.
    * This keeps execution capacity available for webhook intake and new requests.
    */
-  function recoveryWatchdog(){if(upper_(props_().getProperty(ENABLED))!=='TRUE')return{ok:true,version:VERSION,status:'RECOVERY_WATCHDOG_AUTOMATION_DISABLED',liveWriteExecuted:false};var topology=normalizeTopology_(''),q=queue_(),maintenance=null;if(!q.length){var rows=recentRecoverable_();if(rows.length){mutateQueue_(function(existing){rows.forEach(function(r){existing.push(clean_(r['Request ID']));});return existing;});q=queue_();}}if(!q.length)maintenance=idleMaintenance_();var worker=q.length?ensureWorker_(WORKER_DELAY_MS,''):{scheduled:false,status:'NO_RECENT_REQUEST_WORK'};return{ok:true,version:VERSION,status:q.length?'RECOVERY_QUEUE_ACTIVE':'RECOVERY_IDLE',queuedRequestIds:q,recoverableRecentCount:recentRecoverable_().length,topology:topology,worker:worker,idleMaintenance:maintenance,historicalExistingWorkBacklog:{ok:true,status:'DISABLED_ON_REALTIME_WATCHDOG',liveWriteExecuted:false},liveWriteExecuted:!!(maintenance&&maintenance.liveWriteExecuted===true)};}
+  function recoveryWatchdog(){if(upper_(props_().getProperty(ENABLED))!=='TRUE')return{ok:true,version:VERSION,status:'RECOVERY_WATCHDOG_AUTOMATION_DISABLED',liveWriteExecuted:false};var topology=normalizeTopology_(''),q=queue_(),maintenance=null;if(!q.length){var rows=recentRecoverable_();if(rows.length){mutateQueue_(function(existing){rows.forEach(function(r){existing.push(clean_(r['Request ID']));});return existing;});q=queue_();}}if(!q.length)maintenance=idleMaintenance_();var worker=q.length?ensureWorker_(WORKER_DELAY_MS,''):{scheduled:false,status:'NO_RECENT_REQUEST_WORK'};var frontend=CF.OperatorQueue&&CF.OperatorQueue.syncFrontendIfDue?CF.OperatorQueue.syncFrontendIfDue():{ok:false,status:'FRONTEND_SYNC_UNAVAILABLE'};return{frontend:frontend,ok:true,version:VERSION,status:q.length?'RECOVERY_QUEUE_ACTIVE':'RECOVERY_IDLE',queuedRequestIds:q,recoverableRecentCount:recentRecoverable_().length,topology:topology,worker:worker,idleMaintenance:maintenance,historicalExistingWorkBacklog:{ok:true,status:'DISABLED_ON_REALTIME_WATCHDOG',liveWriteExecuted:false},liveWriteExecuted:!!(maintenance&&maintenance.liveWriteExecuted===true)};}
   function activate(){props_().setProperty(ENABLED,'true');props_().setProperty(AUTO_SO,'true');props_().setProperty(PREPARATION_ONLY,'false');cleanLegacyTriggers_();triggersBy_(FINAL_HANDLER).forEach(deleteTriggerSafe_);triggersBy_(WATCHDOG_HANDLER).forEach(deleteTriggerSafe_);ensureWatchdog_();var rows=recentRecoverable_();mutateQueue_(function(q){rows.forEach(function(r){q.push(clean_(r['Request ID']));});return q;});var worker=ensureWorker_(1000,''),hardening=null;try{if(typeof CFH_installAndVerifyProductionHardening==='function')hardening=CFH_installAndVerifyProductionHardening();}catch(e){hardening={ok:false,status:'PRODUCTION_GUARD_INSTALL_FAILED',error:String(e&&e.message||e)};}var handlers=ScriptApp.getProjectTriggers().map(function(t){try{return clean_(t.getHandlerFunction&&t.getHandlerFunction());}catch(e){return'';}});var result={ok:!hardening||hardening.ok!==false,version:VERSION,status:'SINGLE_SERVICEOPS_MODEL_ACTIVE',finalHandler:FINAL_HANDLER,watchdogHandler:WATCHDOG_HANDLER,queuedRequestIds:queue_(),recoveredRequestIds:rows.map(function(r){return clean_(r['Request ID']);}),worker:worker,hardening:hardening,activeAutomationHandlers:handlers.filter(function(h){return h===FINAL_HANDLER||h===WATCHDOG_HANDLER;}),legacyAutomationTriggerCount:handlers.filter(isLegacyAutomationHandler_).length,liveWriteExecuted:false};log_('ACTIVATE_SINGLE_MODEL',result.legacyAutomationTriggerCount===0?'PASS':'FAIL','',{result:result},'');return result;}
   function disable(){props_().setProperty(ENABLED,'false');props_().setProperty(AUTO_SO,'false');triggersBy_(FINAL_HANDLER).forEach(deleteTriggerSafe_);triggersBy_(WATCHDOG_HANDLER).forEach(deleteTriggerSafe_);cleanLegacyTriggers_();writeQueue_([]);return{ok:true,version:VERSION,status:'SERVICEOPS_AUTOMATION_DISABLED',liveWriteExecuted:false};}
   function inspect(){
@@ -1328,7 +1328,7 @@ function AUTO_98_E2E_Recovery_Watchdog(e) {
  */
 CF.StatusWarningReconciler=(function(){
   'use strict';
-  var VERSION='5.14.4';
+  var VERSION='5.14.5';
   function clean_(v){return v===null||v===undefined?'':String(v).trim();}
   function upper_(v){return clean_(v).toUpperCase();}
   function parse_(v,f){try{return CF.Util&&CF.Util.parseJson?CF.Util.parseJson(v,f):JSON.parse(String(v||''));}catch(e){return f;}}
