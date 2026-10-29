@@ -1,0 +1,34 @@
+name: Read-only live source audit
+on:
+  push:
+    branches: [audit/live-source-20261029]
+    paths: [.github/workflows/live-source-audit-20261029.yml]
+permissions:
+  contents: read
+jobs:
+  pull:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Pull current Apps Script source
+        env:
+          CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
+        run: |
+          set -euo pipefail
+          test -n "$CLASPRC_JSON"
+          printf '%s' "$CLASPRC_JSON" > "$HOME/.clasprc.json"
+          chmod 600 "$HOME/.clasprc.json"
+          mkdir live
+          cd live
+          printf '%s\n' '{"scriptId":"1QZp4NAFeA8LmWBN31ylJYdK4XFepBX1h2lP_APaR-d1lTAC-d8LA9x3g","rootDir":"."}' > .clasp.json
+          npx -y @google/clasp@3.3.0 pull
+          test -f appsscript.json
+          rm .clasp.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: serviceops-live-source-audit
+          path: live/
+          retention-days: 7
+          if-no-files-found: error
