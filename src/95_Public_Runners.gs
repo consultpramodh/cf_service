@@ -727,6 +727,7 @@ function CF_20260930_probeCustomerScopedContactRead_() {
 }
 
 function doGet(e) {
+  if(e && e.parameter && e.parameter.ops === 'operations-web') return cfOpsRender_();
   /* CF_SERVICEOPS_V5_14_1_TEMP_TODAY_STEP_RUNNER_R1 */
   var probe=e&&e.parameter?String(e.parameter.ops||''):'';
   if(probe==='probe-customer-contact'){
