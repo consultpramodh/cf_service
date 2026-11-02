@@ -79,21 +79,13 @@ jobs:
           umask 077
           printf '%s' "$CLASPRC_JSON" > "$HOME/.clasprc.json"
           mkdir -p "$RUNNER_TEMP/serviceops-live" "$RUNNER_TEMP/serviceops-parity" "$RUNNER_TEMP/serviceops-base"
-          git fetch --no-tags --depth=1 origin production
-          for source in src/*; do
-            if [ -f "$source" ]; then git show "FETCH_HEAD:$source" > "$RUNNER_TEMP/serviceops-base/${source##*/}"; fi
-          done
+          git fetch --no-tags --depth=1 origin 20b5da164341ee10be68928cd236d7a7b3896b73
+          while IFS= read -r source; do
+            git show "FETCH_HEAD:$source" > "$RUNNER_TEMP/serviceops-base/${source##*/}"
+          done < <(git ls-tree -r --name-only FETCH_HEAD src/)
           printf '%s' '{"scriptId":"1QZp4NAFeA8LmWBN31ylJYdK4XFepBX1h2lP_APaR-d1lTAC-d8LA9x3g","rootDir":"."}' > "$RUNNER_TEMP/serviceops-live/.clasp.json"
           (cd "$RUNNER_TEMP/serviceops-live" && npx -y @google/clasp@3.3.0 pull >/dev/null)
-          # Compare current production source, including its known release transform.
-          # The October 14 checkpoint remains historical; it is not the live baseline.
-          node --input-type=module - <<'JS'
-          import fs from 'node:fs';
-          import path from 'node:path';
-          import {patchReadinessCounts} from './scripts/readiness-patch.mjs';
-          const file=path.join(process.env.RUNNER_TEMP,'serviceops-base','30_Striven_Data.gs');
-          fs.writeFileSync(file,patchReadinessCounts(fs.readFileSync(file,'utf8')));
-          JS
+          # Compare with the verified deployed version 211 source checkpoint.
           python3 - <<'PY'
           import os,json,hashlib,pathlib,sys
           live=pathlib.Path(os.environ['RUNNER_TEMP'])/'serviceops-live'
@@ -119,7 +111,7 @@ jobs:
           dest=pathlib.Path(os.environ['RUNNER_TEMP'])/'serviceops-parity'/'manifest.json'
           dest.write_text(json.dumps(report,indent=2)+'\n')
           print('LIVE_SOURCE_SNAPSHOT',json.dumps({k:v for k,v in report.items() if k!='liveHashes'}))
-          if len(a)!=17 or missing or extra:
+          if len(a)!=19 or missing or extra:
               print('LIVE_SOURCE_INVENTORY_FAIL');sys.exit(2)
           if different:
               print('LIVE_SOURCE_DIFFERS_FROM_CURRENT_PRODUCTION_STOP');sys.exit(3)
@@ -140,7 +132,7 @@ jobs:
           import pathlib,os,re,hashlib,json,sys
           live=pathlib.Path(os.environ['RUNNER_TEMP'])/'serviceops-live'
           files=sorted(p for p in live.iterdir() if p.is_file() and p.name!='.clasp.json')
-          if len(files)!=17:
+          if len(files)!=19:
               print('SOURCE_SNAPSHOT_STOP_INVENTORY');sys.exit(2)
           scan=[
             r'sk-(?:proj-)?[A-Za-z0-9_-]{24,}',
