@@ -5294,6 +5294,7 @@ function FIX_20261006_refreshDashboardLive(){
   var DIRTY='CF_FRONTEND_DIRTY_', ACK='CF_FRONTEND_ACK_';
   var LAST='CF_FRONTEND_LAST_VERIFIED_MS', ERROR='CF_FRONTEND_REFRESH_ERROR';
   var LEGACY='CF_QUEUE_DIRTY_SERVICE_REQUEST_ROWS_V5131';
+  var LEASE='CF_FRONTEND_REFRESH_LEASE_V1', LEASE_MS=10*60*1000;
   var baseById=util.patchServiceRequestById, baseRow=util.patchRow;
   function props(){return PropertiesService.getScriptProperties();}
   function mark(id){
@@ -5320,8 +5321,14 @@ function FIX_20261006_refreshDashboardLive(){
     options=options||{};
     var lock=LockService.getScriptLock();
     if(!lock.tryLock(1000))return{ok:false,status:'FRONTEND_REFRESH_DEFERRED_LOCK',retryPending:true};
+    var owner='',p=props();
     try {
-      var p=props(),snapshot=p.getProperties(),dirty=Object.keys(snapshot).filter(function(k){return k.indexOf(DIRTY)===0&&snapshot[k]!==snapshot[ACK+k.slice(DIRTY.length)];});
+      var existing=p.getProperty(LEASE),prior=null;
+      if(existing){try{prior=JSON.parse(existing);}catch(e){return{ok:false,status:'FRONTEND_REFRESH_LEASE_INVALID',retryPending:true};}if(!prior||!prior.token||!isFinite(Number(prior.expiresAt)))return{ok:false,status:'FRONTEND_REFRESH_LEASE_INVALID',retryPending:true};if(Number(prior.expiresAt)>Date.now())return{ok:false,status:'FRONTEND_REFRESH_DEFERRED_BUSY',retryPending:true};}
+      owner=Utilities.getUuid();p.setProperty(LEASE,JSON.stringify({token:owner,expiresAt:Date.now()+LEASE_MS}));
+    } finally {lock.releaseLock();}
+    try {
+      var snapshot=p.getProperties(),dirty=Object.keys(snapshot).filter(function(k){return k.indexOf(DIRTY)===0&&snapshot[k]!==snapshot[ACK+k.slice(DIRTY.length)];});
       var legacy=snapshot[LEGACY];
       var due=Date.now()-Number(snapshot[LAST]||0)>=300000;
       if(!dirty.length&&!legacy&&!(options.periodic&&due))return{ok:true,status:'NO_DIRTY_ROWS',frontendRevision:'20261023-R1'};
@@ -5341,7 +5348,11 @@ function FIX_20261006_refreshDashboardLive(){
     } catch(e) {
       props().setProperty(ERROR,String(e&&e.message||e));
       return{ok:false,status:'FRONTEND_REFRESH_FAILED',error:String(e&&e.message||e),retryPending:true,frontendRevision:'20261023-R1',liveStrivenWriteExecuted:false};
-    } finally {lock.releaseLock();}
+    } finally {
+      // Only the lease owner may release it. A failed cleanup expires safely.
+      var cleanup=LockService.getScriptLock();
+      if(cleanup.tryLock(1000)){try{var current=p.getProperty(LEASE),lease=null;try{lease=JSON.parse(current||'{}');}catch(ignored){}if(lease&&lease.token===owner)p.deleteProperty(LEASE);}finally{cleanup.releaseLock();}}
+    }
   }
   // patchServiceRequestById closes over the original local patchRow. Hook both
   // public entry points so request-scoped writes cannot bypass invalidation.
