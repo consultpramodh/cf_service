@@ -5102,10 +5102,21 @@ function FIX_20260903_reconcileAllExistingOperatorQueue() {
     return{ok:parity.ok,status:parity.ok?'REQUEST_REFRESHED_AND_VERIFIED':'REQUEST_REFRESH_PARITY_FAILED',requestId:requestId,parity:parity};
   }
   function richUrls_(range){var out=[];try{var rt=range.getRichTextValue();if(!rt)return out;(rt.getRuns()||[]).forEach(function(run){var u=run.getLinkUrl();if(u&&out.indexOf(u)<0)out.push(u);});}catch(e){}return out;}
+  // The elapsed clock may advance while the full queue is written and checked.
+  // Preserve strict comparison for all other text and reject a stale clock.
+  function statusTimingMatches_(expected,actual){
+    if(expected===actual)return true;
+    var re=/(^|\n)Elapsed since submission: (?:(\d+)d )?(?:(\d+)h )?(\d+)m(?=\n|$)/;
+    var e=String(expected||'').match(re),a=String(actual||'').match(re);
+    if(!e||!a||String(expected).replace(re,'$1Elapsed since submission: <clock>')!==String(actual).replace(re,'$1Elapsed since submission: <clock>'))return false;
+    function minutes_(m){return Number(m[2]||0)*1440+Number(m[3]||0)*60+Number(m[4]);}
+    var drift=minutes_(e)-minutes_(a);
+    return drift>=0&&drift<=5;
+  }
   function verifyRequest_(requestId){
     requestId=clean_(requestId);var src=request_(requestId),row=findQueueRow_(requestId),issues=[];if(!src)return{ok:false,requestId:requestId,issues:['SOURCE_REQUEST_MISSING']};if(!row)return{ok:false,requestId:requestId,issues:['QUEUE_ROW_MISSING']};
     var s=queueSheet_(),headers=s.getRange(1,1,1,s.getLastColumn()).getDisplayValues()[0],vals=s.getRange(row,1,1,headers.length).getDisplayValues()[0];function idx_(name){return headers.indexOf(name);}function q_(name){var i=idx_(name);return i>=0?clean_(vals[i]):'';}
-    var expectedStatus=statusText_(src),actualStatus=q_('Status');if(expectedStatus!==actualStatus)issues.push('STATUS_TEXT_MISMATCH');
+    var expectedStatus=statusText_(src),actualStatus=q_('Status');if(!statusTimingMatches_(expectedStatus,actualStatus))issues.push('STATUS_TEXT_MISMATCH');
     var expectedNext=clean_(src['Next Action'])||'—',actualNext=q_('Next Step')||'—';if(expectedNext!==actualNext)issues.push('NEXT_ACTION:'+actualNext+'!='+expectedNext);
     var n=clean_(src['Work Order Number']);if(n&&q_('Sales Order / Work Order').indexOf(n)<0)issues.push('ORDER_NUMBER_MISSING:'+n);
     var oi=idx_('Sales Order / Work Order'),expectedOrderUrl=orderUrl_(src);if(oi>=0&&expectedOrderUrl&&richUrls_(s.getRange(row,oi+1)).indexOf(expectedOrderUrl)<0)issues.push('ORDER_LINK_MISSING');
@@ -5283,6 +5294,7 @@ function FIX_20261006_refreshDashboardLive(){
   var DIRTY='CF_FRONTEND_DIRTY_', ACK='CF_FRONTEND_ACK_';
   var LAST='CF_FRONTEND_LAST_VERIFIED_MS', ERROR='CF_FRONTEND_REFRESH_ERROR';
   var LEGACY='CF_QUEUE_DIRTY_SERVICE_REQUEST_ROWS_V5131';
+  var LEASE='CF_FRONTEND_REFRESH_LEASE_V1', LEASE_MS=10*60*1000;
   var baseById=util.patchServiceRequestById, baseRow=util.patchRow;
   function props(){return PropertiesService.getScriptProperties();}
   function mark(id){
@@ -5309,8 +5321,14 @@ function FIX_20261006_refreshDashboardLive(){
     options=options||{};
     var lock=LockService.getScriptLock();
     if(!lock.tryLock(1000))return{ok:false,status:'FRONTEND_REFRESH_DEFERRED_LOCK',retryPending:true};
+    var owner='',p=props();
     try {
-      var p=props(),snapshot=p.getProperties(),dirty=Object.keys(snapshot).filter(function(k){return k.indexOf(DIRTY)===0&&snapshot[k]!==snapshot[ACK+k.slice(DIRTY.length)];});
+      var existing=p.getProperty(LEASE),prior=null;
+      if(existing){try{prior=JSON.parse(existing);}catch(e){return{ok:false,status:'FRONTEND_REFRESH_LEASE_INVALID',retryPending:true};}if(!prior||!prior.token||!isFinite(Number(prior.expiresAt)))return{ok:false,status:'FRONTEND_REFRESH_LEASE_INVALID',retryPending:true};if(Number(prior.expiresAt)>Date.now())return{ok:false,status:'FRONTEND_REFRESH_DEFERRED_BUSY',retryPending:true};}
+      owner=Utilities.getUuid();p.setProperty(LEASE,JSON.stringify({token:owner,expiresAt:Date.now()+LEASE_MS}));
+    } finally {lock.releaseLock();}
+    try {
+      var snapshot=p.getProperties(),dirty=Object.keys(snapshot).filter(function(k){return k.indexOf(DIRTY)===0&&snapshot[k]!==snapshot[ACK+k.slice(DIRTY.length)];});
       var legacy=snapshot[LEGACY];
       var due=Date.now()-Number(snapshot[LAST]||0)>=300000;
       if(!dirty.length&&!legacy&&!(options.periodic&&due))return{ok:true,status:'NO_DIRTY_ROWS',frontendRevision:'20261023-R1'};
@@ -5330,7 +5348,11 @@ function FIX_20261006_refreshDashboardLive(){
     } catch(e) {
       props().setProperty(ERROR,String(e&&e.message||e));
       return{ok:false,status:'FRONTEND_REFRESH_FAILED',error:String(e&&e.message||e),retryPending:true,frontendRevision:'20261023-R1',liveStrivenWriteExecuted:false};
-    } finally {lock.releaseLock();}
+    } finally {
+      // Only the lease owner may release it. A failed cleanup expires safely.
+      var cleanup=LockService.getScriptLock();
+      if(cleanup.tryLock(1000)){try{var current=p.getProperty(LEASE),lease=null;try{lease=JSON.parse(current||'{}');}catch(ignored){}if(lease&&lease.token===owner)p.deleteProperty(LEASE);}finally{cleanup.releaseLock();}}
+    }
   }
   // patchServiceRequestById closes over the original local patchRow. Hook both
   // public entry points so request-scoped writes cannot bypass invalidation.
