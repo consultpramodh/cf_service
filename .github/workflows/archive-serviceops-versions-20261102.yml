@@ -1,0 +1,38 @@
+name: Archive ServiceOps saved versions read-only
+on:
+  push:
+    branches: [audit/live-source-20261029]
+    paths: [.github/workflows/archive-serviceops-versions-20261102.yml]
+permissions:
+  contents: read
+jobs:
+  archive:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Pull immutable versions
+        env:
+          CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
+        run: |
+          set -euo pipefail
+          test -n "$CLASPRC_JSON"
+          umask 077
+          printf '%s' "$CLASPRC_JSON" > "$HOME/.clasprc.json"
+          for version in 202 203 204 205 206 207; do
+            mkdir -p "archive/$version"
+            cd "archive/$version"
+            printf '%s\n' '{"scriptId":"1QZp4NAFeA8LmWBN31ylJYdK4XFepBX1h2lP_APaR-d1lTAC-d8LA9x3g","rootDir":"."}' > .clasp.json
+            npx -y @google/clasp@3.3.0 pull --versionNumber "$version"
+            test -f appsscript.json
+            rm .clasp.json
+            find . -type f -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS
+            cd ../..
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: serviceops-versions-202-207
+          path: archive/
+          retention-days: 90
+          if-no-files-found: error
