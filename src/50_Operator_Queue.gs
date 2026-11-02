@@ -5102,10 +5102,21 @@ function FIX_20260903_reconcileAllExistingOperatorQueue() {
     return{ok:parity.ok,status:parity.ok?'REQUEST_REFRESHED_AND_VERIFIED':'REQUEST_REFRESH_PARITY_FAILED',requestId:requestId,parity:parity};
   }
   function richUrls_(range){var out=[];try{var rt=range.getRichTextValue();if(!rt)return out;(rt.getRuns()||[]).forEach(function(run){var u=run.getLinkUrl();if(u&&out.indexOf(u)<0)out.push(u);});}catch(e){}return out;}
+  // The elapsed clock may advance while the full queue is written and checked.
+  // Preserve strict comparison for all other text and reject a stale clock.
+  function statusTimingMatches_(expected,actual){
+    if(expected===actual)return true;
+    var re=/(^|\n)Elapsed since submission: (?:(\d+)d )?(?:(\d+)h )?(\d+)m(?=\n|$)/;
+    var e=String(expected||'').match(re),a=String(actual||'').match(re);
+    if(!e||!a||String(expected).replace(re,'$1Elapsed since submission: <clock>')!==String(actual).replace(re,'$1Elapsed since submission: <clock>'))return false;
+    function minutes_(m){return Number(m[2]||0)*1440+Number(m[3]||0)*60+Number(m[4]);}
+    var drift=minutes_(e)-minutes_(a);
+    return drift>=0&&drift<=5;
+  }
   function verifyRequest_(requestId){
     requestId=clean_(requestId);var src=request_(requestId),row=findQueueRow_(requestId),issues=[];if(!src)return{ok:false,requestId:requestId,issues:['SOURCE_REQUEST_MISSING']};if(!row)return{ok:false,requestId:requestId,issues:['QUEUE_ROW_MISSING']};
     var s=queueSheet_(),headers=s.getRange(1,1,1,s.getLastColumn()).getDisplayValues()[0],vals=s.getRange(row,1,1,headers.length).getDisplayValues()[0];function idx_(name){return headers.indexOf(name);}function q_(name){var i=idx_(name);return i>=0?clean_(vals[i]):'';}
-    var expectedStatus=statusText_(src),actualStatus=q_('Status');if(expectedStatus!==actualStatus)issues.push('STATUS_TEXT_MISMATCH');
+    var expectedStatus=statusText_(src),actualStatus=q_('Status');if(!statusTimingMatches_(expectedStatus,actualStatus))issues.push('STATUS_TEXT_MISMATCH');
     var expectedNext=clean_(src['Next Action'])||'—',actualNext=q_('Next Step')||'—';if(expectedNext!==actualNext)issues.push('NEXT_ACTION:'+actualNext+'!='+expectedNext);
     var n=clean_(src['Work Order Number']);if(n&&q_('Sales Order / Work Order').indexOf(n)<0)issues.push('ORDER_NUMBER_MISSING:'+n);
     var oi=idx_('Sales Order / Work Order'),expectedOrderUrl=orderUrl_(src);if(oi>=0&&expectedOrderUrl&&richUrls_(s.getRange(row,oi+1)).indexOf(expectedOrderUrl)<0)issues.push('ORDER_LINK_MISSING');
