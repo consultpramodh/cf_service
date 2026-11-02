@@ -1,0 +1,12 @@
+const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict');
+const s=fs.readFileSync('src/70_Workflow_Automation.gs','utf8'),a=s.indexOf('  function canContinueVerifiedManualNotes_('),b=s.indexOf('  function reconcileOperationalLinks_(',a);assert.ok(a>=0&&b>a);
+const ctx={clean_:x=>String(x??'').trim(),upper_:x=>String(x??'').trim().toUpperCase(),knownOrderId_:r=>r['Work Order ID'],parse_:x=>{try{return JSON.parse(x)}catch{return {}}}};vm.runInNewContext(s.slice(a,b),ctx);
+const note={requestId:'r1',salesOrderId:'s1',status:'UPDATED',ok:true,semanticContentMatches:true,writeAttempted:true,automaticPostRetry:false};
+const journal={salesOrderId:'s1',status:'UPDATED',ok:true,semanticContentMatches:true,writeAttempted:true,automaticPostRetry:false};
+const row={'Work Order ID':'s1','Request Status':'OPEN','Manual Review?':'NO','Write Journal JSON':JSON.stringify({manualWorkOrderInternalNotes:journal})};
+const result={requestId:'r1',salesOrderId:'s1',status:'MANUAL_WORK_ORDER_INTERNAL_NOTES_UPDATED_RERUN_CERTIFICATION',ok:true,automaticPostRetry:false,internalNotes:note};
+const check=(r=result,x=row)=>ctx.canContinueVerifiedManualNotes_('r1',r,x);assert.equal(check(),true);
+for(const change of [{requestId:'r2'},{salesOrderId:'s2'},{ok:false},{automaticPostRetry:true},{internalNotes:{...note,semanticContentMatches:false}},{internalNotes:{...note,salesOrderId:'s2'}}])assert.equal(check({...result,...change}),false);
+for(const change of [{ok:false},{semanticContentMatches:false},{automaticPostRetry:true},{salesOrderId:'s2'},{status:'FAILED'}])assert.equal(check(result,{...row,'Write Journal JSON':JSON.stringify({manualWorkOrderInternalNotes:{...journal,...change}})}),false);
+assert.equal(check(result,{...row,'Manual Review?':'YES'}),false);assert.equal(check(result,{...row,'Write Journal JSON':'invalid'}),false);
+console.log('PASS: only matching read-verified, durably journaled manual notes permit immediate certification');
