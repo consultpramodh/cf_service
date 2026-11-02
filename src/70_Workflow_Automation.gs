@@ -54,7 +54,14 @@ CF.CustomerStructureEngine = (function () {
     if(!safe_(r))return{ok:true,version:VERSION,status:'CUSTOMER_STRUCTURE_REVIEW_REQUIRED',requestId:requestId,stage:clean_(r['Current Stage']),liveWriteExecuted:false};
     var ids=ids_(r),association=upper_(r['Contact Association Status']),result;
     if(stage==='READY FOR CUSTOMER CREATE'){result=deps_().customer.executeAutoCustomerCreate(requestId);return verifyResultRequest_(requestId,result);}
-    if(stage==='READY FOR LOCATION CREATE'){if(!CF.StandaloneLocationCreateV5128||typeof CF.StandaloneLocationCreateV5128.process!=='function')return{ok:false,version:VERSION,status:'STANDALONE_LOCATION_MODULE_MISSING',requestId:requestId,liveWriteExecuted:false};result=CF.StandaloneLocationCreateV5128.process(requestId,{autoMode:true});return verifyResultRequest_(requestId,result);}
+    if(stage==='READY FOR LOCATION CREATE'){
+      // An already durable location must return to the normal structure checks.
+      // Do not mark the contact associated or issue another Location POST here.
+      if(ids.customer&&ids.location){
+        patch_(r,{'Updated At':deps_().util.nowString(),'Current Stage':'CUSTOMER RESOLVED','Request Status':'OPEN','Next Action':'RECONCILE CUSTOMER STRUCTURE','Customer Structure Status':'IN PROGRESS','Reconciliation Status':'DURABLE LOCATION READY FOR STRUCTURE RECONCILIATION'});
+        return{ok:true,version:VERSION,status:'DURABLE_LOCATION_STAGE_RECOVERED',requestId:requestId,locationId:ids.location,liveWriteExecuted:false};
+      }
+      if(!CF.StandaloneLocationCreateV5128||typeof CF.StandaloneLocationCreateV5128.process!=='function')return{ok:false,version:VERSION,status:'STANDALONE_LOCATION_MODULE_MISSING',requestId:requestId,liveWriteExecuted:false};result=CF.StandaloneLocationCreateV5128.process(requestId,{autoMode:true});return verifyResultRequest_(requestId,result);}
     if(stage==='READY FOR CONTACT CREATE'){
       if(!ids.location){
         if(ids.customer&&clean_(r['Created Customer ID'])){
