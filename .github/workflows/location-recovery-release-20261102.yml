@@ -1,0 +1,61 @@
+name: Release ServiceOps durable location recovery
+on:
+  push:
+    branches: [fix/serviceops-durable-location-20261102]
+    paths: [releases/activate-location-recovery-20261102]
+permissions:
+  contents: read
+concurrency:
+  group: cf-serviceops-production-v2
+  cancel-in-progress: false
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Run tests
+        run: |
+          set -euo pipefail
+          for f in tests/*.cjs tests/*.mjs; do node "$f"; done
+          node --check scripts/location-release.mjs
+      - name: Fetch verified live backup and check source
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin backup/live-source-20261102-1924
+          git cat-file -e a2d8780895c94b1c00a20e72ee2f04a72fea2550^{commit}
+          test -n "$CLASPRC_JSON"
+          umask 077
+          printf '%s' "$CLASPRC_JSON" > "$HOME/.clasprc.json"
+          node scripts/location-release.mjs prepare
+      - name: Save immediate live source backup
+        uses: actions/upload-artifact@v4
+        with:
+          name: location-release-before-${{ github.run_id }}
+          path: |
+            .location-release/before/*
+            .location-release/before-hashes.json
+            .location-release/previous-version.txt
+          if-no-files-found: error
+          retention-days: 90
+      - name: Deploy single-module change
+        run: node scripts/location-release.mjs apply
+      - name: Restore verified source and deployment after failure
+        if: failure()
+        run: node scripts/location-release.mjs rollback
+      - name: Save release evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: location-release-evidence-${{ github.run_id }}
+          path: |
+            .location-release/verify/*
+            .location-release/deployed-version.txt
+          if-no-files-found: warn
+          retention-days: 90
