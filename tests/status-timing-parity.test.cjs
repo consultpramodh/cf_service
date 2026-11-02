@@ -1,0 +1,14 @@
+const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict');
+const src=fs.readFileSync('src/50_Operator_Queue.gs','utf8');
+const start=src.indexOf('  function statusTimingMatches_('),end=src.indexOf('\n  function verifyRequest_(',start);
+assert.ok(start>=0&&end>start);const ctx={};vm.runInNewContext(src.slice(start,end),ctx);
+const status=(age,stage='OPEN')=>stage+'\nSubmitted: Nov 2, 2026 8:45 AM\nElapsed since submission: '+age+'\nReview: sample';
+assert.equal(ctx.statusTimingMatches_(status('5h 47m'),status('5h 46m')),true);
+assert.equal(ctx.statusTimingMatches_(status('1d 0h 2m'),status('23h 58m')),true);
+assert.equal(ctx.statusTimingMatches_(status('6h 45m'),status('6h 39m')),false);
+assert.equal(ctx.statusTimingMatches_(status('6h 45m'),status('6h 46m')),false);
+assert.equal(ctx.statusTimingMatches_(status('6h 45m'),status('6h 44m','BLOCKED')),false);
+assert.equal(ctx.statusTimingMatches_(status('6h 45m'),status('6h 44m').replace('Review: sample','Review: changed')),false);
+assert.equal(ctx.statusTimingMatches_(status('6h 45m'),'OPEN'),false);
+assert.equal(ctx.statusTimingMatches_('COMPLETED\nRequest to order: 20m','COMPLETED\nRequest to order: 19m'),false);
+console.log('PASS: elapsed-time parity tolerates bounded drift, rejects stale, future and non-clock changes.');
