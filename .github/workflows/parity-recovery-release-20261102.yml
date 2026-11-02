@@ -1,0 +1,61 @@
+name: Release ServiceOps queue parity recovery
+on:
+  push:
+    branches: [fix/serviceops-queue-parity-20261102]
+    paths: [releases/activate-parity-recovery-20261102]
+permissions:
+  contents: read
+concurrency:
+  group: cf-serviceops-production-v2
+  cancel-in-progress: false
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Run tests
+        run: |
+          set -euo pipefail
+          for f in tests/*.cjs tests/*.mjs; do node "$f"; done
+          node --check scripts/parity-release.mjs
+      - name: Fetch verified live backup and check source
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin reconcile/serviceops-live-208
+          git cat-file -e 8862ad9a255abef399b95b4090f687fa27d8b0e8^{commit}
+          test -n "$CLASPRC_JSON"
+          umask 077
+          printf '%s' "$CLASPRC_JSON" > "$HOME/.clasprc.json"
+          node scripts/parity-release.mjs prepare
+      - name: Save immediate live source backup
+        uses: actions/upload-artifact@v4
+        with:
+          name: parity-release-before-${{ github.run_id }}
+          path: |
+            .parity-release/before/*
+            .parity-release/before-hashes.json
+            .parity-release/previous-version.txt
+          if-no-files-found: error
+          retention-days: 90
+      - name: Deploy single-module change
+        run: node scripts/parity-release.mjs apply
+      - name: Restore verified source and deployment after failure
+        if: failure()
+        run: node scripts/parity-release.mjs rollback
+      - name: Save release evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: parity-release-evidence-${{ github.run_id }}
+          path: |
+            .parity-release/verify/*
+            .parity-release/deployed-version.txt
+          if-no-files-found: warn
+          retention-days: 90
