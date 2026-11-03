@@ -1,0 +1,61 @@
+name: Release ServiceOps customer location reconciliation speed
+on:
+  push:
+    branches: [fix/customer-location-speed-20261103]
+    paths: [releases/activate-customer-location-speed-20261103]
+permissions:
+  contents: read
+concurrency:
+  group: cf-serviceops-production-v2
+  cancel-in-progress: false
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Run tests
+        run: |
+          set -euo pipefail
+          for f in tests/*.cjs tests/*.mjs; do node "$f"; done
+          node --check scripts/customer-location-speed-release.mjs
+      - name: Fetch verified live backup and check source
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin fix/cache-freshness-alignment-20261103
+          git cat-file -e 35840ed0d0907501c48c5e04996e47dee5d008a5^{commit}
+          test -n "$CLASPRC_JSON"
+          umask 077
+          printf '%s' "$CLASPRC_JSON" > "$HOME/.clasprc.json"
+          node scripts/customer-location-speed-release.mjs prepare
+      - name: Save immediate live source backup
+        uses: actions/upload-artifact@v4
+        with:
+          name: customer-location-speed-release-before-${{ github.run_id }}
+          path: |
+            .customer-location-speed-release/before/*
+            .customer-location-speed-release/before-hashes.json
+            .customer-location-speed-release/previous-version.txt
+          if-no-files-found: error
+          retention-days: 90
+      - name: Deploy single-module change
+        run: node scripts/customer-location-speed-release.mjs apply
+      - name: Restore verified source and deployment after failure
+        if: failure()
+        run: node scripts/customer-location-speed-release.mjs rollback
+      - name: Save release evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: customer-location-speed-release-evidence-${{ github.run_id }}
+          path: |
+            .customer-location-speed-release/verify/*
+            .customer-location-speed-release/deployed-version.txt
+          if-no-files-found: warn
+          retention-days: 90
