@@ -4908,13 +4908,13 @@ CF.OrderPreflight = (function () {
   function readiness_(){
     try{
       var raw=operationalCacheTimestampFast_();
-      if(!raw)return{ok:false,mode:'TIMESTAMP_ONLY',fresh:{operational:false},groups:{operational:{timestamp:'',ageMinutes:null,maxAgeMinutes:30}},error:'Operational cache timestamp is missing.'};
+      if(!raw)return{ok:false,mode:'TIMESTAMP_ONLY',fresh:{operational:false},groups:{operational:{timestamp:'',ageMinutes:null,maxAgeMinutes:60}},error:'Operational cache timestamp is missing.'};
       var timestamp=raw instanceof Date?raw:new Date(raw),ms=timestamp.getTime();
-      if(isNaN(ms))return{ok:false,mode:'TIMESTAMP_ONLY',fresh:{operational:false},groups:{operational:{timestamp:String(raw),ageMinutes:null,maxAgeMinutes:30}},error:'Operational cache timestamp is invalid.'};
-      var ageMs=Math.max(0,Date.now()-ms),fresh=ageMs<=30*60000;
-      return{ok:true,mode:'TIMESTAMP_ONLY',fresh:{operational:fresh},groups:{operational:{timestamp:timestamp.toISOString(),ageMinutes:ageMs/60000,maxAgeMinutes:30}}};
+      if(isNaN(ms))return{ok:false,mode:'TIMESTAMP_ONLY',fresh:{operational:false},groups:{operational:{timestamp:String(raw),ageMinutes:null,maxAgeMinutes:60}},error:'Operational cache timestamp is invalid.'};
+      var ageMs=Math.max(0,Date.now()-ms),fresh=ageMs<=60*60000;
+      return{ok:true,mode:'TIMESTAMP_ONLY',fresh:{operational:fresh},groups:{operational:{timestamp:timestamp.toISOString(),ageMinutes:ageMs/60000,maxAgeMinutes:60}}};
     }catch(e){
-      return{ok:false,mode:'TIMESTAMP_ONLY',fresh:{operational:false},groups:{operational:{timestamp:'',ageMinutes:null,maxAgeMinutes:30}},error:String(e&&e.message||e)};
+      return{ok:false,mode:'TIMESTAMP_ONLY',fresh:{operational:false},groups:{operational:{timestamp:'',ageMinutes:null,maxAgeMinutes:60}},error:String(e&&e.message||e)};
     }
   }
   function operationalFresh_(){
